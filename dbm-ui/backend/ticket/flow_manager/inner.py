@@ -166,6 +166,8 @@ class InnerFlow(BaseTicketFlow):
 
     def run(self) -> None:
         """inner flow执行流程"""
+        if self.check_flow_ack():
+            return
         # 获取or生成inner flow的root id
         root_id = self.flow_obj.flow_obj_id or generate_root_id()
         try:
@@ -271,6 +273,9 @@ class SimpleTaskFlow(InnerFlow):
         super().__init__(flow_obj=flow_obj)
 
     def run(self) -> None:
+        if self.check_flow_ack():
+            return
+        # 获取or生成inner flow的root id
         root_id = self.flow_obj.flow_obj_id or generate_root_id()
         self.run_status_handler(root_id)
         # 运行回收流程
@@ -282,8 +287,3 @@ class SimpleTaskFlow(InnerFlow):
 
     def _run(self) -> None:
         return super()._run()
-
-    def _retry(self) -> None:
-        # 重试则将机器挪出污点池
-        self.flush_error_status_handler()
-        self.run()

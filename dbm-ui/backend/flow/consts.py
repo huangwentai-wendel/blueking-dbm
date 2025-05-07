@@ -403,6 +403,7 @@ class DBActuatorActionEnum(str, StructuredEnum):
 
     SenmanticDumpSchema = EnumField("semantic-dumpschema", _("semantic-dumpschema"))
     ImportSQLFile = EnumField("import-sqlfile", _("import-sqlfile"))
+    DoOnlineDDL = EnumField("do-online-ddl", _("do-online-ddl"))
     CloneClientGrant = EnumField("clone-client-grant", _("clone-client-grant"))
     CloneProxyUser = EnumField("clone-proxy-user", _("clone-proxy-user"))
     ClearCrontab = EnumField("clear-crontab", _("clear-crontab"))
@@ -1542,7 +1543,7 @@ class MongoOplogSizePercent(float, StructuredEnum):
     oplog默认占机器磁盘的百分比
     """
 
-    Oplog_Percent = EnumField(0.15, _("cache_percent"))
+    Oplog_Percent = EnumField(0.10, _("oplog_percent"))
 
 
 class SqlserverBackupFileTagEnum(str, StructuredEnum):

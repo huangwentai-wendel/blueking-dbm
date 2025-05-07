@@ -66,7 +66,7 @@ func (e *EnableTokudbPluginAct) Run() (err error) {
 			Func:    e.Service.ReWriteMyCnf,
 		},
 		{
-			FunName: "instal tokudb plugin",
+			FunName: "install tokudb plugin",
 			Func:    e.Service.Install,
 		},
 		{
