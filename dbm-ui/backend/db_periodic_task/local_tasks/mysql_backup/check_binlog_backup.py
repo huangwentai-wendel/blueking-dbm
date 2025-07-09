@@ -20,7 +20,7 @@ from backend.db_report.enums import MysqlBackupCheckSubType
 from backend.db_report.models import MysqlBackupCheckReport
 
 from .bklog_query import ClusterBackup
-from .check_full_backup import get_query_date_time
+from .check_full_backup import find_discontinuous_numbers, get_query_date_time
 
 logger = logging.getLogger("root")
 
@@ -69,9 +69,11 @@ def _check_binlog_backup(cluster_type, date_str):
             )
         )
         # todo 需要获取集群的 master 分片实例，或者分片数
+        # c.tendbclusterstorageset_set.all()
 
         items = backup.query_binlog_from_bklog(start_time, end_time)
         instance_binlogs = defaultdict(list)
+        # ip-port : {[不连续的值],[]}
         shard_binlog_stat = {}
         for i in items:
             instance = "{}:{}".format(i.get("mysql_host"), i.get("mysql_port"))
@@ -83,12 +85,17 @@ def _check_binlog_backup(cluster_type, date_str):
         backup.success = True
         if not instance_binlogs:
             backup.success = False
+            shard_binlog_stat = "no any binlog found"
 
         for inst, binlogs in instance_binlogs.items():
-            suffixes = [f.split(".", 1)[1] for f in binlogs]
-            shard_binlog_stat[inst] = is_consecutive_strings(suffixes)
-            if not shard_binlog_stat[inst]:
+            suffixes = [int(f.split(".", 1)[1]) for f in binlogs]
+            _, shard_binlog_stat[inst] = find_discontinuous_numbers(suffixes)
+            if len(shard_binlog_stat[inst]) > 0:
                 backup.success = False
+                # 找出不连续的文件名
+                prefix, suffix = binlogs[0].split(".", 1)
+                suffix_len = len(suffix)
+                shard_binlog_stat[inst] = [prefix + "." + str(s).zfill(suffix_len) for s in shard_binlog_stat[inst]]
 
         if not backup.success:
             MysqlBackupCheckReport.objects.create(
@@ -100,20 +107,3 @@ def _check_binlog_backup(cluster_type, date_str):
                 msg="binlog is not consecutive:{}".format(shard_binlog_stat),
                 subtype=MysqlBackupCheckSubType.BinlogSeq.value,
             )
-
-
-def is_consecutive_strings(str_list: list):
-    """
-    判断字符串数字是否连续
-    """
-    int_list = [int(s) for s in str_list]
-    int_sorted = list(set(int_list))
-    int_sorted.sort()
-    if len(int_sorted) == 0:
-        return False
-    if len(int_sorted) == 1:
-        return True
-    if len(int_sorted) == int_sorted[-1] - int_sorted[0] + 1:
-        return True
-    else:
-        return False

@@ -46,16 +46,22 @@ class MachineEventFilter(filters.FilterSet):
 
 
 class DirtyMachinePoolFilter(filters.FilterSet):
+    bk_host_ids = filters.CharFilter(field_name="bk_host_id", method="filter_host_ids", label=_("过滤主机ID"))
     ips = filters.CharFilter(field_name="ip", method="filter_ips", label=_("过滤IP"))
     city = filters.CharFilter(field_name="city", lookup_expr="icontains", label=_("城市"))
     sub_zone = filters.CharFilter(field_name="sub_zone", lookup_expr="icontains", label=_("园区"))
     rack_id = filters.CharFilter(field_name="rack_id", lookup_expr="icontains", label=_("机架"))
     device_class = filters.CharFilter(field_name="device_class", lookup_expr="icontains", label=_("机型"))
     os_name = filters.CharFilter(field_name="os_name", lookup_expr="icontains", label=_("操作系统"))
+    update_at__lte = filters.DateTimeFilter(field_name="update_at", lookup_expr="lte", label=_("更新时间早于"))
+    update_at__gte = filters.DateTimeFilter(field_name="update_at", lookup_expr="gte", label=_("更新时间晚于"))
 
     def filter_ips(self, queryset, name, value):
         return queryset.filter(ip__in=value.split(","))
 
+    def filter_host_ids(self, queryset, name, value):
+        return queryset.filter(bk_host_id__in=value.split(","))
+
     class Meta:
         model = DirtyMachine
-        fields = {"creator": ["exact"], "pool": ["exact"]}
+        fields = {"updater": ["exact"], "pool": ["exact"]}

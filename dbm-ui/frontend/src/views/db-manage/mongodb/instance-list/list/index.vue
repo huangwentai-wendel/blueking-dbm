@@ -13,13 +13,14 @@
           content: t('请选择操作实例'),
         }">
         <BkButton
-          class="w-88 ml-6"
+          class="w-88 ml-12"
           :disabled="!hasSelected"
           @click="handleChangeInstanceOnline(selected)">
           {{ t('批量重启') }}
         </BkButton>
       </span>
       <DropdownExportExcel
+        class="ml-12"
         export-type="instance"
         :has-selected="hasSelected"
         :ids="selectedIds"
@@ -135,14 +136,22 @@
       name: t('域名'),
     },
     {
+      id: 'name',
+      name: t('集群名称'),
+    },
+    {
       children: [
         {
-          id: 'running',
-          name: t('正常'),
+          text: t('正常'),
+          value: 'running',
         },
         {
-          id: 'unavailable',
-          name: t('异常'),
+          text: t('异常'),
+          value: 'unavailable',
+        },
+        {
+          text: t('重建中'),
+          value: 'restoring',
         },
       ],
       id: 'status',
@@ -191,7 +200,7 @@
         showOverflowTooltip: false,
       },
       {
-        field: 'master_domain',
+        field: 'instance_domain',
         fixed: 'left',
         label: t('域名'),
         minWidth: 200,
@@ -202,9 +211,29 @@
             <router-link
               to={{
                 name: data.cluster_type === 'MongoReplicaSet' ? 'MongoDBReplicaSetList' : 'MongoDBSharedClusterList',
-                query: { domain: data.master_domain },
+                query: { domain: data.instance_domain },
               }}>
-              {data.master_domain}
+              {data.instance_domain}
+            </router-link>
+          </div>
+        ),
+        showOverflowTooltip: false,
+      },
+      {
+        field: 'cluster_name',
+        fixed: 'left',
+        label: t('所属集群'),
+        minWidth: 200,
+        render: ({ data }: { data: MongodbInstanceModel }) => (
+          <div
+            v-overflow-tips
+            class='text-overflow'>
+            <router-link
+              to={{
+                name: data.cluster_type === 'MongoReplicaSet' ? 'MongoDBReplicaSetList' : 'MongoDBSharedClusterList',
+                query: { name: data.cluster_name },
+              }}>
+              {data.cluster_name}
             </router-link>
           </div>
         ),
@@ -230,6 +259,10 @@
             {
               text: t('异常'),
               value: 'unavailable',
+            },
+            {
+              text: t('重建中'),
+              value: 'restoring',
             },
           ],
         },

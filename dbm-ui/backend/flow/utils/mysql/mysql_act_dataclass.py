@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
 from backend import env
+from backend.db_dirty.constants import MachineEventType
 from backend.env import BACKUP_DOWNLOAD_USER, BACKUP_DOWNLOAD_USER_PWD
 from backend.flow.consts import (
     BIGFILE_JOB_SCP_TIMEOUT,
@@ -41,6 +42,7 @@ class ExecActuatorBaseKwargs:
 
     bk_cloud_id: int  # 对应的云区域ID
     run_as_system_user: str = None  # 表示执行job的api的操作用户, None 默认是用root用户
+    payload_class: str = None
     get_mysql_payload_func: str = None  # 上下文中MysqlActPayload类的获取参数方法名称。空则传入None
     cluster_type: str = None  # 表示操作的集群类型,如果过程中不需要这个变量，则可以传None
     cluster: dict = field(default_factory=dict)  # 表示单据执行的集群信息，比如集群名称，集群域名等
@@ -425,6 +427,7 @@ class CheckSlaveStatusKwargs(ExecuteRdsKwargs):
 
 @dataclass()
 class MysqlCheckSumKwargs:
+    uid: int
     bk_biz_id: int
     created_by: str
     checksum_info: dict = None
@@ -534,12 +537,10 @@ class ImportMachinePollKwargs:
 
     bk_biz_id: int
     db_type: str
-    recycle_hosts: list
     operator: str
-    ips: list
-    ip_dest: str
     ticket_id: int
-    remark: str
+    event: MachineEventType = ""
+    hosts: list = None
 
 
 @dataclass()

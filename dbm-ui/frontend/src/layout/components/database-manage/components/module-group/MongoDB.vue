@@ -11,7 +11,7 @@
             :cluster-type="ClusterTypes.MONGO_REPLICA_SET"
             role="cluster" />
         </template>
-        <BkMenuItem key="MongoDBReplicaSetList">
+        <BkMenuItem key="MongoDBReplicaSet">
           <span
             v-overflow-tips.right
             class="text-overflow">
@@ -32,7 +32,7 @@
             role="cluster" />
         </BkMenuItem>
       </BkSubmenu>
-      <BkSubmenu key="mongodb-permission">
+      <BkSubmenu>
         <template #icon>
           <DbIcon type="history" />
         </template>
@@ -42,7 +42,7 @@
             :cluster-type="ClusterTypes.MONGO_SHARED_CLUSTER"
             role="cluster" />
         </template>
-        <BkMenuItem key="MongoDBSharedClusterList">
+        <BkMenuItem key="MongoDBSharedCluster">
           <span
             v-overflow-tips.right
             class="text-overflow">

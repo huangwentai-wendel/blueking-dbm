@@ -32,9 +32,9 @@
   import { useI18n } from 'vue-i18n';
   import { useRouter } from 'vue-router';
 
-  import TicketModel, { type Redis } from '@services/model/ticket/ticket';
+  import TicketModel from '@services/model/ticket/ticket';
 
-  import { ClusterTypes, TicketTypes } from '@common/const';
+  import { TicketTypes } from '@common/const';
 
   import { getBusinessHref } from '@utils';
 
@@ -69,6 +69,8 @@
     [TicketTypes.TENDBCLUSTER_ROLLBACK_CLUSTER]: TicketTypes.TENDBCLUSTER_ROLLBACK_CLUSTER, // Spider 定点回档
     [TicketTypes.TENDBCLUSTER_SPIDER_MNT_APPLY]: TicketTypes.TENDBCLUSTER_SPIDER_MNT_APPLY, // Spider 添加运维节点
     [TicketTypes.TENDBCLUSTER_SPIDER_REDUCE_NODES]: TicketTypes.TENDBCLUSTER_SPIDER_REDUCE_NODES, // spider 缩容接入层
+    [TicketTypes.TENDBCLUSTER_SPIDER_SWITCH_NODES]: TicketTypes.TENDBCLUSTER_SPIDER_SWITCH_NODES, // spider 替换接入层
+    [TicketTypes.TENDBCLUSTER_SPIDER_SLAVE_APPLY]: TicketTypes.TENDBCLUSTER_SPIDER_SLAVE_APPLY, // Spider 部署只读接入层
   };
 
   /**
@@ -76,7 +78,13 @@
    */
   const ticketTypeRouteNameMap: Record<string, string> = {
     ...resourcePoolTickets,
+    [TicketTypes.MONGODB_ADD_MONGOS]: TicketTypes.MONGODB_ADD_MONGOS, // mongodb 扩容接入层
+    [TicketTypes.MONGODB_ADD_SHARD_NODES]: TicketTypes.MONGODB_ADD_SHARD_NODES, // 扩容 Shard 节点数
+    [TicketTypes.MONGODB_BACKUP]: TicketTypes.MONGODB_BACKUP, // mongodb 库表备份
+    [TicketTypes.MONGODB_FULL_BACKUP]: TicketTypes.MONGODB_FULL_BACKUP, // mongodb 全库备份
     [TicketTypes.MONGODB_PITR_RESTORE]: TicketTypes.MONGODB_PITR_RESTORE, // mongo 定点构造
+    [TicketTypes.MONGODB_REDUCE_SHARD_NODES]: TicketTypes.MONGODB_REDUCE_SHARD_NODES, // 缩容 Shard 节点数
+    [TicketTypes.MONGODB_REMOVE_NS]: TicketTypes.MONGODB_REMOVE_NS,
     [TicketTypes.MONGODB_SCALE_UPDOWN]: TicketTypes.MONGODB_SCALE_UPDOWN, // mongodb 集群容量变更
     [TicketTypes.MYSQL_ADD_SLAVE]: TicketTypes.MYSQL_ADD_SLAVE, // Mysql 添加从库
     [TicketTypes.MYSQL_AUTHORIZE_RULES]: 'PermissionRules', // Mysql 授权
@@ -84,26 +92,26 @@
     [TicketTypes.MYSQL_CLIENT_CLONE_RULES]: 'MySQLPrivilegeCloneClient', // Mysql 客户端权限克隆
     [TicketTypes.MYSQL_DATA_MIGRATE]: 'MySQLDataMigrate', // Mysql DB克隆
     [TicketTypes.MYSQL_EXCEL_AUTHORIZE_RULES]: '', // Mysql excel 授权
-    [TicketTypes.MYSQL_FLASHBACK]: TicketTypes.MYSQL_FLASHBACK, // Mysql 闪回
+    [TicketTypes.MYSQL_FLASHBACK]: 'MySQLDBFlashback', // Mysql 闪回
     [TicketTypes.MYSQL_HA_APPLY]: 'SelfServiceApplyHa', // Mysql 主从部署
     [TicketTypes.MYSQL_HA_DB_TABLE_BACKUP]: 'MySQLDBTableBackup', // Mysql 库表备份
     [TicketTypes.MYSQL_HA_DESTROY]: 'DatabaseTendbha', // Mysql 删除
     [TicketTypes.MYSQL_HA_DISABLE]: 'DatabaseTendbha', // Mysql 禁用
     [TicketTypes.MYSQL_HA_ENABLE]: 'DatabaseTendbha', // Mysql 启用
     [TicketTypes.MYSQL_HA_FULL_BACKUP]: 'MySQLDBBackup', // Mysql 全库备份
-    [TicketTypes.MYSQL_HA_RENAME_DATABASE]: 'MySQLDBRename', // Mysql DB重命名
     [TicketTypes.MYSQL_HA_TRUNCATE_DATA]: 'MySQLDBClear', // Mysql 高可用清档
     [TicketTypes.MYSQL_IMPORT_SQLFILE]: 'MySQLExecute', // Mysql 变更SQL执行
     [TicketTypes.MYSQL_INSTANCE_CLONE_RULES]: 'MySQLPrivilegeCloneInst', // Mysql DB实例权限克隆
     [TicketTypes.MYSQL_LOCAL_UPGRADE]: TicketTypes.MYSQL_PROXY_UPGRADE, // MySQL 原地升级
     [TicketTypes.MYSQL_MASTER_FAIL_OVER]: TicketTypes.MYSQL_MASTER_FAIL_OVER, // Mysql 主库故障切换
-    [TicketTypes.MYSQL_MASTER_SLAVE_SWITCH]: 'MySQLMasterSlaveSwap', // Mysql 主从互切
+    [TicketTypes.MYSQL_MASTER_SLAVE_SWITCH]: TicketTypes.MYSQL_MASTER_SLAVE_SWITCH, // Mysql 主从互切
     [TicketTypes.MYSQL_MIGRATE_CLUSTER]: TicketTypes.MYSQL_MIGRATE_CLUSTER, // Mysql 迁移主从
     [TicketTypes.MYSQL_MIGRATE_UPGRADE]: TicketTypes.MYSQL_PROXY_UPGRADE, // MySQL 迁移升级
     [TicketTypes.MYSQL_OPEN_AREA]: 'MySQLOpenareaTemplate', // Mysql 新建开区
     [TicketTypes.MYSQL_PROXY_ADD]: TicketTypes.MYSQL_PROXY_ADD, // Mysql 添加Proxy
     [TicketTypes.MYSQL_PROXY_SWITCH]: TicketTypes.MYSQL_PROXY_SWITCH, // Mysql 替换Proxy
     [TicketTypes.MYSQL_PROXY_UPGRADE]: TicketTypes.MYSQL_PROXY_UPGRADE, // MySQL Proxy 升级
+    [TicketTypes.MYSQL_RENAME_DATABASE]: TicketTypes.MYSQL_RENAME_DATABASE, // Mysql DB重命名
     [TicketTypes.MYSQL_RESTORE_LOCAL_SLAVE]: TicketTypes.MYSQL_RESTORE_LOCAL_SLAVE, // Mysql 重建从库
     [TicketTypes.MYSQL_RESTORE_SLAVE]: TicketTypes.MYSQL_RESTORE_LOCAL_SLAVE, // Mysql 重建从库
     [TicketTypes.MYSQL_ROLLBACK_CLUSTER]: TicketTypes.MYSQL_ROLLBACK_CLUSTER, // Mysql 定点构造
@@ -111,24 +119,25 @@
     [TicketTypes.MYSQL_SINGLE_DESTROY]: 'DatabaseTendbsingle', // Mysql 单节点删除
     [TicketTypes.MYSQL_SINGLE_DISABLE]: 'DatabaseTendbsingle', // Mysql 单节点禁用
     [TicketTypes.MYSQL_SINGLE_ENABLE]: 'DatabaseTendbsingle', // Mysql 单节点启用
-    [TicketTypes.MYSQL_SINGLE_RENAME_DATABASE]: 'MySQLDBRename', // Mysql DB重命名
     [TicketTypes.MYSQL_SINGLE_TRUNCATE_DATA]: 'MySQLDBClear', // Mysql 单节点清档
-    [TicketTypes.REDIS_BACKUP]: 'DatabaseRedisList', // Redis 集群备份
-    [TicketTypes.REDIS_CLUSTER_ADD_SLAVE]: 'RedisDBCreateSlave', // Redis 重建从库
+    [TicketTypes.REDIS_BACKUP]: TicketTypes.REDIS_BACKUP, // Redis 集群备份
+    [TicketTypes.REDIS_CLUSTER_ADD_SLAVE]: TicketTypes.REDIS_CLUSTER_ADD_SLAVE, // Redis 重建从库
     [TicketTypes.REDIS_CLUSTER_APPLY]: 'SelfServiceApplyRedis', // Redis 申请部署
     [TicketTypes.REDIS_CLUSTER_CUTOFF]: TicketTypes.REDIS_CLUSTER_CUTOFF, // Redis 整机替换
-    [TicketTypes.REDIS_CLUSTER_DATA_COPY]: 'RedisDBDataCopy', // Redis 数据复制
-    [TicketTypes.REDIS_CLUSTER_INS_MIGRATE]: 'RedisMigrate', // Redis 集群迁移
+    [TicketTypes.REDIS_CLUSTER_DATA_COPY]: TicketTypes.REDIS_CLUSTER_DATA_COPY, // Redis 数据复制
+    [TicketTypes.REDIS_CLUSTER_INS_MIGRATE]: TicketTypes.REDIS_CLUSTER_INS_MIGRATE, // Redis 集群迁移
+    [TicketTypes.REDIS_CLUSTER_LOAD_MODULES]: TicketTypes.REDIS_CLUSTER_LOAD_MODULES, // 安装 Module
     [TicketTypes.REDIS_CLUSTER_ROLLBACK_DATA_COPY]: 'RedisRecoverFromInstance', // Redis 以构造实例恢复
-    [TicketTypes.REDIS_CLUSTER_SHARD_NUM_UPDATE]: 'RedisClusterShardUpdate', // Redis 集群分片变更
-    [TicketTypes.REDIS_CLUSTER_TYPE_UPDATE]: 'RedisClusterTypeUpdate', // Redis 集群类型变更
+    [TicketTypes.REDIS_CLUSTER_SHARD_NUM_UPDATE]: TicketTypes.REDIS_CLUSTER_SHARD_NUM_UPDATE, // Redis 集群分片变更
+    [TicketTypes.REDIS_CLUSTER_TYPE_UPDATE]: TicketTypes.REDIS_CLUSTER_TYPE_UPDATE, // Redis 集群类型变更
     [TicketTypes.REDIS_DATA_STRUCTURE]: 'RedisDBStructure', // Redis 定点构造
     [TicketTypes.REDIS_DATA_STRUCTURE_TASK_DELETE]: 'RedisStructureInstance', // Redis 删除构造任务
-    [TicketTypes.REDIS_DATACOPY_CHECK_REPAIR]: 'RedisToolboxDataCheckRepair', // Redis 数据校验修复
+    [TicketTypes.REDIS_DATACOPY_CHECK_REPAIR]: TicketTypes.REDIS_DATACOPY_CHECK_REPAIR, // Redis 数据校验修复
     [TicketTypes.REDIS_DESTROY]: 'DatabaseRedisList', // Redis 集群删除
-    [TicketTypes.REDIS_KEYS_DELETE]: 'DatabaseRedisList', // Redis 删除 key
-    [TicketTypes.REDIS_KEYS_EXTRACT]: 'DatabaseRedisList', // Redis 提取 Key
-    [TicketTypes.REDIS_MASTER_SLAVE_SWITCH]: 'RedisMasterFailover', // Redis 主从切换
+    [TicketTypes.REDIS_HOT_KEY_ANALYSIS]: TicketTypes.REDIS_HOT_KEY_ANALYSIS,
+    [TicketTypes.REDIS_KEYS_DELETE]: TicketTypes.REDIS_KEYS_DELETE, // Redis 删除 key
+    [TicketTypes.REDIS_KEYS_EXTRACT]: TicketTypes.REDIS_KEYS_EXTRACT, // Redis 提取 Key
+    [TicketTypes.REDIS_MASTER_SLAVE_SWITCH]: TicketTypes.REDIS_MASTER_SLAVE_SWITCH, // Redis 主从切换
     [TicketTypes.REDIS_PLUGIN_CREATE_CLB]: 'DatabaseRedisList', // Redis 创建CLB
     [TicketTypes.REDIS_PLUGIN_CREATE_POLARIS]: 'DatabaseRedisList', // Redis 删除构造任务
     [TicketTypes.REDIS_PLUGIN_DELETE_CLB]: 'DatabaseRedisList', // Redis 删除CLB
@@ -138,19 +147,19 @@
     [TicketTypes.REDIS_PROXY_CLOSE]: 'DatabaseRedisList', // Redis 集群禁用
     [TicketTypes.REDIS_PROXY_OPEN]: 'DatabaseRedisList', // Redis 集群启用
     [TicketTypes.REDIS_PROXY_SCALE_DOWN]: TicketTypes.REDIS_PROXY_SCALE_DOWN, // Redis 缩容接入层
-    [TicketTypes.REDIS_PROXY_SCALE_UP]: 'RedisProxyScaleUp', // Redis 扩容接入层
-    [TicketTypes.REDIS_PURGE]: 'DatabaseRedisList', // Redis 集群清档
+    [TicketTypes.REDIS_PROXY_SCALE_UP]: TicketTypes.REDIS_PROXY_SCALE_UP, // Redis 扩容接入层
+    [TicketTypes.REDIS_PURGE]: TicketTypes.REDIS_PURGE, // Redis 集群清档
     [TicketTypes.REDIS_SCALE_UPDOWN]: TicketTypes.REDIS_SCALE_UPDOWN, // Redis 集群容量变更
-    [TicketTypes.REDIS_SINGLE_INS_MIGRATE]: 'RedisMigrate', // Redis 主从迁移
-    [TicketTypes.REDIS_VERSION_UPDATE_ONLINE]: 'RedisVersionUpgrade', // redis 版本升级
+    [TicketTypes.REDIS_SINGLE_INS_MIGRATE]: TicketTypes.REDIS_SINGLE_INS_MIGRATE, // Redis 主从迁移
+    [TicketTypes.REDIS_VERSION_UPDATE_ONLINE]: TicketTypes.REDIS_VERSION_UPDATE_ONLINE, // redis 版本升级
     [TicketTypes.SQLSERVER_ADD_SLAVE]: TicketTypes.SQLSERVER_ADD_SLAVE, // sqlserver 添加从库
     [TicketTypes.SQLSERVER_BACKUP_DBS]: TicketTypes.SQLSERVER_BACKUP_DBS, // sqlserver 库备份
     [TicketTypes.SQLSERVER_CLEAR_DBS]: TicketTypes.SQLSERVER_CLEAR_DBS, // sqlserver 清档
     [TicketTypes.SQLSERVER_DATA_MIGRATE]: 'sqlServerDataMigrate', // sqlserver 数据迁移
     [TicketTypes.SQLSERVER_DBRENAME]: TicketTypes.SQLSERVER_DBRENAME, // sqlserver DB重命名
-    [TicketTypes.SQLSERVER_FULL_MIGRATE]: 'sqlServerDataMigrate', // sqlserver 全库迁移
+    [TicketTypes.SQLSERVER_FULL_MIGRATE]: TicketTypes.SQLSERVER_FULL_MIGRATE, // sqlserver 全库迁移
     [TicketTypes.SQLSERVER_IMPORT_SQLFILE]: 'sqlServerExecute', // sqlserver 变更SQL执行
-    [TicketTypes.SQLSERVER_INCR_MIGRATE]: 'sqlServerDataMigrate', // sqlserver 增量迁移
+    [TicketTypes.SQLSERVER_INCR_MIGRATE]: TicketTypes.SQLSERVER_INCR_MIGRATE, // sqlserver 增量迁移
     [TicketTypes.SQLSERVER_MASTER_FAIL_OVER]: 'sqlServerMasterFailover', // sqlserver 主库故障切换
     [TicketTypes.SQLSERVER_MASTER_SLAVE_SWITCH]: 'sqlServerMasterSlaveSwap', // sqlserver 主从互切
     [TicketTypes.SQLSERVER_RESTORE_LOCAL_SLAVE]: TicketTypes.SQLSERVER_RESTORE_LOCAL_SLAVE, // sqlserver 重建从库_原地重建
@@ -161,7 +170,7 @@
     [TicketTypes.TENDBCLUSTER_CHECKSUM]: 'spiderChecksum', // Spider checksum
     [TicketTypes.TENDBCLUSTER_CLIENT_CLONE_RULES]: 'spiderPrivilegeCloneClient', // Spider 客户端权限克隆
     [TicketTypes.TENDBCLUSTER_DB_TABLE_BACKUP]: 'spiderDbTableBackup', // Spider TenDBCluster 库表备份
-    [TicketTypes.TENDBCLUSTER_FLASHBACK]: TicketTypes.TENDBCLUSTER_FLASHBACK, // Spider 闪回
+    [TicketTypes.TENDBCLUSTER_FLASHBACK]: 'spiderFlashback', // Spider 闪回
     [TicketTypes.TENDBCLUSTER_FULL_BACKUP]: 'spiderDbBackup', // Spider TenDBCluster 全备单据
     [TicketTypes.TENDBCLUSTER_IMPORT_SQLFILE]: 'spiderSqlExecute', // Spider SQL变更执行
     [TicketTypes.TENDBCLUSTER_INSTANCE_CLONE_RULES]: 'spiderPrivilegeCloneInst', // Spider DB 实例权限克隆
@@ -170,7 +179,7 @@
     [TicketTypes.TENDBCLUSTER_MIGRATE_CLUSTER]: TicketTypes.TENDBCLUSTER_MIGRATE_CLUSTER, // spider 迁移主从
     [TicketTypes.TENDBCLUSTER_NODE_REBALANCE]: TicketTypes.TENDBCLUSTER_NODE_REBALANCE, // Spider 集群remote节点扩缩容
     [TicketTypes.TENDBCLUSTER_OPEN_AREA]: 'spiderOpenareaTemplate', // Spider 开区
-    [TicketTypes.TENDBCLUSTER_RENAME_DATABASE]: 'spiderDbRename', // Spider Tendbcluster 重命名
+    [TicketTypes.TENDBCLUSTER_RENAME_DATABASE]: TicketTypes.TENDBCLUSTER_RENAME_DATABASE, // Spider Tendbcluster 重命名
     [TicketTypes.TENDBCLUSTER_RESTORE_LOCAL_SLAVE]: TicketTypes.TENDBCLUSTER_RESTORE_LOCAL_SLAVE, // spider 重建从库-原地重建
     [TicketTypes.TENDBCLUSTER_RESTORE_SLAVE]: TicketTypes.TENDBCLUSTER_RESTORE_LOCAL_SLAVE, // spider 重建从库-新机重建
     [TicketTypes.TENDBCLUSTER_ROLLBACK_CLUSTER]: TicketTypes.TENDBCLUSTER_ROLLBACK_CLUSTER, // Spider 定点回档
@@ -196,25 +205,26 @@
   });
 
   const handleResubmitTicket = async () => {
-    let name = '';
-    if (
-      [
-        TicketTypes.REDIS_BACKUP,
-        TicketTypes.REDIS_KEYS_DELETE,
-        TicketTypes.REDIS_KEYS_EXTRACT,
-        TicketTypes.REDIS_PURGE,
-      ].includes(props.data.ticket_type)
-    ) {
-      const clusterInfo = Object.values((props.data.details as Redis.ClusterRollbackDataCopy).clusters)[0];
-      if (clusterInfo.cluster_type === ClusterTypes.REDIS_INSTANCE) {
-        name = 'DatabaseRedisHaList';
-      } else {
-        name = 'DatabaseRedisList';
-      }
-    } else {
-      name = ticketTypeRouteNameMap[props.data.ticket_type];
-    }
+    // let name = '';
+    // if (
+    //   [
+    //     TicketTypes.REDIS_BACKUP,
+    //     TicketTypes.REDIS_KEYS_DELETE,
+    //     TicketTypes.REDIS_KEYS_EXTRACT,
+    //     TicketTypes.REDIS_PURGE,
+    //   ].includes(props.data.ticket_type)
+    // ) {
+    //   const clusterInfo = Object.values((props.data.details as Redis.ClusterRollbackDataCopy).clusters)[0];
+    //   if (clusterInfo.cluster_type === ClusterTypes.REDIS_INSTANCE) {
+    //     name = 'DatabaseRedisHaList';
+    //   } else {
+    //     name = 'DatabaseRedisList';
+    //   }
+    // } else {
+    //   name = ticketTypeRouteNameMap[props.data.ticket_type];
+    // }
 
+    const name = ticketTypeRouteNameMap[props.data.ticket_type];
     if (name) {
       const { href } = router.resolve({
         name,

@@ -17,8 +17,7 @@
       <TableEditSelect
         ref="selectRef"
         v-model="localValue"
-        :disabled="!localValue"
-        :list="selectList"
+        :list="specList"
         :placeholder="t('输入集群后自动生成')"
         :rules="rules"
         @change="(value) => handleChange(value as number)" />
@@ -35,7 +34,6 @@
 
   interface Props {
     cloudId?: number;
-    currentSpecIds?: number[];
     data?: number;
   }
 
@@ -47,7 +45,6 @@
 
   const props = withDefaults(defineProps<Props>(), {
     cloudId: 0,
-    currentSpecIds: () => [],
     data: undefined,
   });
 
@@ -65,10 +62,6 @@
       validator: (value: string) => Boolean(value),
     },
   ];
-
-  const selectList = computed(() =>
-    specList.value.map((item) => Object.assign({}, item, { isCurrent: props.currentSpecIds.includes(item.id) })),
-  );
 
   watch(
     () => props.data,
@@ -91,7 +84,6 @@
           });
           specList.value = specResultList.map((item) => ({
             id: item.spec_id,
-            isCurrent: false,
             name: item.spec_name,
             specData: {
               count: countResult[item.spec_id],

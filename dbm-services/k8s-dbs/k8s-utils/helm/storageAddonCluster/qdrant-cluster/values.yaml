@@ -1,0 +1,38 @@
+# Default values for qdrant cluster.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+clusterName: qdrant-cluster
+namespace: default
+labels:
+annotations:
+terminationPolicy: Delete
+topoName: cluster
+addonVersion: "1.0.0"
+componentList:
+  - componentName: qdrant
+    componentDef: qdrant
+    env:
+    replicas: 1
+    resources:
+      requests:
+        cpu: "0.5"
+        memory: "0.5Gi"
+      limits:
+        cpu: "0.5"
+        memory: "0.5Gi"
+    volumeClaimTemplates:
+      accessModes: ["ReadWriteOnce"]
+      storage: "20Gi"
+      storageClassName: "cbs"
+      volumeMode: "Filesystem"
+
+observeConfig:
+  bkLogConfig:
+    enabled: false
+    labels: {}
+    dataId:
+  svcMonitor:
+    enabled: false
+    labels: {}
+    interval: "15s"

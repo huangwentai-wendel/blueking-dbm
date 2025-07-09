@@ -1,0 +1,94 @@
+apiVersion: apps.kubeblocks.io/v1alpha1
+kind: Cluster
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- toYaml .Values.labels | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.annotations | nindent 4 }}
+spec:
+  clusterDefinitionRef: {{ include "victoriametrics-cdName" . }}
+  topology: {{ .Values.topoName}}
+  terminationPolicy: {{ .Values.terminationPolicy}}
+  componentSpecs:
+    {{- range .Values.componentList }}
+    {{- if and (eq .componentName "vminsert") (eq $.Values.topoName "cluster") }}
+    - name: vminsert
+      serviceVersion: {{ .serviceVersion }}
+      serviceAccountName: {{ include "victoriametrics.serviceAccountName" $ }}
+      instanceUpdateStrategy:
+        maxUnavailable: {{ .instanceUpdateStrategy.maxUnavailable }}
+      {{- with .env }}
+      env:
+        {{- range $key, $value := . }}
+        - name: {{ $key | quote }}
+          value: {{ $value | quote }}
+        {{- end }}
+      {{- end }}
+      replicas: {{ .replicas }}
+      resources:
+        limits:
+          cpu: {{ .resources.limits.cpu }}
+          memory: {{ .resources.limits.memory }}
+        requests:
+          cpu: {{ .resources.requests.cpu }}
+          memory: {{ .resources.requests.memory }}
+    {{- end}}
+
+    {{- if eq .componentName "vmselect" }}
+    - name: vmselect
+      serviceVersion: {{ .serviceVersion }}
+      serviceAccountName: {{ include "victoriametrics.serviceAccountName" $ }}
+      instanceUpdateStrategy:
+        maxUnavailable: {{ .instanceUpdateStrategy.maxUnavailable }}
+      {{- with .env }}
+      env:
+        {{- range $key, $value := . }}
+        - name: {{ $key | quote }}
+          value: {{ $value | quote }}
+        {{- end }}
+      {{- end }}
+      replicas: {{ .replicas }}
+      resources:
+        limits:
+          cpu: {{ .resources.limits.cpu }}
+          memory: {{ .resources.limits.memory }}
+        requests:
+          cpu: {{ .resources.requests.cpu }}
+          memory: {{ .resources.requests.memory }}
+    {{- end}}
+
+    {{- if and (eq .componentName "vmstorage") (eq $.Values.topoName "cluster") }}
+    - name: vmstorage
+      serviceVersion: {{ .serviceVersion }}
+      {{- with .env }}
+      env:
+        {{- range $key, $value := . }}
+        - name: {{ $key | quote }}
+          value: {{ $value | quote }}
+        {{- end }}
+      {{- end }}
+      replicas: {{ .replicas }}
+      resources:
+        limits:
+          cpu: {{ .resources.limits.cpu }}
+          memory: {{ .resources.limits.memory }}
+        requests:
+          cpu: {{ .resources.requests.cpu }}
+          memory: {{ .resources.requests.memory }}
+      volumeClaimTemplates:
+        - name: data
+          spec:
+            accessModes:
+              {{- range .volumeClaimTemplates.accessModes }}
+              - {{ . }}
+              {{- end }}
+            resources:
+              requests:
+                storage: {{ .volumeClaimTemplates.storage }}
+            storageClassName: {{ .volumeClaimTemplates.storageClassName }}
+            volumeMode: {{ .volumeClaimTemplates.volumeMode }}
+    {{- end}}
+
+    {{- end}}

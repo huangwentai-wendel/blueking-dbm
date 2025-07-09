@@ -9,11 +9,13 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 import logging
+from collections import defaultdict
 from copy import deepcopy
 from dataclasses import asdict
 from typing import Dict, List, Optional
 
 from bamboo_engine.builder import SubProcess
+from deprecated import deprecated
 from django.utils.translation import ugettext as _
 
 from backend.db_meta.enums import AccessLayer, ClusterMachineAccessTypeDefine, ClusterType, MachineType
@@ -24,15 +26,17 @@ from backend.flow.engine.bamboo.scene.mysql.deploy_peripheraltools.clusters_deta
 )
 from backend.flow.engine.bamboo.scene.mysql.deploy_peripheraltools.departs import (
     DeployPeripheralToolsDepart,
-    remove_depart,
+    remove_departs,
 )
 from backend.flow.plugins.components.collections.mysql.exec_actuator_script import ExecuteDBActuatorScriptComponent
+from backend.flow.utils.mysql.act_payload.mysql.peripheraltools import PeripheralToolsPayload
 from backend.flow.utils.mysql.mysql_act_dataclass import ExecActuatorKwargs
 from backend.flow.utils.mysql.mysql_act_playload import MysqlActPayload
 
 logger = logging.getLogger("flow")
 
 
+@deprecated
 def push_mysql_crond_config(
     root_id: str,
     data: Dict,
@@ -67,6 +71,7 @@ def push_mysql_crond_config(
     return sp.build_sub_process(sub_name=_("推送 mysql-crond 配置"))
 
 
+@deprecated
 def push_departs_config(
     root_id: str,
     data: Dict,
@@ -102,6 +107,7 @@ def push_departs_config(
     return None
 
 
+@deprecated
 def push_departs_config_for_cluster(
     root_id: str,
     data: Dict,
@@ -137,14 +143,16 @@ def push_departs_config_for_cluster(
     # TenDBSingle 没有 proxy, 不用跑这个分支
     # 但是有人提过想要有 proxy 的 TenDBSingle
     if cluster_type != ClusterType.TenDBSingle and proxy_ip_port_dict:
-        departs_on_proxy = deepcopy(departs)
         # 接入层不跑校验, 强制删除
-        remove_depart(DeployPeripheralToolsDepart.MySQLTableChecksum, departs_on_proxy)
-        remove_depart(DeployPeripheralToolsDepart.MySQLRotateBinlog, departs_on_proxy)
+        departs_on_proxy = remove_departs(
+            deepcopy(departs),
+            DeployPeripheralToolsDepart.MySQLTableChecksum,
+            DeployPeripheralToolsDepart.MySQLRotateBinlog,
+        )
 
         if cluster_type == ClusterType.TenDBHA:
             # proxy 不 rotate 和 备份
-            remove_depart(DeployPeripheralToolsDepart.MySQLDBBackup, departs_on_proxy)
+            departs_on_proxy = remove_departs(departs_on_proxy, DeployPeripheralToolsDepart.MySQLDBBackup)
 
         logger.info("{} proxy push departs config {}".format(cluster_type, departs_on_proxy))
 
@@ -176,6 +184,7 @@ def push_departs_config_for_cluster(
     return None
 
 
+@deprecated
 def push_departs_config_for_cluster_ips(
     root_id: str,
     data: Dict,
@@ -215,6 +224,7 @@ def push_departs_config_for_cluster_ips(
     return None
 
 
+@deprecated
 def make_push_departs_config_for_ip(
     bk_cloud_id,
     bk_biz_id: int,
@@ -284,6 +294,7 @@ def make_push_departs_config_for_ip(
     return acts
 
 
+@deprecated
 def make_push_mysql_monitor_config_act(
     bk_cloud_id,
     bk_biz_id: int,
@@ -318,6 +329,7 @@ def make_push_mysql_monitor_config_act(
     }
 
 
+@deprecated
 def make_push_mysql_dbbackup_config_act(
     bk_cloud_id,
     bk_biz_id: int,
@@ -353,6 +365,7 @@ def make_push_mysql_dbbackup_config_act(
     }
 
 
+@deprecated
 def make_push_mysql_rotatebinlog_config_act(
     bk_cloud_id, bk_biz_id: int, cluster_type: ClusterType, immute_domain: str, ip: str, port_list: List[int]
 ) -> Dict:
@@ -379,6 +392,7 @@ def make_push_mysql_rotatebinlog_config_act(
     }
 
 
+@deprecated
 def make_push_mysql_table_checksum_config_act(
     bk_cloud_id, bk_biz_id: int, cluster_type: ClusterType, immute_domain: str, ip: str, port_list: List[int]
 ) -> Dict:
@@ -403,3 +417,50 @@ def make_push_mysql_table_checksum_config_act(
             )
         ),
     }
+
+
+def gen_reload_departs_config(
+    root_id: str, data: Dict, bk_cloud_id: int, instances: List[str], departs: List[DeployPeripheralToolsDepart]
+) -> SubProcess:
+    ip_ports_dict = defaultdict(list)
+    for inst in instances:
+        ip, port = inst.split(":")
+        ip_ports_dict[ip].append(int(port))
+
+    ipsubs = []
+    for ip, ports in ip_ports_dict.items():
+        ipsub = SubBuilder(root_id=root_id, data=data)
+        ipsub.add_act(
+            act_name=_("生成配置: {}".format([d.value for d in departs])),
+            act_component_code=ExecuteDBActuatorScriptComponent.code,
+            kwargs=asdict(
+                ExecActuatorKwargs(
+                    exec_ip=[ip],
+                    run_as_system_user=DBA_ROOT_USER,
+                    payload_class=PeripheralToolsPayload.payload_class_path(),
+                    get_mysql_payload_func=PeripheralToolsPayload.gen_config.__name__,
+                    bk_cloud_id=bk_cloud_id,
+                    cluster={"ports": ports, "departs": departs},
+                )
+            ),
+        )
+        ipsub.add_act(
+            act_name=_("重载配置: {}".format([d.value for d in departs])),
+            act_component_code=ExecuteDBActuatorScriptComponent.code,
+            kwargs=asdict(
+                ExecActuatorKwargs(
+                    exec_ip=[ip],
+                    bk_cloud_id=bk_cloud_id,
+                    run_as_system_user=DBA_ROOT_USER,
+                    payload_class=PeripheralToolsPayload.payload_class_path(),
+                    get_mysql_payload_func=PeripheralToolsPayload.reload_config.__name__,
+                    cluster={"ports": ports, "departs": departs},
+                )
+            ),
+        )
+
+        ipsubs.append(ipsub.build_sub_process(sub_name="{}:{}".format(ip, ports)))
+
+    sp = SubBuilder(root_id=root_id, data=data)
+    sp.add_parallel_sub_pipeline(sub_flow_list=ipsubs)
+    return sp.build_sub_process(sub_name=_("推送加载 {} 配置".format(departs)))

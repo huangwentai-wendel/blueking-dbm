@@ -18,18 +18,23 @@
     :data="data" />
 </template>
 
-<script setup lang="ts">
+<script setup lang="tsx">
   import { useI18n } from 'vue-i18n';
 
   import TendbhaModel from '@services/model/mysql/tendbha';
 
+  import ClusterTag from '@components/cluster-tag/index.vue';
   import EditInfo, { type InfoColumn } from '@components/editable-info/index.vue';
 
   interface Props {
     data: TendbhaModel;
   }
 
+  type Emits = (e: 'refresh') => void;
+
   const props = defineProps<Props>();
+
+  const emits = defineEmits<Emits>();
 
   const { t } = useI18n();
 
@@ -59,6 +64,16 @@
       {
         key: 'disasterToleranceLevelName',
         label: t('容灾要求'),
+      },
+      {
+        key: 'availableTags',
+        label: t('标签'),
+        render: () => (
+          <ClusterTag
+            data={props.data}
+            onSuccess={() => emits('refresh')}
+          />
+        ),
       },
     ],
     [

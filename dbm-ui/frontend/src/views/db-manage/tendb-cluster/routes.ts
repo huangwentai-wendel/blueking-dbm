@@ -94,15 +94,9 @@ const spiderToolboxRoute = {
       },
       component: () => import('@views/db-manage/tendb-cluster/sql-execute/Index.vue'),
     },
-    {
-      path: 'db-rename/:page?',
-      name: 'spiderDbRename',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.dbRename',
-        navName: t('DB 重命名'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/db-rename/Index.vue'),
-    },
+    createRouteItem(TicketTypes.TENDBCLUSTER_RENAME_DATABASE, t('DB 重命名'), {
+      dbConsole: 'tendbCluster.toolbox.dbRename',
+    }),
     {
       path: 'master-slave-swap/:page?',
       name: 'spiderMasterSlaveSwap',
@@ -135,6 +129,9 @@ const spiderToolboxRoute = {
     },
     createRouteItem(TicketTypes.TENDBCLUSTER_SPIDER_REDUCE_NODES, t('缩容接入层'), {
       dbConsole: 'tendbCluster.toolbox.proxyScaleDown',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_SPIDER_SWITCH_NODES, t('替换接入层'), {
+      dbConsole: 'tendbCluster.toolbox.spiderSwitchNodes',
     }),
     {
       path: 'proxy-slave-apply/:page?',
@@ -276,22 +273,23 @@ const renderRoutes = [
     },
     component: () => import('@views/db-manage/tendb-cluster/Index.vue'),
     children: [
-      // {
-      //   name: 'createSpiderModule',
-      //   path: 'create-module/:bizId(\\d+)',
-      //   meta: {
-      //     navName: t('新建模块'),
-      //   },
-      //   component: () => import('@views/db-manage/tendb-cluster/apply/CreateModule.vue'),
-      // },
       {
-        path: 'cluster-list',
+        path: 'cluster-list/:clusterId?',
         name: 'tendbClusterList',
         meta: {
           fullscreen: true,
           navName: t('TendbCluster分布式集群_集群管理'),
         },
         component: () => import('@views/db-manage/tendb-cluster/cluster-list/Index.vue'),
+      },
+      {
+        path: 'cluster-detail/:clusterId',
+        name: 'tendbClusterDetail',
+        meta: {
+          fullscreen: true,
+          navName: t('TendbCluster分布式集群_集群详情'),
+        },
+        component: () => import('@views/db-manage/tendb-cluster/cluster-detail/Index.vue'),
       },
       {
         path: 'openarea-template-create',

@@ -14,29 +14,26 @@
 <template>
   <div class="redis-cluster-list-page">
     <div class="operation-box">
-      <div>
-        <AuthButton
-          action-id="redis_cluster_apply"
-          class="mb-16"
-          theme="primary"
-          @click="handleApply">
-          {{ t('申请实例') }}
-        </AuthButton>
-        <ClusterBatchOperation
-          v-db-console="'redis.haClusterManage.batchOperation'"
-          class="ml-8"
-          :cluster-type="ClusterTypes.REDIS_INSTANCE"
-          :selected="selected"
-          @success="handleBatchOperationSuccess" />
-        <DropdownExportExcel
-          :ids="selectedIds"
-          type="redis" />
-        <ClusterIpCopy
-          v-db-console="'redis.haClusterManage.batchCopy'"
-          :selected="selected" />
-      </div>
+      <AuthButton
+        action-id="redis_cluster_apply"
+        theme="primary"
+        @click="handleApply">
+        {{ t('申请实例') }}
+      </AuthButton>
+      <ClusterBatchOperation
+        v-db-console="'redis.haClusterManage.batchOperation'"
+        :cluster-type="ClusterTypes.REDIS_INSTANCE"
+        :selected="selected"
+        @success="fetchData" />
+      <DropdownExportExcel
+        :ids="selectedIds"
+        type="redis" />
+      <ClusterIpCopy
+        v-db-console="'redis.haClusterManage.batchCopy'"
+        :selected="selected" />
+      <TagSearch @search="handleTagSearch" />
       <DbSearchSelect
-        class="operations-right mb-16"
+        class="operations-right"
         :data="searchSelectData"
         :get-menu-list="getMenuList"
         :model-value="searchValue"
@@ -86,6 +83,9 @@
         :get-table-instance="getTableInstance"
         :is-filter="isFilter"
         :selected-list="selected" />
+      <ClusterTagColumn
+        :cluster-type="ClusterTypes.REDIS_INSTANCE"
+        @success="fetchData" />
       <StatusColumn :cluster-type="ClusterTypes.REDIS_INSTANCE" />
       <ClusterStatsColumn :cluster-type="ClusterTypes.REDIS_INSTANCE" />
       <RoleColumn
@@ -112,7 +112,9 @@
           <TagBlock :data="data.module_names" />
         </template>
       </BkTableColumn>
-      <CommonColumn :cluster-type="ClusterTypes.REDIS_INSTANCE" />
+      <CommonColumn
+        :cluster-type="ClusterTypes.REDIS_INSTANCE"
+        @refresh="fetchData" />
       <BkTableColumn
         :fixed="isStretchLayoutOpen ? false : 'right'"
         :label="t('操作')"
@@ -135,7 +137,7 @@
               :resource="data.id"
               text
               theme="primary"
-              @click="handleShowExtract([data])">
+              @click="handleToToolbox(TicketTypes.REDIS_KEYS_EXTRACT, [data])">
               {{ t('提取Key') }}
             </AuthButton>
           </OperationBtnStatusTips>
@@ -155,7 +157,7 @@
               :resource="data.id"
               text
               theme="primary"
-              @click="handlShowDeleteKeys([data])">
+              @click="handleToToolbox(TicketTypes.REDIS_KEYS_DELETE, [data])">
               {{ t('删除Key') }}
             </AuthButton>
           </OperationBtnStatusTips>
@@ -186,7 +188,7 @@
                   :resource="data.id"
                   style="width: 100%; height: 32px"
                   text
-                  @click="handleShowBackup([data])">
+                  @click="handleToToolbox(TicketTypes.REDIS_BACKUP, [data])">
                   {{ t('备份') }}
                 </AuthButton>
               </OperationBtnStatusTips>
@@ -202,7 +204,7 @@
                   :resource="data.id"
                   style="width: 100%; height: 32px"
                   text
-                  @click="handleShowPurge([data])">
+                  @click="handleToToolbox(TicketTypes.REDIS_PURGE, [data])">
                   {{ t('清档') }}
                 </AuthButton>
               </OperationBtnStatusTips>
@@ -216,9 +218,26 @@
                   :disabled="data.isOffline"
                   :permission="data.permission.redis_access_entry_view"
                   :resource="data.id"
+                  style="width: 100%; height: 32px"
                   text
                   @click="handleShowPassword(data.id)">
                   {{ t('获取访问方式') }}
+                </AuthButton>
+              </OperationBtnStatusTips>
+            </BkDropdownItem>
+            <BkDropdownItem v-db-console="'redis.haClusterManage.queryAccessSource'">
+              <OperationBtnStatusTips
+                :data="data"
+                :disabled="!data.isOffline">
+                <AuthButton
+                  action-id="redis_source_access_view"
+                  :disabled="data.isOffline"
+                  :permission="data.permission.redis_source_access_view"
+                  :resource="data.id"
+                  style="width: 100%; height: 32px"
+                  text
+                  @click="handleGoQueryAccessSourcePage(data.master_domain)">
+                  {{ t('查询访问来源') }}
                 </AuthButton>
               </OperationBtnStatusTips>
             </BkDropdownItem>
@@ -247,6 +266,7 @@
                   :disabled="data.isStarting"
                   :permission="data.permission.redis_open_close"
                   :resource="data.id"
+                  style="width: 100%; height: 32px"
                   text
                   @click="handleEnableCluster([data])">
                   {{ t('启用') }}
@@ -264,6 +284,7 @@
                   :disabled="data.isOnline || Boolean(data.operationTicketId)"
                   :permission="data.permission.redis_destroy"
                   :resource="data.id"
+                  style="width: 100%; height: 32px"
                   text
                   @click="handleDeleteCluster([data])">
                   {{ t('删除') }}
@@ -279,25 +300,8 @@
       v-model:is-show="passwordState.isShow"
       :fetch-params="passwordState.fetchParams"
       :show-clb="false" />
-    <!-- 提取 keys -->
-    <ExtractKeys
-      v-model:is-show="extractState.isShow"
-      :data="extractState.data" />
-    <!-- 删除 keys -->
-    <DeleteKeys
-      v-model:is-show="deleteKeyState.isShow"
-      :data="deleteKeyState.data" />
-    <!-- 备份 -->
-    <RedisBackup
-      v-model:is-show="backupState.isShow"
-      :data="backupState.data" />
-    <!-- 清档 -->
-    <RedisPurge
-      v-model:is-show="purgeState.isShow"
-      :data="purgeState.data" />
   </div>
 </template>
-
 <script setup lang="tsx">
   import type { ISearchItem } from 'bkui-vue/lib/search-select/utils';
   import { useI18n } from 'vue-i18n';
@@ -306,7 +310,7 @@
   import { getRedisList } from '@services/source/redis';
   import { getUserList } from '@services/source/user';
 
-  import { useLinkQueryColumnSerach, useStretchLayout, useTableSettings, useTicketCloneInfo } from '@hooks';
+  import { useLinkQueryColumnSerach, useStretchLayout, useTableSettings } from '@hooks';
 
   import { useGlobalBizs } from '@stores';
 
@@ -315,35 +319,29 @@
   import DbTable from '@components/db-table/index.vue';
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
   import TagBlock from '@components/tag-block/Index.vue';
+  import TagSearch from '@components/tag-search/index.vue';
 
   import ClusterBatchOperation from '@views/db-manage/common/cluster-batch-opration/Index.vue';
   import ClusterIpCopy from '@views/db-manage/common/cluster-ip-copy/Index.vue';
-  import ClusterNameColumn from '@views/db-manage/common/cluster-table-column/ClusterNameColumn.vue';
-  import ClusterStatsColumn from '@views/db-manage/common/cluster-table-column/ClusterStatsColumn.vue';
-  import CommonColumn from '@views/db-manage/common/cluster-table-column/CommonColumn.vue';
-  import IdColumn from '@views/db-manage/common/cluster-table-column/IdColumn.vue';
-  import MasterDomainColumn from '@views/db-manage/common/cluster-table-column/MasterDomainColumn.vue';
-  import RoleColumn from '@views/db-manage/common/cluster-table-column/RoleColumn.vue';
-  import SlaveDomainColumn from '@views/db-manage/common/cluster-table-column/SlaveDomainColumn.vue';
-  import StatusColumn from '@views/db-manage/common/cluster-table-column/StatusColumn.vue';
+  import ClusterNameColumn from '@views/db-manage/common/cluster-table/ClusterNameColumn.vue';
+  import ClusterStatsColumn from '@views/db-manage/common/cluster-table/ClusterStatsColumn.vue';
+  import ClusterTagColumn from '@views/db-manage/common/cluster-table/ClusterTagColumn.vue';
+  import CommonColumn from '@views/db-manage/common/cluster-table/CommonColumn.vue';
+  import IdColumn from '@views/db-manage/common/cluster-table/IdColumn.vue';
+  import MasterDomainColumn from '@views/db-manage/common/cluster-table/MasterDomainColumn.vue';
+  import RoleColumn from '@views/db-manage/common/cluster-table/RoleColumn.vue';
+  import SlaveDomainColumn from '@views/db-manage/common/cluster-table/SlaveDomainColumn.vue';
+  import StatusColumn from '@views/db-manage/common/cluster-table/StatusColumn.vue';
   import DropdownExportExcel from '@views/db-manage/common/dropdown-export-excel/index.vue';
-  import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
+  import { useOperateClusterBasic, useRedisClusterListToToolbox } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
-  import { useShowBackup } from '@views/db-manage/common/redis-backup/hooks/useShowBackup';
-  import RedisBackup from '@views/db-manage/common/redis-backup/Index.vue';
-  import { useShowDeleteKeys } from '@views/db-manage/common/redis-delete-keys/hooks/useShowDeleteKeys';
-  import DeleteKeys from '@views/db-manage/common/redis-delete-keys/Index.vue';
-  import { useShowExtractKeys } from '@views/db-manage/common/redis-extract-keys/hooks/useShowExtractKeys';
-  import ExtractKeys from '@views/db-manage/common/redis-extract-keys/Index.vue';
-  import { useShowPurge } from '@views/db-manage/common/redis-purge/hooks/useShowPurge';
-  import RedisPurge from '@views/db-manage/common/redis-purge/Index.vue';
   import ClusterPassword from '@views/db-manage/redis/common/cluster-oprations/ClusterPassword.vue';
 
-  import {
-    getMenuListSearch,
-    getSearchSelectorParams,
-    // messageWarn,
-  } from '@utils';
+  import { getMenuListSearch, getSearchSelectorParams } from '@utils';
+
+  interface Exposes {
+    refresh: () => void;
+  }
 
   const clusterId = defineModel<number>('clusterId');
 
@@ -363,13 +361,8 @@
       onSuccess: () => fetchData(),
     },
   );
-  const { handleShow: handleShowExtract, state: extractState } = useShowExtractKeys();
-  const { handleShow: handlShowDeleteKeys, state: deleteKeyState } = useShowDeleteKeys();
-  const { handleShow: handleShowBackup, state: backupState } = useShowBackup();
-  const { handleShow: handleShowPurge, state: purgeState } = useShowPurge();
+  const { handleToToolbox } = useRedisClusterListToToolbox();
   const { isOpen: isStretchLayoutOpen, splitScreen: stretchLayoutSplitScreen } = useStretchLayout();
-
-  let isInit = true;
 
   const {
     batchSearchIpInatanceList,
@@ -383,52 +376,14 @@
     sortValue,
   } = useLinkQueryColumnSerach({
     attrs: ['bk_cloud_id', 'major_version', 'region', 'time_zone'],
-    fetchDataFn: () => fetchData(isInit),
+    fetchDataFn: () => fetchData(),
     searchType: ClusterTypes.REDIS,
   });
 
   const tableRef = ref<InstanceType<typeof DbTable>>();
+  const tagSearchValue = ref<Record<string, any>>({});
 
   const getTableInstance = () => tableRef.value;
-  // 提取Key 单据克隆
-  useTicketCloneInfo({
-    onSuccess(cloneData) {
-      extractState.isShow = true;
-      extractState.data = cloneData;
-      window.changeConfirm = true;
-    },
-    type: TicketTypes.REDIS_KEYS_EXTRACT,
-  });
-
-  // 删除Key 单据克隆
-  useTicketCloneInfo({
-    onSuccess(cloneData) {
-      deleteKeyState.isShow = true;
-      deleteKeyState.data = cloneData;
-      window.changeConfirm = true;
-    },
-    type: TicketTypes.REDIS_KEYS_DELETE,
-  });
-
-  // 集群备份单据克隆
-  useTicketCloneInfo({
-    onSuccess(cloneData) {
-      backupState.isShow = true;
-      backupState.data = cloneData;
-      window.changeConfirm = true;
-    },
-    type: TicketTypes.REDIS_BACKUP,
-  });
-
-  // 清档单据克隆
-  useTicketCloneInfo({
-    onSuccess(cloneData) {
-      purgeState.isShow = true;
-      purgeState.data = cloneData;
-      window.changeConfirm = true;
-    },
-    type: TicketTypes.REDIS_PURGE,
-  });
 
   const selected = shallowRef<RedisModel[]>([]);
 
@@ -536,6 +491,7 @@
       'major_version',
       'module_names',
       'region',
+      'tag',
     ],
     disabled: ['master_domain'],
   });
@@ -596,19 +552,19 @@
     return false;
   };
 
-  const fetchData = (loading?: boolean) => {
+  const handleTagSearch = (params: Record<string, any>) => {
+    tagSearchValue.value = params;
+    fetchData();
+  };
+
+  const fetchData = () => {
     const params = {
       ...getSearchSelectorParams(searchValue.value),
       cluster_type: ClusterTypes.REDIS_INSTANCE,
+      ...tagSearchValue.value,
+      ...sortValue,
     };
-    tableRef.value!.fetchData(
-      params,
-      {
-        ...sortValue,
-      },
-      loading,
-    );
-    isInit = false;
+    tableRef.value!.fetchData(params);
   };
 
   /**
@@ -641,9 +597,14 @@
     passwordState.fetchParams.cluster_id = id;
   };
 
-  const handleBatchOperationSuccess = () => {
-    tableRef.value!.clearSelected();
-    fetchData();
+  const handleGoQueryAccessSourcePage = (domain: string) => {
+    const url = router.resolve({
+      name: 'RedisQueryAccessSource',
+      query: {
+        domain,
+      },
+    });
+    window.open(url.href);
   };
 
   onMounted(() => {
@@ -651,8 +612,11 @@
       handleToDetails(Number(route.query.id));
     }
   });
-</script>
 
+  defineExpose<Exposes>({
+    refresh: fetchData,
+  });
+</script>
 <style lang="less">
   @import '@styles/mixins.less';
 
@@ -664,12 +628,16 @@
     .operation-box {
       display: flex;
       flex-wrap: wrap;
+      margin-bottom: 16px;
+      gap: 8px;
+
+      .tag-search-main {
+        margin-left: auto;
+      }
 
       .bk-search-select {
         flex: 1;
         max-width: 500px;
-        min-width: 320px;
-        margin-left: auto;
       }
     }
 

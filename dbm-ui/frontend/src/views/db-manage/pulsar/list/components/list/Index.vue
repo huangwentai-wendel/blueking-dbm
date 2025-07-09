@@ -21,6 +21,11 @@
         @click="handleGoApply">
         {{ t('申请实例') }}
       </AuthButton>
+      <ClusterBatchOperation
+        v-db-console="'pulsar.clusterManage.batchOperation'"
+        :cluster-type="ClusterTypes.PULSAR"
+        :selected="selected"
+        @success="fetchTableData" />
       <DropdownExportExcel
         v-db-console="'pulsar.clusterManage.export'"
         :ids="selectedIds"
@@ -28,6 +33,7 @@
       <ClusterIpCopy
         v-db-console="'pulsar.clusterManage.batchCopy'"
         :selected="selected" />
+      <TagSearch @search="handleTagSearch" />
       <DbSearchSelect
         :data="serachData"
         :get-menu-list="getMenuList"
@@ -73,6 +79,9 @@
         :is-filter="isFilter"
         :selected-list="selected"
         @refresh="fetchTableData" />
+      <ClusterTagColumn
+        :cluster-type="ClusterTypes.PULSAR"
+        @success="fetchTableData" />
       <StatusColumn :cluster-type="ClusterTypes.PULSAR" />
       <ClusterStatsColumn :cluster-type="ClusterTypes.PULSAR" />
       <RoleColumn
@@ -99,7 +108,9 @@
         label="Broker"
         :search-ip="batchSearchIpInatanceList"
         :selected-list="selected" />
-      <CommonColumn :cluster-type="ClusterTypes.PULSAR" />
+      <CommonColumn
+        :cluster-type="ClusterTypes.PULSAR"
+        @refresh="fetchTableData" />
       <BkTableColumn
         :fixed="isStretchLayoutOpen ? false : 'right'"
         :label="t('操作')"
@@ -265,15 +276,18 @@
 
   import DbTable from '@components/db-table/index.vue';
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
+  import TagSearch from '@components/tag-search/index.vue';
 
+  import ClusterBatchOperation from '@views/db-manage/common/cluster-batch-opration/Index.vue';
   import ClusterIpCopy from '@views/db-manage/common/cluster-ip-copy/Index.vue';
-  import ClusterNameColumn from '@views/db-manage/common/cluster-table-column/ClusterNameColumn.vue';
-  import ClusterStatsColumn from '@views/db-manage/common/cluster-table-column/ClusterStatsColumn.vue';
-  import CommonColumn from '@views/db-manage/common/cluster-table-column/CommonColumn.vue';
-  import IdColumn from '@views/db-manage/common/cluster-table-column/IdColumn.vue';
-  import MasterDomainColumn from '@views/db-manage/common/cluster-table-column/MasterDomainColumn.vue';
-  import RoleColumn from '@views/db-manage/common/cluster-table-column/RoleColumn.vue';
-  import StatusColumn from '@views/db-manage/common/cluster-table-column/StatusColumn.vue';
+  import ClusterNameColumn from '@views/db-manage/common/cluster-table/ClusterNameColumn.vue';
+  import ClusterStatsColumn from '@views/db-manage/common/cluster-table/ClusterStatsColumn.vue';
+  import ClusterTagColumn from '@views/db-manage/common/cluster-table/ClusterTagColumn.vue';
+  import CommonColumn from '@views/db-manage/common/cluster-table/CommonColumn.vue';
+  import IdColumn from '@views/db-manage/common/cluster-table/IdColumn.vue';
+  import MasterDomainColumn from '@views/db-manage/common/cluster-table/MasterDomainColumn.vue';
+  import RoleColumn from '@views/db-manage/common/cluster-table/RoleColumn.vue';
+  import StatusColumn from '@views/db-manage/common/cluster-table/StatusColumn.vue';
   import DropdownExportExcel from '@views/db-manage/common/dropdown-export-excel/index.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
@@ -282,6 +296,10 @@
   import ClusterShrink from '@views/db-manage/pulsar/common/shrink/Index.vue';
 
   import { getMenuListSearch, getSearchSelectorParams } from '@utils';
+
+  interface Exposes {
+    refresh: () => void;
+  }
 
   const clusterId = defineModel<number>('clusterId');
 
@@ -338,8 +356,9 @@
   const isShowExpandsion = ref(false);
   const isShowShrink = ref(false);
   const isShowPassword = ref(false);
-  const isInit = ref(true);
   const selected = ref<PulsarModel[]>([]);
+  const tagSearchValue = ref<Record<string, any>>({});
+
   const operationData = shallowRef<PulsarModel>();
 
   const getTableInstance = () => tableRef.value;
@@ -435,6 +454,7 @@
       'pulsar_bookkeeper',
       'pulsar_zookeeper',
       'pulsar_broker',
+      'tag',
     ],
     disabled: ['master_domain'],
   });
@@ -478,10 +498,18 @@
     selected.value = list;
   };
 
-  const fetchTableData = (loading?: boolean) => {
+  const handleTagSearch = (params: Record<string, any>) => {
+    tagSearchValue.value = params;
+    fetchTableData();
+  };
+
+  const fetchTableData = () => {
     const searchParams = getSearchSelectorParams(searchValue.value);
-    tableRef.value?.fetchData(searchParams, { ...sortValue }, loading);
-    isInit.value = false;
+    tableRef.value?.fetchData({
+      ...searchParams,
+      ...tagSearchValue.value,
+      ...sortValue,
+    });
   };
 
   const handleGoApply = () => {
@@ -528,6 +556,10 @@
       handleToDetails(Number(route.query.id));
     }
   });
+
+  defineExpose<Exposes>({
+    refresh: fetchTableData,
+  });
 </script>
 <style lang="less">
   .pulsar-list-page {
@@ -540,12 +572,15 @@
       display: flex;
       flex-wrap: wrap;
       margin-bottom: 16px;
+      gap: 8px;
+
+      .tag-search-main {
+        margin-left: auto;
+      }
 
       .bk-search-select {
         flex: 1;
         max-width: 500px;
-        min-width: 320px;
-        margin-left: auto;
       }
     }
 

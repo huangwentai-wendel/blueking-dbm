@@ -28,12 +28,14 @@ bk:
   bkLoginUrl: "https://example.com/login"
   # 蓝鲸配置平台
   bkCmdbUrl: "https://cmdb.example.com"
+  bkCmdbApiUrl: ""
   # 蓝鲸作业平台
   bluekingBizId: "9991001"
   bkJobUrl: "https://job.example.com"
   bkJobApiUrl: ""
   # 蓝鲸节点管理
   bkNodemanUrl: https://apps.example.com/bk--nodeman
+  bkNodemanApiUrl: ""
   #gcs/scr平台
   bkScrUrl: https://scr.example.com/
   bkScrApigwDomain: https://api.scr.example.com/
@@ -135,6 +137,12 @@ dbm:
     className: ""
     annotations:
       nginx.ingress.kubernetes.io/proxy-body-size: 1024m
+      nginx.ingress.kubernetes.io/configuration-snippet: |
+        set_real_ip_from 0.0.0.0/0;
+        real_ip_header X-Forwarded-For;
+        real_ip_recursive on;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
     hostname: "bkdbm.example.com"
     paths:
       - path: /
@@ -144,6 +152,14 @@ dbm:
   ingressBackendApi:
     enabled: true
     className: ""
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: 1024m
+      nginx.ingress.kubernetes.io/configuration-snippet: |
+        set_real_ip_from 0.0.0.0/0;
+        real_ip_header X-Forwarded-For;
+        real_ip_recursive on;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
     hostname: "bkdbm-backend-api.example.com"
     paths:
       - path: /
@@ -301,6 +317,26 @@ dbpartition:
     enabled: false
     dataId: 1
 
+# k8s-dbs values
+k8s-dbs:
+  enabled: false
+  envs:
+    # apm
+    TRACE_SERVICE_NAME: k8s-dbs
+    TRACE_ENABLE: true
+    TRACE_HOST: 127.0.0.1
+    TRACE_PORT: 4317
+    TRACE_TYPE: grpc
+    TRACE_TOKEN: ""
+    TRACE_DATA_ID: ""
+  # apm
+  serviceMonitor:
+    enabled: false
+  # 容器内日志采集，APM本身不需要，配置保留为方便后期开启服务本身的日志采集
+  bkLogConfig:
+    enabled: false
+    dataId: 1
+
 # grafana配置
 # 配置可以参考 https://github.com/bitnami/charts/tree/master/bitnami/grafana
 # 镜像继承自 bitnami/grafana，加入了监控的数据源及内置panels
@@ -342,6 +378,14 @@ db-nginx:
   ingress:
     enabled: true
     className: ""
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: 1024m
+      nginx.ingress.kubernetes.io/configuration-snippet: |
+        set_real_ip_from 0.0.0.0/0;
+        real_ip_header X-Forwarded-For;
+        real_ip_recursive on;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
     hosts:
       - host: bk-dbm-nginx
         paths:

@@ -68,6 +68,7 @@ export default class SqlServerSingleCluster extends ClusterBase {
   operations: ClusterListOperation[];
   permission: {
     access_entry_edit: boolean;
+    sqlserver_edit: boolean;
     sqlserver_view: boolean;
   };
   phase: string;
@@ -217,6 +218,12 @@ export default class SqlServerSingleCluster extends ClusterBase {
       return 0;
     }
     return operation.ticket_id;
+  }
+
+  get roleFailedInstanceInfo() {
+    return {
+      Master: ClusterBase.getRoleFaildInstanceList(this.storages),
+    };
   }
 
   get runningOperation() {

@@ -125,7 +125,7 @@ class TendbBaseOperateDetailSerializer(MySQLBaseOperateDetailSerializer):
                 tendbclusterspiderext__spider_role=info["reduce_spider_role"]
             ).count()
 
-            if not info.get("spider_reduced_to_count"):
+            if info.get("spider_reduced_to_count") is None:
                 info["spider_reduced_to_count"] = spider_node_count - len(info["old_nodes"]["spider_reduced_hosts"])
 
             spider_reduced_to_count = info["spider_reduced_to_count"]
@@ -163,6 +163,19 @@ class TendbBaseOperateDetailSerializer(MySQLBaseOperateDetailSerializer):
 
     def validate_cluster_can_access(self, attrs):
         return super().validate_cluster_can_access(attrs=attrs)
+
+
+class TendbSingleOpsBaseDetailSerializer(TendbBaseOperateDetailSerializer):
+    cluster_id = serializers.IntegerField(help_text=_("集群ID"))
+    bk_cloud_id = serializers.IntegerField(help_text=_("云区域ID"))
+    spider_role = serializers.CharField(help_text=_("接入层角色"), required=False)
+
+    def validate(self, attrs):
+        """
+        公共校验：集群操作互斥校验
+        """
+        super().validate(attrs)
+        return attrs
 
 
 class TendbClustersTakeDownDetailsSerializer(MySQLClustersTakeDownDetailsSerializer):

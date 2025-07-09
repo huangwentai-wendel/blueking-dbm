@@ -60,6 +60,7 @@
 
   import { checkInstance } from '@services/source/dbbase';
 
+  import { ClusterTypes, DBTypes } from '@common/const';
   import { ipv4 } from '@common/regex';
 
   import InstanceSelector, { type InstanceSelectorValues, type IValue } from '@components/instance-selector/Index.vue';

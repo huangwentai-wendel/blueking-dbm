@@ -13,6 +13,7 @@ import logging
 from django.utils.translation import gettext as _
 
 from backend.db_meta.api.cluster.base.graph import Graphic, Group, LineLabel
+from backend.db_meta.api.common import get_clb_topo
 from backend.db_meta.enums import ClusterEntryRole, InstanceInnerRole
 from backend.db_meta.models import Cluster, StorageInstanceTuple
 
@@ -26,12 +27,16 @@ def scan_cluster(cluster: Cluster) -> Graphic:
     """
     graph = Graphic(node_id=Graphic.generate_graphic_id(cluster))
 
-    for tr in StorageInstanceTuple.objects.prefetch_related(
-        "ejector__cluster",
-        "receiver__cluster",
-        "ejector__machine",
-        "receiver__machine",
-    ).filter(receiver__cluster=cluster, ejector__cluster=cluster):
+    for tr in (
+        StorageInstanceTuple.objects.prefetch_related(
+            "ejector__cluster",
+            "receiver__cluster",
+            "ejector__machine",
+            "receiver__machine",
+        )
+        .filter(receiver__cluster=cluster, ejector__cluster=cluster)
+        .order_by("-create_at")
+    ):
         ejector_instance = tr.ejector
         receiver_instance = tr.receiver
         ejector_instance_node, ejector_instance_group = graph.add_node(ejector_instance)
@@ -47,10 +52,11 @@ def scan_cluster(cluster: Cluster) -> Graphic:
     master_backend_instance_grp = graph.get_or_create_group(*Group.generate_group_info(master_backend_instance))
     graph.add_line(source=proxy_instance_group, target=master_backend_instance_grp, label=LineLabel.Access)
 
-    master_bind_entry_group = Group(node_id="master_bind_entry_group", group_name=_("访问入口（主）"))
-    for bind_entry in proxy_instance.bind_entry.filter(role=ClusterEntryRole.MASTER_ENTRY.value):
-        dummy_be_node, master_bind_entry_group = graph.add_node(bind_entry, to_group=master_bind_entry_group)
-        graph.add_line(source=master_bind_entry_group, target=proxy_instance_group, label=LineLabel.Bind)
+    # redis的集群要获取master和proxy的entry作为访问入口
+    master_proxy_entry = cluster.clusterentry_set.filter(
+        role__in=[ClusterEntryRole.MASTER_ENTRY.value, ClusterEntryRole.PROXY_ENTRY.value]
+    ).all()
+    graph = get_clb_topo(graph, master_proxy_entry, proxy_instance_group)
 
     # 存储层访问入口
     nodes_bind_entry_group = Group(node_id="nodes_bind_entry_group", group_name=_("存储层访问入口"))

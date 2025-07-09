@@ -29,6 +29,7 @@ from backend.ticket.builders.common.base import (
     BaseOperateResourceParamBuilder,
     CommonValidate,
     MySQLTicketFlowBuilderPatchMixin,
+    ParamValidateSerializerMixin,
     SkipToRepresentationMixin,
     fetch_cluster_ids,
 )
@@ -55,7 +56,9 @@ class MySQLBasePauseParamBuilder(builders.PauseParamBuilder):
     pass
 
 
-class MySQLBaseOperateDetailSerializer(SkipToRepresentationMixin, serializers.Serializer):
+class MySQLBaseOperateDetailSerializer(
+    SkipToRepresentationMixin, ParamValidateSerializerMixin, serializers.Serializer
+):
     """
     mysql操作的基类，主要功能:
     1. 屏蔽序列化的to_representation
@@ -168,6 +171,19 @@ class MySQLBaseOperateDetailSerializer(SkipToRepresentationMixin, serializers.Se
     def validate(self, attrs):
         # 默认全局校验只需要校验集群的状态
         self.validate_cluster_can_access(attrs)
+        attrs = super().validated_params(attrs=attrs)
+        return attrs
+
+
+class MysqlSingleOpsBaseDetailSerializer(MySQLBaseOperateDetailSerializer):
+    cluster_id = serializers.IntegerField(help_text=_("集群ID"))
+    bk_cloud_id = serializers.IntegerField(help_text=_("云区域ID"))
+
+    def validate(self, attrs):
+        """
+        公共校验：集群操作互斥校验
+        """
+        super().validate(attrs)
         return attrs
 
 

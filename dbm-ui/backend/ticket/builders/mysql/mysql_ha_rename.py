@@ -55,10 +55,6 @@ class MySQLHaRenameSerializer(MySQLBaseOperateDetailSerializer):
 class MySQLHaRenameFlowParamBuilder(builders.FlowParamBuilder):
     controller = MySQLController.mysql_ha_rename_database_scene
 
-    def format_ticket_data(self):
-        for info in self.ticket_data["infos"]:
-            info["force"] = self.ticket_data["force"]
-
 
 @builders.BuilderFactory.register(TicketType.MYSQL_HA_RENAME_DATABASE)
 class MySQLHaRenameFlowBuilder(BaseMySQLHATicketFlowBuilder):

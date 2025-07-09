@@ -270,19 +270,21 @@ func (s SyntaxHandler) ParseSQLFileRelationDb(r *gin.Context) {
 	}
 	defer p.DelTempDir()
 	// 如果所有的命令都是alter table, dump指定库表
-	logger.Debug("debug: %v,%d", allCommands, len(allCommands))
 	if isAllOperateTable(allCommands) && !dumpall {
 		relationTbls, err := p.ParseSpecialTbls("")
 		if err != nil {
 			s.SendResponse(r, err, nil)
 			return
 		}
-		tblCount := 0
+		byteCount := 0
 		for _, tbl := range relationTbls {
-			tblCount += len(lo.Uniq(tbl.Tbls))
+			byteCount += len(strings.Join(tbl.Tbls, ""))
 		}
+		byteCount += len(strings.Join(dbs, ""))
+		byteCount += len(strings.Join(createDbs, ""))
 		// sql语句的变更表数量大于2000,防止mysqldump 拼接参数过长导致执行失败
-		if tblCount > 2000 || len(relationTbls) > 100 {
+		// job 参数最大长度47k byte,base64 编码后, 1个字节变成1.33个字节 会经过
+		if byteCount > 28000 {
 			s.SendResponse(r, nil, gin.H{
 				"create_dbs": createDbs,
 				"dbs":        dbs,

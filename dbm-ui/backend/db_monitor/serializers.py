@@ -43,6 +43,10 @@ class GetDashboardSerializer(serializers.Serializer):
     instance_id = serializers.IntegerField(help_text=_("节点实例ID"), required=False)
 
 
+class GetBusinessDashboardSerializer(serializers.Serializer):
+    bk_biz_id = serializers.IntegerField(help_text=_("业务ID"))
+
+
 class DashboardUrlSerializer(serializers.Serializer):
     url = serializers.URLField(help_text=_("监控仪表盘地址"))
 
@@ -327,7 +331,6 @@ class ListAlertSerializer(serializers.Serializer):
 
 class CreateAlarmShieldSerializer(serializers.Serializer):
     category = serializers.CharField(help_text=_("屏蔽类型"))
-    bk_biz_id = serializers.IntegerField(help_text=_("业务ID"))
     dimension_config = serializers.DictField(help_text=_("屏蔽维度配置"))
     shield_notice = serializers.BaseSerializer(help_text=_("告警屏蔽通知"), default=False)
     begin_time = serializers.CharField(help_text=_("开始时间"))
@@ -343,8 +346,9 @@ class CreateAlarmShieldSerializer(serializers.Serializer):
         for condition in attrs["dimension_config"]["dimension_conditions"]:
             if "appid" in condition["key"]:
                 appid = condition["value"][0]
-        if int(attrs["bk_biz_id"]) != int(appid):
-            raise serializers.ValidationError(_("维度配置的业务ID与屏蔽策略业务ID不同"))
+        if not appid:
+            raise serializers.ValidationError(_("暂不支持屏蔽[不包含业务]维度的告警"))
+        attrs["bk_biz_id"] = appid
         return attrs
 
     class Meta:

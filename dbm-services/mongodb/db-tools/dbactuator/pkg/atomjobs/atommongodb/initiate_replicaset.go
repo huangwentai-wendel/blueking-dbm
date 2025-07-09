@@ -97,7 +97,6 @@ func (i *InitiateReplicaset) Init(runtime *jobruntime.JobGenericRuntime) error {
 	i.BinDir = consts.UsrLocal
 	i.Mongo = filepath.Join(i.BinDir, "mongodb", "bin", "mongo")
 	i.OsUser = consts.GetProcessUser()
-	i.ConfFilePath = filepath.Join("/", "tmp", "initiateReplicaset.js")
 	i.StatusChan = make(chan int, 1)
 
 	// 获取MongoDB配置文件参数
@@ -107,6 +106,7 @@ func (i *InitiateReplicaset) Init(runtime *jobruntime.JobGenericRuntime) error {
 		return fmt.Errorf("get parameters of initiateReplicaset fail by json.Unmarshal, error:%s", err)
 	}
 	i.ClusterId = i.ConfParams.SetId
+	i.ConfFilePath = filepath.Join("/", "tmp", fmt.Sprintf("%s_initiateReplicaset.js", i.ClusterId))
 	i.runtime.Logger.Info("init successfully")
 
 	// 进行校验
@@ -139,7 +139,11 @@ func (i *InitiateReplicaset) makeConfContent() error {
 		member := common.NewMember()
 		member.Id = index
 		member.Host = i.ConfParams.Ips[index]
-		member.Priority = i.ConfParams.Priority[value]
+		if index == 0 {
+			member.Priority = i.ConfParams.Priority[value] + 1
+		} else {
+			member.Priority = i.ConfParams.Priority[value]
+		}
 		member.Hidden = i.ConfParams.Hidden[value]
 		jsonConfReplicaset.Members = append(jsonConfReplicaset.Members, member)
 	}
@@ -154,6 +158,7 @@ func (i *InitiateReplicaset) makeConfContent() error {
 	}
 	i.ConfFileContent = strings.Join([]string{"var config=",
 		string(confJson), "\n", "rs.initiate(config)\n"}, "")
+	i.runtime.Logger.Info("config content:\n%s", i.ConfFileContent)
 	i.runtime.Logger.Info("make config content of initiateReplicaset successfully")
 	return nil
 }
@@ -204,7 +209,6 @@ func (i *InitiateReplicaset) checkStatus() {
 		result, err := common.NoAuthGetPrimaryInfo(i.Mongo, i.ConfParams.IP, i.ConfParams.Port)
 		if err != nil {
 			i.runtime.Logger.Error("check replicaset status fail, error:%s", err)
-			fmt.Sprintf("check replicaset status fail, error:%s\n", err)
 			panic(fmt.Sprintf("check replicaset status fail, error:%s\n", err.Error()))
 		}
 		if result != "" {

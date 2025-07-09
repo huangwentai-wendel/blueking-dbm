@@ -1,6 +1,7 @@
 package rotate
 
 import (
+	"dbm-services/common/reverseapi/pkg"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/viper"
 
 	"dbm-services/common/go-pubpkg/logger"
+	meta "dbm-services/common/reverseapi/define/mysql"
 	"dbm-services/mysql/db-tools/mysql-rotatebinlog/pkg/cst"
 )
 
@@ -99,6 +101,9 @@ func InitConfig(confFile string) (*Config, error) {
 		servers = deduplicateServers(servers)
 		configObj.Servers = servers
 	}
+	if configObj.Public.MaxOldDaysToUpload == 0 {
+		configObj.Public.MaxOldDaysToUpload = 7
+	}
 	//logger.Debug("ConfigObj: %+v", ConfigObj)
 	return configObj, nil
 }
@@ -182,6 +187,14 @@ func readInstanceConfig(mainConfFile string) ([]*ServerObj, error) {
 		if err = viperServer.Unmarshal(&s); err != nil {
 			logger.Error("readInstanceConfig %s unmarshal failed: %v", f, err)
 			continue
+		}
+		if instInfo, err := pkg.GetSelfInfo(s.Host, s.Port); err == nil {
+			logger.Info("use role from common_config:%s, config:%s", instInfo.InstanceInnerRole, s.Tags.DBRole)
+			if instInfo.AccessLayer == meta.AccessLayerStorage && instInfo.InstanceInnerRole != "" {
+				s.Tags.DBRole = instInfo.InstanceInnerRole
+			}
+		} else {
+			logger.Warn("get instance info from common_config failed: %v", err)
 		}
 		servers = append(servers, &s)
 	}

@@ -42,27 +42,39 @@
             <ClusterColumn
               v-model="rowData.cluster"
               :selected-ids="selectedClusterIds"
-              @batch-edit="handleBatchEdit" />
+              @batch-edit="handleClusterBatchEdit" />
             <DatetimeColumn
               v-model="rowData.start_time"
+              :disabled-date="(date) => handleStartTimeDisableCallback(date, getDateNow())"
               field="start_time"
-              :label="t('回档时间')" />
+              :label="t('回档时间')"
+              @batch-edit="handleBatchEdit"
+              @change="() => handleDateChange(rowData)" />
             <DatetimeColumn
               v-model="rowData.end_time"
               :disabled-date="(date) => handleEditTimeDisableCallback(date, rowData.start_time)"
               field="end_time"
               :label="t('截止时间')"
-              nowenable />
+              nowenable
+              @batch-edit="handleBatchEdit" />
             <DbNameColumn
               v-model="rowData.databases"
-              :cluster-id="rowData.cluster?.id" />
+              :allow-asterisk="false"
+              :cluster-id="rowData.cluster?.id"
+              field="databases"
+              :label="t('目标 DB')"
+              @batch-edit="handleBatchEdit" />
             <TableNameColumn
               v-model="rowData.tables"
+              :allow-asterisk="false"
               :cluster-id="rowData.cluster?.id"
-              :label="t('目标表')" />
+              field="tables"
+              :label="t('目标表')"
+              @batch-edit="handleBatchEdit" />
             <RecordColumn
               v-model="rowData.rows_filter"
-              :cluster-id="rowData.cluster?.id" />
+              :cluster-id="rowData.cluster?.id"
+              @batch-edit="handleBatchEdit" />
             <OperationColumn
               v-model:table-data="formData.tableData"
               :create-row-method="createTableData" />
@@ -119,13 +131,13 @@
   import TicketPayload, {
     createTickePayload,
   } from '@views/db-manage/common/toolbox-field/form-item/ticket-payload/Index.vue';
+  import DbNameColumn from '@views/db-manage/tendb-cluster/common/edit-table-column/DbNameColumn.vue';
+  import TableNameColumn from '@views/db-manage/tendb-cluster/common/edit-table-column/TableNameColumn.vue';
 
   import ClusterColumn from './components/ClusterColumn.vue';
   import DatetimeColumn from './components/DatetimeColumn.vue';
-  import DbNameColumn from './components/DbNameColumn.vue';
   import OperationColumn from './components/OperationColumn.vue';
   import RecordColumn from './components/RecordColumn.vue';
-  import TableNameColumn from './components/TableNameColumn.vue';
 
   interface IRowData {
     cluster?: {
@@ -167,6 +179,12 @@
   useTicketDetail<TendbCluster.FlashBack>(TicketTypes.TENDBCLUSTER_FLASHBACK, {
     onSuccess(ticketDetail) {
       const { details } = ticketDetail;
+      if (details.flashback_type === 'TABLE_FLASHBACK') {
+        router.push({
+          name: 'spiderFlashback',
+        });
+        return;
+      }
       formData.flashback_type = details.flashback_type;
       formData.payload.remark = ticketDetail.remark;
       formData.direct_write_back = details.infos[0].direct_write_back;
@@ -213,10 +231,23 @@
     }
   };
 
+  const getDateNow = () => dayjs(Date.now()).format('YYYY-MM-DD HH:mm:ss');
+
+  const handleStartTimeDisableCallback = (date: Date | number, endDate: string) =>
+    dayjs(date).isAfter(dayjs(endDate), 'day');
+
   const handleEditTimeDisableCallback = (date: Date | number, startDate: string) =>
     dayjs(date).isBefore(dayjs(startDate));
 
-  const handleBatchEdit = (list: TendbclusterModel[]) => {
+  const handleDateChange = (row: IRowData) => {
+    if (row.start_time) {
+      Object.assign(row, {
+        end_time: 'now',
+      });
+    }
+  };
+
+  const handleClusterBatchEdit = (list: TendbclusterModel[]) => {
     const dataList = list.reduce<ReturnType<typeof createTableData>[]>((acc, item) => {
       if (!selectedClusterIds.value.includes(item.id)) {
         acc.push(
@@ -233,6 +264,14 @@
     formData.tableData = [...(selectedClusterIds.value.length ? formData.tableData : []), ...dataList];
   };
 
+  const handleBatchEdit = (value: string | string[], field: string) => {
+    formData.tableData.forEach((item) => {
+      Object.assign(item, {
+        [field]: value,
+      });
+    });
+  };
+
   const handleSubmit = () => {
     Promise.all([formRef.value!.validate(), editableTableRef.value!.validate()]).then(() =>
       createTicketRun({
@@ -244,7 +283,7 @@
             databases: item.databases,
             databases_ignore: [],
             direct_write_back: formData.direct_write_back,
-            end_time: formatDateToUTC(item.end_time),
+            end_time: formatDateToUTC(item.end_time === 'now' ? '' : item.end_time),
             rows_filter: item.rows_filter,
             start_time: formatDateToUTC(item.start_time),
             tables: item.tables,

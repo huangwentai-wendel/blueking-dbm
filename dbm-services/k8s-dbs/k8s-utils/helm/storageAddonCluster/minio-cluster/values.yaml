@@ -1,0 +1,43 @@
+# 引用的addon版本
+addonVersion: 1.0.0
+
+# 元数据
+clusterName: minio-cluster
+namespace: demo
+labels: {}
+annotations: {}
+
+# 集群规格
+terminationPolicy: Delete
+topoName: cluster
+componentList:
+  - componentName: minio
+    serviceVersion: "0.9.0"
+    env:
+      MINIO_BUCKETS: ""
+      MINIO_ROOT_USER: "root"
+      MINIO_ROOT_PASSWORD: "minio"
+      MINIO_PROMETHEUS_AUTH_TYPE: "public"
+    replicas: 2
+    resources:
+      requests:
+        cpu: 1
+        memory: 1Gi
+      limits:
+        cpu: 1
+        memory: 1Gi
+    volumeClaimTemplates:
+      accessModes: ["ReadWriteOnce"]
+      storage: "20Gi"
+      storageClassName: "cbs"
+      volumeMode: "Filesystem"
+
+observeConfig:
+  bkLogConfig:
+    enabled: false
+    labels: {}
+    dataId:
+  svcMonitor:
+    enabled: false
+    labels: {}
+    interval: "15s"

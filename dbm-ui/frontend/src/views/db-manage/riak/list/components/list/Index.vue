@@ -21,6 +21,11 @@
         @click="toApply">
         {{ t('申请实例') }}
       </AuthButton>
+      <ClusterBatchOperation
+        v-db-console="'riak.clusterManage.batchOperation'"
+        :cluster-type="ClusterTypes.RIAK"
+        :selected="selected"
+        @success="fetchData" />
       <DropdownExportExcel
         v-db-console="'riak.clusterManage.export'"
         :ids="selectedIds"
@@ -28,6 +33,7 @@
       <ClusterIpCopy
         v-db-console="'riak.clusterManage.batchCopy'"
         :selected="selected" />
+      <TagSearch @search="handleTagSearch" />
       <DbSearchSelect
         :data="serachData"
         :get-menu-list="getMenuList"
@@ -78,6 +84,9 @@
         :is-filter="isFilter"
         :selected-list="selected"
         @refresh="fetchData" />
+      <ClusterTagColumn
+        :cluster-type="ClusterTypes.RIAK"
+        @success="fetchData" />
       <StatusColumn :cluster-type="ClusterTypes.RIAK" />
       <ClusterStatsColumn :cluster-type="ClusterTypes.RIAK" />
       <RoleColumn
@@ -216,15 +225,18 @@
 
   import DbTable from '@components/db-table/index.vue';
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
+  import TagSearch from '@components/tag-search/index.vue';
 
+  import ClusterBatchOperation from '@views/db-manage/common/cluster-batch-opration/Index.vue';
   import ClusterIpCopy from '@views/db-manage/common/cluster-ip-copy/Index.vue';
-  import ClusterNameColumn from '@views/db-manage/common/cluster-table-column/ClusterNameColumn.vue';
-  import ClusterStatsColumn from '@views/db-manage/common/cluster-table-column/ClusterStatsColumn.vue';
-  import CommonColumn from '@views/db-manage/common/cluster-table-column/CommonColumn.vue';
-  import IdColumn from '@views/db-manage/common/cluster-table-column/IdColumn.vue';
-  import MasterDomainColumn from '@views/db-manage/common/cluster-table-column/MasterDomainColumn.vue';
-  import RoleColumn from '@views/db-manage/common/cluster-table-column/RoleColumn.vue';
-  import StatusColumn from '@views/db-manage/common/cluster-table-column/StatusColumn.vue';
+  import ClusterNameColumn from '@views/db-manage/common/cluster-table/ClusterNameColumn.vue';
+  import ClusterStatsColumn from '@views/db-manage/common/cluster-table/ClusterStatsColumn.vue';
+  import ClusterTagColumn from '@views/db-manage/common/cluster-table/ClusterTagColumn.vue';
+  import CommonColumn from '@views/db-manage/common/cluster-table/CommonColumn.vue';
+  import IdColumn from '@views/db-manage/common/cluster-table/IdColumn.vue';
+  import MasterDomainColumn from '@views/db-manage/common/cluster-table/MasterDomainColumn.vue';
+  import RoleColumn from '@views/db-manage/common/cluster-table/RoleColumn.vue';
+  import StatusColumn from '@views/db-manage/common/cluster-table/StatusColumn.vue';
   import DropdownExportExcel from '@views/db-manage/common/dropdown-export-excel/index.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
@@ -237,7 +249,7 @@
   type Emits = (e: 'detailOpenChange', data: boolean) => void;
 
   interface Expose {
-    freshData: () => void;
+    refresh: () => void;
   }
 
   const emits = defineEmits<Emits>();
@@ -270,6 +282,16 @@
     fetchDataFn: () => fetchData(),
     searchType: ClusterTypes.RIAK,
   });
+
+  const tableRef = ref<InstanceType<typeof DbTable>>();
+  const deployTime = ref<[string, string]>(['', '']);
+  const addNodeShow = ref(false);
+  const deleteNodeShow = ref(false);
+  const detailData = ref<RiakModel>();
+  const selected = ref<RiakModel[]>([]);
+  const tagSearchValue = ref<Record<string, any>>({});
+
+  const getTableInstance = () => tableRef.value;
 
   const serachData = computed(
     () =>
@@ -342,15 +364,6 @@
       ] as ISearchItem[],
   );
 
-  const tableRef = ref<InstanceType<typeof DbTable>>();
-  const deployTime = ref<[string, string]>(['', '']);
-  const addNodeShow = ref(false);
-  const deleteNodeShow = ref(false);
-  const detailData = ref<RiakModel>();
-  const selected = ref<RiakModel[]>([]);
-
-  const getTableInstance = () => tableRef.value;
-
   const selectedIds = computed(() => selected.value.map((item) => item.id));
 
   const { settings: tableSetting, updateTableSettings } = useTableSettings(UserPersonalSettings.RIAK_TABLE_SETTINGS, {
@@ -364,6 +377,7 @@
       'status',
       'cluster_stats',
       'riak_node',
+      'tag',
     ],
     disabled: ['master_domain'],
   });
@@ -451,14 +465,16 @@
     deleteNodeShow.value = true;
   };
 
-  const fetchData = (
-    otherParamas: {
-      status?: string;
-    } = {},
-  ) => {
+  const handleTagSearch = (params: Record<string, any>) => {
+    tagSearchValue.value = params;
+    fetchData();
+  };
+
+  const fetchData = () => {
     const params = {
-      ...otherParamas,
       ...getSearchSelectorParams(searchValue.value),
+      ...tagSearchValue.value,
+      ...sortValue,
     };
     const [startTime, endTime] = deployTime.value;
     if (startTime && endTime) {
@@ -467,8 +483,7 @@
         start_time: dayjs(startTime).format('YYYY-MM-DD'),
       });
     }
-
-    tableRef.value!.fetchData({ ...params }, sortValue);
+    tableRef.value!.fetchData(params);
   };
 
   onMounted(() => {
@@ -478,9 +493,7 @@
   });
 
   defineExpose<Expose>({
-    freshData() {
-      fetchData();
-    },
+    refresh: fetchData,
   });
 </script>
 <style lang="less">
@@ -494,12 +507,15 @@
       display: flex;
       flex-wrap: wrap;
       margin-bottom: 16px;
+      gap: 8px;
+
+      .tag-search-main {
+        margin-left: auto;
+      }
 
       .bk-search-select {
         flex: 1;
         max-width: 500px;
-        min-width: 320px;
-        margin-left: auto;
       }
 
       .bk-date-picker {

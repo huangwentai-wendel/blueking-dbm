@@ -12,7 +12,7 @@
 -->
 
 <template>
-  <SmartAction>
+  <SmartAction class="db-toolbox">
     <EditableTable
       ref="table"
       class="mb-20"
@@ -43,9 +43,16 @@
           :create-row-method="createTableRow" />
       </EditableRow>
     </EditableTable>
-    <IgnoreBiz
-      v-model="formData.force"
-      v-bk-tooltips="t('如忽略_有连接的情况下也会执行')" />
+    <BkFormItem
+      v-bk-tooltips="t('存在业务连接时需要人工确认')"
+      class="fit-content">
+      <BkCheckbox
+        v-model="formData.force"
+        :false-label="false"
+        true-label>
+        <span class="safe-action-text">{{ t('检查业务连接') }}</span>
+      </BkCheckbox>
+    </BkFormItem>
     <TicketPayload v-model="formData.payload" />
     <template #action>
       <BkButton
@@ -77,9 +84,8 @@
 
   import { useCreateTicket } from '@hooks';
 
-  import { TicketTypes } from '@common/const';
+  import { ClusterTypes, TicketTypes } from '@common/const';
 
-  import IgnoreBiz from '@views/db-manage/common/toolbox-field/form-item/ignore-biz/Index.vue';
   import TicketPayload, {
     createTickePayload,
   } from '@views/db-manage/common/toolbox-field/form-item/ticket-payload/Index.vue';
@@ -89,6 +95,7 @@
 
   interface RowData {
     cluster: {
+      cluster_type: ClusterTypes;
       id: number;
       master_domain: string;
       related_clusters: {
@@ -114,6 +121,7 @@
 
   const createTableRow = (data = {} as Partial<RowData>) => ({
     cluster: data.cluster || {
+      cluster_type: ClusterTypes.TENDBHA,
       id: 0,
       master_domain: '',
       related_clusters: [],
@@ -126,7 +134,7 @@
   });
 
   const defaultData = () => ({
-    force: false,
+    force: true,
     payload: createTickePayload(),
     tableData: [createTableRow()],
   });
@@ -180,12 +188,14 @@
     () => props.ticketDetails,
     () => {
       if (props.ticketDetails) {
-        const { clusters, infos } = props.ticketDetails;
+        const { clusters, force, infos } = props.ticketDetails;
         if (infos.length > 0) {
+          formData.force = force;
           formData.tableData = infos.map((item) => {
             const clusterInfo = clusters[item.cluster_ids[0]];
             return createTableRow({
               cluster: {
+                cluster_type: clusterInfo.cluster_type,
                 id: clusterInfo.id,
                 master_domain: clusterInfo.immute_domain,
                 related_clusters: [],
@@ -208,6 +218,7 @@
         acc.push(
           createTableRow({
             cluster: {
+              cluster_type: item.cluster_type,
               id: item.id,
               master_domain: item.master_domain,
               related_clusters: [],

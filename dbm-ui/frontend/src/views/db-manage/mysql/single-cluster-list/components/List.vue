@@ -23,13 +23,11 @@
       </AuthButton>
       <ClusterBatchOperation
         v-db-console="'mysql.singleClusterList.batchOperation'"
-        class="ml-8"
         :cluster-type="ClusterTypes.TENDBSINGLE"
         :selected="selected"
-        @success="handleBatchOperationSuccess" />
+        @success="fetchData" />
       <BkButton
         v-db-console="'mysql.singleClusterList.importAuthorize'"
-        class="ml-8"
         @click="handleShowExcelAuthorize">
         {{ t('导入授权') }}
       </BkButton>
@@ -40,6 +38,7 @@
       <ClusterIpCopy
         v-db-console="'mysql.singleClusterList.batchCopy'"
         :selected="selected" />
+      <TagSearch @search="handleTagSearch" />
       <DbSearchSelect
         :data="searchSelectData"
         :get-menu-list="getMenuList"
@@ -87,6 +86,9 @@
           :is-filter="isFilter"
           :selected-list="selected"
           @refresh="fetchData" />
+        <ClusterTagColumn
+          :cluster-type="ClusterTypes.TENDBSINGLE"
+          @success="fetchData" />
         <StatusColumn :cluster-type="ClusterTypes.TENDBSINGLE" />
         <ClusterStatsColumn :cluster-type="ClusterTypes.TENDBSINGLE" />
         <RoleColumn
@@ -231,25 +233,31 @@
 
   import DbTable from '@components/db-table/index.vue';
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
+  import TagSearch from '@components/tag-search/index.vue';
 
   import ClusterAuthorize from '@views/db-manage/common/cluster-authorize/Index.vue';
   import ClusterBatchOperation from '@views/db-manage/common/cluster-batch-opration/Index.vue';
   import ClusterExportData from '@views/db-manage/common/cluster-export-data/Index.vue';
   import ClusterIpCopy from '@views/db-manage/common/cluster-ip-copy/Index.vue';
-  import ClusterNameColumn from '@views/db-manage/common/cluster-table-column/ClusterNameColumn.vue';
-  import ClusterStatsColumn from '@views/db-manage/common/cluster-table-column/ClusterStatsColumn.vue';
-  import CommonColumn from '@views/db-manage/common/cluster-table-column/CommonColumn.vue';
-  import IdColumn from '@views/db-manage/common/cluster-table-column/IdColumn.vue';
-  import MasterDomainColumn from '@views/db-manage/common/cluster-table-column/MasterDomainColumn.vue';
-  import ModuleNameColumn from '@views/db-manage/common/cluster-table-column/ModuleNameColumn.vue';
-  import RoleColumn from '@views/db-manage/common/cluster-table-column/RoleColumn.vue';
-  import StatusColumn from '@views/db-manage/common/cluster-table-column/StatusColumn.vue';
+  import ClusterNameColumn from '@views/db-manage/common/cluster-table/ClusterNameColumn.vue';
+  import ClusterStatsColumn from '@views/db-manage/common/cluster-table/ClusterStatsColumn.vue';
+  import ClusterTagColumn from '@views/db-manage/common/cluster-table/ClusterTagColumn.vue';
+  import CommonColumn from '@views/db-manage/common/cluster-table/CommonColumn.vue';
+  import IdColumn from '@views/db-manage/common/cluster-table/IdColumn.vue';
+  import MasterDomainColumn from '@views/db-manage/common/cluster-table/MasterDomainColumn.vue';
+  import ModuleNameColumn from '@views/db-manage/common/cluster-table/ModuleNameColumn.vue';
+  import RoleColumn from '@views/db-manage/common/cluster-table/RoleColumn.vue';
+  import StatusColumn from '@views/db-manage/common/cluster-table/StatusColumn.vue';
   import DropdownExportExcel from '@views/db-manage/common/dropdown-export-excel/index.vue';
   import ExcelAuthorize from '@views/db-manage/common/ExcelAuthorize.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
 
   import { getMenuListSearch, getSearchSelectorParams } from '@utils';
+
+  interface Exposes {
+    refresh: () => void;
+  }
 
   interface ColumnData {
     cell: string;
@@ -296,6 +304,7 @@
   const showDataExportSlider = ref(false);
   const selected = ref<TendbsingleModel[]>([]);
   const currentData = ref<ColumnData['data']>();
+  const tagSearchValue = ref<Record<string, any>>({});
 
   const getTableInstance = () => tableRef.value;
 
@@ -381,7 +390,7 @@
 
   // 设置用户个人表头信息
   const { settings, updateTableSettings } = useTableSettings(UserPersonalSettings.TENDBSINGLE_TABLE_SETTINGS, {
-    checked: ['master_domain', 'status', 'cluster_stats', 'masters', 'db_module_id', 'major_version', 'region'],
+    checked: ['master_domain', 'status', 'cluster_stats', 'masters', 'db_module_id', 'major_version', 'region', 'tag'],
     disabled: ['master_domain'],
   });
 
@@ -420,9 +429,17 @@
     return searchSelectData.value.find((set) => set.id === item.id)?.children || [];
   };
 
+  const handleTagSearch = (params: Record<string, any>) => {
+    tagSearchValue.value = params;
+    fetchData();
+  };
+
   const fetchData = () => {
-    const params = getSearchSelectorParams(searchValue.value);
-    tableRef.value!.fetchData(params, { ...sortValue });
+    tableRef.value!.fetchData({
+      ...getSearchSelectorParams(searchValue.value),
+      ...tagSearchValue.value,
+      ...sortValue,
+    });
   };
 
   // 设置行样式
@@ -483,15 +500,14 @@
     selected.value = list;
   };
 
-  const handleBatchOperationSuccess = () => {
-    tableRef.value!.clearSelected();
-    fetchData();
-  };
-
   onMounted(() => {
     if (!clusterId.value && route.query.id) {
       handleToDetails(Number(route.query.id));
     }
+  });
+
+  defineExpose<Exposes>({
+    refresh: fetchData,
   });
 </script>
 <style lang="less">
@@ -507,12 +523,15 @@
       display: flex;
       flex-wrap: wrap;
       margin-bottom: 16px;
+      gap: 8px;
+
+      .tag-search-main {
+        margin-left: auto;
+      }
 
       .bk-search-select {
         flex: 1;
         max-width: 500px;
-        min-width: 320px;
-        margin-left: auto;
       }
     }
 

@@ -22,10 +22,9 @@
       </BkButton>
       <ClusterBatchOperation
         v-db-console="'mongodb.replicaSetList.batchOperation'"
-        class="ml-8"
         :cluster-type="ClusterTypes.MONGO_REPLICA_SET"
         :selected="selected"
-        @success="handleBatchOperationSuccess" />
+        @success="fetchData" />
       <span
         v-bk-tooltips="{
           disabled: hasData,
@@ -33,18 +32,17 @@
         }"
         class="inline-block">
         <BkButton
-          class="ml-8 mb-8"
           :disabled="!hasData"
           @click="handleShowExcelAuthorize">
           {{ t('导入授权') }}
         </BkButton>
       </span>
       <DropdownExportExcel
-        class="ml-8 mb-8"
         :has-selected="hasSelected"
         :ids="selectedIds"
         type="mongodb" />
       <ClusterIpCopy :selected="selected" />
+      <TagSearch @search="handleTagSearch" />
       <DbSearchSelect
         class="header-action-search-select"
         :data="searchSelectData"
@@ -91,6 +89,9 @@
         :is-filter="isFilter"
         :selected-list="selected"
         @refresh="fetchData" />
+      <ClusterTagColumn
+        :cluster-type="ClusterTypes.MONGO_REPLICA_SET"
+        @success="fetchData" />
       <StatusColumn :cluster-type="ClusterTypes.MONGO_REPLICA_SET" />
       <ClusterStatsColumn :cluster-type="ClusterTypes.MONGO_REPLICA_SET" />
       <RoleColumn
@@ -101,7 +102,9 @@
         :label="t('节点')"
         :search-ip="batchSearchIpInatanceList"
         :selected-list="selected" />
-      <CommonColumn :cluster-type="ClusterTypes.MONGO_REPLICA_SET" />
+      <CommonColumn
+        :cluster-type="ClusterTypes.MONGO_REPLICA_SET"
+        @refresh="fetchData" />
       <BkTableColumn
         :fixed="isStretchLayoutOpen ? false : 'right'"
         :label="t('操作')"
@@ -222,17 +225,19 @@
 
   import DbTable from '@components/db-table/index.vue';
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
+  import TagSearch from '@components/tag-search/index.vue';
 
   import ClusterAuthorize from '@views/db-manage/common/cluster-authorize/Index.vue';
   import ClusterBatchOperation from '@views/db-manage/common/cluster-batch-opration/Index.vue';
   import ClusterIpCopy from '@views/db-manage/common/cluster-ip-copy/Index.vue';
-  import ClusterNameColumn from '@views/db-manage/common/cluster-table-column/ClusterNameColumn.vue';
-  import ClusterStatsColumn from '@views/db-manage/common/cluster-table-column/ClusterStatsColumn.vue';
-  import CommonColumn from '@views/db-manage/common/cluster-table-column/CommonColumn.vue';
-  import IdColumn from '@views/db-manage/common/cluster-table-column/IdColumn.vue';
-  import MasterDomainColumn from '@views/db-manage/common/cluster-table-column/MasterDomainColumn.vue';
-  import RoleColumn from '@views/db-manage/common/cluster-table-column/RoleColumn.vue';
-  import StatusColumn from '@views/db-manage/common/cluster-table-column/StatusColumn.vue';
+  import ClusterNameColumn from '@views/db-manage/common/cluster-table/ClusterNameColumn.vue';
+  import ClusterStatsColumn from '@views/db-manage/common/cluster-table/ClusterStatsColumn.vue';
+  import ClusterTagColumn from '@views/db-manage/common/cluster-table/ClusterTagColumn.vue';
+  import CommonColumn from '@views/db-manage/common/cluster-table/CommonColumn.vue';
+  import IdColumn from '@views/db-manage/common/cluster-table/IdColumn.vue';
+  import MasterDomainColumn from '@views/db-manage/common/cluster-table/MasterDomainColumn.vue';
+  import RoleColumn from '@views/db-manage/common/cluster-table/RoleColumn.vue';
+  import StatusColumn from '@views/db-manage/common/cluster-table/StatusColumn.vue';
   import DropdownExportExcel from '@views/db-manage/common/dropdown-export-excel/index.vue';
   import ExcelAuthorize from '@views/db-manage/common/ExcelAuthorize.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
@@ -240,6 +245,10 @@
   import AccessEntry from '@views/db-manage/mongodb/components/AccessEntry.vue';
 
   import { getMenuListSearch, getSearchSelectorParams } from '@utils';
+
+  interface Exposes {
+    refresh: () => void;
+  }
 
   const clusterId = defineModel<number>('clusterId');
 
@@ -271,9 +280,19 @@
       id: 'domain',
       name: t('访问入口'),
     },
-    fetchDataFn: () => fetchData(isInit),
+    fetchDataFn: () => fetchData(),
     searchType: ClusterTypes.MONGO_REPLICA_SET,
   });
+
+  const tableRef = ref<InstanceType<typeof DbTable>>();
+  const clusterAuthorizeShow = ref(false);
+  const excelAuthorizeShow = ref(false);
+  const selected = ref<MongodbModel[]>([]);
+  const accessEntryInfoShow = ref(false);
+  const accessEntryInfo = ref<MongodbModel | undefined>();
+  const tagSearchValue = ref<Record<string, any>>({});
+
+  const getTableInstance = () => tableRef.value;
 
   const searchSelectData = computed(() => [
     {
@@ -343,16 +362,6 @@
       name: t('时区'),
     },
   ]);
-
-  const tableRef = ref<InstanceType<typeof DbTable>>();
-  const clusterAuthorizeShow = ref(false);
-  const excelAuthorizeShow = ref(false);
-  const selected = ref<MongodbModel[]>([]);
-  const accessEntryInfoShow = ref(false);
-  const accessEntryInfo = ref<MongodbModel | undefined>();
-
-  const getTableInstance = () => tableRef.value;
-
   const tableDataList = computed(() => tableRef.value?.getData<MongodbModel>() || []);
   const hasData = computed(() => tableDataList.value.length > 0);
   const hasSelected = computed(() => selected.value.length > 0);
@@ -370,6 +379,7 @@
         'region',
         'disaster_tolerance_level',
         'mongodb',
+        'tag',
       ],
       disabled: ['master_domain'],
     },
@@ -467,23 +477,23 @@
     clusterId.value = id;
   };
 
-  let isInit = true;
-  const fetchData = (loading?: boolean) => {
-    tableRef.value!.fetchData(
-      {
-        ...getSearchSelectorParams(searchValue.value),
-        cluster_type: ClusterTypes.MONGO_REPLICA_SET,
-      },
-      { ...sortValue },
-      loading,
-    );
-    isInit = false;
-  };
-
-  const handleBatchOperationSuccess = () => {
-    tableRef.value!.clearSelected();
+  const handleTagSearch = (params: Record<string, any>) => {
+    tagSearchValue.value = params;
     fetchData();
   };
+
+  const fetchData = () => {
+    tableRef.value!.fetchData({
+      ...getSearchSelectorParams(searchValue.value),
+      cluster_type: ClusterTypes.MONGO_REPLICA_SET,
+      ...tagSearchValue.value,
+      ...sortValue,
+    });
+  };
+
+  defineExpose<Exposes>({
+    refresh: fetchData,
+  });
 </script>
 
 <style lang="less">
@@ -496,11 +506,16 @@
     .header-action {
       display: flex;
       flex-wrap: wrap;
-      margin-bottom: 8px;
+      margin-bottom: 16px;
+      gap: 8px;
+
+      .tag-search-main {
+        margin-left: auto;
+      }
 
       .header-action-search-select {
-        width: 500px;
-        margin-left: auto;
+        flex: 1;
+        max-width: 500px;
       }
 
       .header-action-deploy-time {

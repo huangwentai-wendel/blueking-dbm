@@ -17,11 +17,15 @@
       <AuthButton
         v-db-console="'doris.clusterManage.instanceApply'"
         action-id="doris_apply"
-        class="mb16"
         theme="primary"
         @click="handleGoApply">
         {{ t('申请实例') }}
       </AuthButton>
+      <ClusterBatchOperation
+        v-db-console="'doris.clusterManage.batchOperation'"
+        :cluster-type="ClusterTypes.DORIS"
+        :selected="selected"
+        @success="fetchTableData" />
       <DropdownExportExcel
         v-db-console="'doris.clusterManage.batchOperation'"
         :has-selected="hasSelected"
@@ -30,8 +34,8 @@
       <ClusterIpCopy
         v-db-console="'doris.clusterManage.batchCopy'"
         :selected="selected" />
+      <TagSearch @search="handleTagSearch" />
       <DbSearchSelect
-        class="mb16"
         :data="serachData"
         :get-menu-list="getMenuList"
         :model-value="searchValue"
@@ -76,6 +80,9 @@
         :is-filter="isFilter"
         :selected-list="selected"
         @refresh="fetchTableData" />
+      <ClusterTagColumn
+        :cluster-type="ClusterTypes.DORIS"
+        @success="fetchTableData" />
       <StatusColumn :cluster-type="ClusterTypes.DORIS" />
       <ClusterStatsColumn :cluster-type="ClusterTypes.DORIS" />
       <RoleColumn
@@ -270,15 +277,18 @@
 
   import DbTable from '@components/db-table/index.vue';
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
+  import TagSearch from '@components/tag-search/index.vue';
 
+  import ClusterBatchOperation from '@views/db-manage/common/cluster-batch-opration/Index.vue';
   import ClusterIpCopy from '@views/db-manage/common/cluster-ip-copy/Index.vue';
-  import ClusterNameColumn from '@views/db-manage/common/cluster-table-column/ClusterNameColumn.vue';
-  import ClusterStatsColumn from '@views/db-manage/common/cluster-table-column/ClusterStatsColumn.vue';
-  import CommonColumn from '@views/db-manage/common/cluster-table-column/CommonColumn.vue';
-  import IdColumn from '@views/db-manage/common/cluster-table-column/IdColumn.vue';
-  import MasterDomainColumn from '@views/db-manage/common/cluster-table-column/MasterDomainColumn.vue';
-  import RoleColumn from '@views/db-manage/common/cluster-table-column/RoleColumn.vue';
-  import StatusColumn from '@views/db-manage/common/cluster-table-column/StatusColumn.vue';
+  import ClusterNameColumn from '@views/db-manage/common/cluster-table/ClusterNameColumn.vue';
+  import ClusterStatsColumn from '@views/db-manage/common/cluster-table/ClusterStatsColumn.vue';
+  import ClusterTagColumn from '@views/db-manage/common/cluster-table/ClusterTagColumn.vue';
+  import CommonColumn from '@views/db-manage/common/cluster-table/CommonColumn.vue';
+  import IdColumn from '@views/db-manage/common/cluster-table/IdColumn.vue';
+  import MasterDomainColumn from '@views/db-manage/common/cluster-table/MasterDomainColumn.vue';
+  import RoleColumn from '@views/db-manage/common/cluster-table/RoleColumn.vue';
+  import StatusColumn from '@views/db-manage/common/cluster-table/StatusColumn.vue';
   import DropdownExportExcel from '@views/db-manage/common/dropdown-export-excel/index.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
@@ -287,6 +297,10 @@
   import ClusterShrink from '@views/db-manage/doris/common/shrink/Index.vue';
 
   import { getMenuListSearch, getSearchSelectorParams } from '@utils';
+
+  interface Exposes {
+    refresh: () => void;
+  }
 
   const clusterId = defineModel<number>('clusterId');
 
@@ -327,7 +341,7 @@
   const isShowExpandsion = ref(false);
   const isShowShrink = ref(false);
   const isShowPassword = ref(false);
-  const isInit = ref(true);
+  const tagSearchValue = ref<Record<string, any>>({});
 
   const selected = shallowRef<DorisModel[]>([]);
   const operationData = shallowRef<DorisModel>();
@@ -440,6 +454,7 @@
       'doris_backend_hot',
       'doris_backend_cold',
       'cluster_time_zone',
+      'tag',
     ],
     disabled: ['domain'],
   });
@@ -479,9 +494,13 @@
     return serachData.value.find((set) => set.id === item.id)?.children || [];
   };
 
-  const fetchTableData = (loading?: boolean) => {
-    tableRef.value!.fetchData({ ...getSearchSelectorParams(searchValue.value) }, { ...sortValue }, loading);
-    isInit.value = false;
+  const handleTagSearch = (params: Record<string, any>) => {
+    tagSearchValue.value = params;
+    fetchTableData();
+  };
+
+  const fetchTableData = () => {
+    tableRef.value!.fetchData({ ...getSearchSelectorParams(searchValue.value), ...tagSearchValue.value, ...sortValue });
   };
 
   const handleSelection = (key: any, list: Record<number, DorisModel>[]) => {
@@ -533,6 +552,10 @@
       handleToDetails(Number(route.query.id));
     }
   });
+
+  defineExpose<Exposes>({
+    refresh: fetchTableData,
+  });
 </script>
 
 <style lang="less">
@@ -545,12 +568,16 @@
     .header-action {
       display: flex;
       flex-wrap: wrap;
+      margin-bottom: 16px;
+      gap: 8px;
+
+      .tag-search-main {
+        margin-left: auto;
+      }
 
       .bk-search-select {
         flex: 1;
-        max-width: 320px;
-        min-width: 320px;
-        margin-left: auto;
+        max-width: 500px;
       }
     }
 

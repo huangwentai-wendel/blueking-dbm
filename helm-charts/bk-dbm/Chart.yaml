@@ -27,7 +27,7 @@ dependencies:
   - condition: dbm.enabled
     name: dbm
     repository: file://charts/dbm
-    version: 0.1.46
+    version: 0.1.47
   - condition: dbconfig.enabled
     name: dbconfig
     repository: file://charts/dbconfig
@@ -92,8 +92,12 @@ dependencies:
     name: db-dbha
     repository: file://charts/db-dbha
     version: 0.1.0
+  - condition: k8s-dbs.enabled
+    name: k8s-dbs
+    repository: file://charts/k8s-dbs
+    version: 1.0.0-alpha.2
 description: A Helm chart for bk-dbm
 name: bk-dbm
 type: application
-version: 1.5.0-alpha.50
-appVersion: 1.5.0-alpha.50
+version: 1.5.0-alpha.60
+appVersion: 1.5.0-alpha.60

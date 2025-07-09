@@ -26,6 +26,8 @@ JOB_INSTANCE_EXPIRE_TIME = 5 * 60
 DB_CLOUD_TOKEN_EXPIRE_TIME = 1 * 24 * 60 * 60
 # 定义云区域proxy缓存过期时间为1天
 DB_CLOUD_PROXY_EXPIRE_TIME = 1 * 24 * 60 * 60
+# 定义machine缓存过期时间为1天
+DB_CLOUD_MACHINE_EXPIRE_TIME = 1 * 24 * 60 * 60
 
 
 class ExtensionType(str, StructuredEnum):
@@ -36,6 +38,7 @@ class ExtensionType(str, StructuredEnum):
     DRS = EnumField("DRS", _("SQL 远程执行服务"))
     DBHA = EnumField("DBHA", _("数据库高可用服务"))
     REDIS_DTS = EnumField("REDIS_DTS", _("Redis DTS服务"))
+    CONSOLE_DUMP_CENTER = EnumField("CONSOLE_DUMP_CENTER", _("控制台转储中心"))
 
 
 class ExtensionServiceStatus(str, StructuredEnum):

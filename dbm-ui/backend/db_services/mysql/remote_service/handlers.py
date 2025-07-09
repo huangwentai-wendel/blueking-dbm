@@ -17,10 +17,10 @@ from django.utils.translation import ugettext as _
 from backend.components import DRSApi
 from backend.db_meta.api.cluster.base.handler import ClusterHandler
 from backend.db_meta.models import Cluster
+from backend.db_services.dbbase.cluster.handlers import ClusterServiceHandler
 from backend.db_services.mysql.constants import QUERY_SCHEMA_DBS_SQL, QUERY_SCHEMA_TABLES_SQL, QUERY_TABLES_FROM_DB_SQL
 from backend.db_services.mysql.remote_service.exceptions import RemoteServiceBaseException
 from backend.db_services.mysql.sqlparse.exceptions import SQLParseBaseException
-from backend.db_services.mysql.sqlparse.handlers import SQLParseHandler
 from backend.db_services.partition.constants import QUERY_DATABASE_FIELD_TYPE
 from backend.flow.consts import SYSTEM_DBS
 
@@ -270,38 +270,6 @@ class RemoteServiceHandler:
             cluster_databases_infos.append({"cluster_id": info["cluster_id"], "databases": databases})
         return cluster_databases_infos
 
-    @classmethod
-    def console_rpc(cls, instances: list, cmd: str, db_query: bool):
-        """
-        执行rpc命令，只支持select语句
-        @param instances: 实例信息
-        @param cmd: 执行命令
-        @param db_query: 是否只允许查询系统库 -- DB自助查询
-        """
-        # 校验select语句
-        SQLParseHandler().parse_select_statement(sql=cmd, db_query=db_query)
-
-        # 按云区域对instance分组
-        bk_cloud__instances_map: Dict[int, List] = defaultdict(list)
-        for info in instances:
-            bk_cloud__instances_map[info["bk_cloud_id"]].append(info["instance"])
-
-        # 获取rpc结果
-        instance_rpc_results: List = []
-        for bk_cloud_id, addresses in bk_cloud__instances_map.items():
-            rpc_results = DRSApi.webconsole_rpc({"bk_cloud_id": bk_cloud_id, "addresses": addresses, "cmds": [cmd]})
-            cmd_results = [
-                {
-                    "instance": res["address"],
-                    "table_data": res["cmd_results"][0]["table_data"] if not res["error_msg"] else None,
-                    "error_msg": res["error_msg"],
-                }
-                for res in rpc_results
-            ]
-            instance_rpc_results.extend(cmd_results)
-
-        return instance_rpc_results
-
     def webconsole_rpc(self, cluster_id: int, cmd: str, **kwargs):
         """
         执行webconsole命令，只支持select语句
@@ -315,23 +283,12 @@ class RemoteServiceHandler:
         # 请求rpc
         try:
             instances = [{"bk_cloud_id": cluster.bk_cloud_id, "instance": remote_address}]
-            rpc_results = self.console_rpc(instances, cmd, db_query=False)
+            rpc_results = ClusterServiceHandler.console_rpc(
+                instances, cmd, db_query=False, rpc_function=DRSApi.webconsole_rpc, **kwargs
+            )
             return {"query": rpc_results[0]["table_data"], "error_msg": rpc_results[0]["error_msg"]}
         except SQLParseBaseException as e:
             return {"query": [], "error_msg": e.message}
-
-    @classmethod
-    def dbconsole_rpc(
-        cls,
-        instances: list,
-        cmd: str,
-    ):
-        """
-        DB自助查询
-        @param instances: 实例信息
-        @param cmd: 执行命令
-        """
-        return cls.console_rpc(instances, cmd, db_query=True)
 
     def validate_table_fields(self, info, input_fild_names):
         """
@@ -368,3 +325,32 @@ class RemoteServiceHandler:
                     raise RemoteServiceBaseException(
                         _("数据库【{}】表【{}】中不存在字段{}".format(db_name, table_name, no_file_name))
                     )
+
+    @classmethod
+    def dbconsole_proxy_rpc(
+        cls,
+        instances: list,
+        cmd: str,
+    ):
+        """
+        DB自助查询 用于proxy管理端查询
+        proxy严格填写指定的查询sql
+        @param instances: 实例信息
+        @param cmd: 执行命令
+        """
+        proxy_statements = ["SELECT * FROM backends;", "SELECT * FROM user;", "show processlist;", "select version;"]
+        if cmd not in proxy_statements:
+            results = [
+                {
+                    "error_msg": _("查询实例[{}]失败 请严格输入proxy允许的标准sql，且每次只能查询一条！").format(instance["instance"]),
+                    "instance": instance["instance"],
+                    "table_data": [],
+                }
+                for instance in instances
+            ]
+            return results
+        rpc_results = ClusterServiceHandler.console_rpc(
+            instances, cmd, db_query=True, rpc_function=DRSApi.proxyrpc, is_check=False
+        )
+
+        return rpc_results

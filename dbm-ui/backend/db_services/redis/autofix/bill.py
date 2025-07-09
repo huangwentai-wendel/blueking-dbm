@@ -26,15 +26,13 @@ from backend.db_meta.models import Machine
 from backend.db_services.dbbase.constants import IpSource
 from backend.db_services.mongodb.autofix.mongodb_autofix_ticket import mongo_create_ticket
 from backend.db_services.redis.util import is_support_redis_auotfix
-from backend.ticket.builders import BuilderFactory
-from backend.ticket.constants import TicketStatus, TicketType
-from backend.ticket.flow_manager.manager import TicketFlowManager
+from backend.ticket.constants import TicketType
 from backend.ticket.models import Ticket
 from backend.utils.time import datetime2str
 
-from .enums import AutofixStatus
-from .message import send_msg_2_qywx
-from .models import RedisAutofixCore
+from .enums import AutofixItem, AutofixStatus
+from .message import get_ticket_heplers, send_msg_2_qywx
+from .models import RedisAutofixCore, RedisAutofixCtl
 
 logger = logging.getLogger("root")
 
@@ -55,7 +53,50 @@ def generate_autofix_ticket(fault_clusters: QuerySet):
             cluster.save(update_fields=["status_version", "deal_status", "update_at"])
             continue
 
+        # 忽略自愈，支持按集群名配置
+        if will_ignore_autofix_by_domain(cluster):
+            cluster.status_version = _("ignore_by_ctl:{}".format(get_random_string(12)))
+            cluster.update_at = datetime2str(datetime.datetime.now(timezone.utc))
+            cluster.deal_status = AutofixStatus.AF_IGNORE.value
+            cluster.save(update_fields=["status_version", "deal_status", "update_at"])
+            continue
+
         generate_single_autofix_ticket(cluster)
+
+
+# 增加支持忽略自愈控制
+def will_ignore_autofix_by_domain(cluster: RedisAutofixCore):
+    ignore_domains = []
+    try:
+        ctl_item = RedisAutofixCtl.objects.filter(
+            ctl_name=AutofixItem.IGNORE_DOMAINS.value, bk_biz_id=cluster.bk_biz_id
+        ).get()
+        if ctl_item:
+            ignore_domains = json.loads(ctl_item.ctl_value)
+    except RedisAutofixCtl.DoesNotExist:
+        RedisAutofixCtl.objects.create(
+            bk_cloud_id=cluster.bk_cloud_id,
+            bk_biz_id=cluster.bk_biz_id,
+            ctl_value=json.dumps("[]"),
+            ctl_name=AutofixItem.IGNORE_DOMAINS.value,
+        ).save()
+        return False
+    # 在忽略自愈的对象里边，直接返回就是
+    if cluster.immute_domain in ignore_domains:
+        logger.info(
+            "cluster_autofix_ignore {}, admin confied ignore domains {}/{} ".format(
+                cluster.immute_domain, cluster.immute_domain, ignore_domains
+            )
+        )
+        msgs, title = {}, _("{} - 🥸忽略自愈🥸".format(cluster.immute_domain))
+        msgs[_("BKID")] = cluster.bk_biz_id
+        msgs[_("集群类型")] = cluster.cluster_type
+        msgs[_("故障机S")] = json.dumps(cluster.fault_machines)
+        msgs[_("配置列表")] = _("配置了忽略自愈的集群列表: {} ".format(json.dumps(ignore_domains)))
+        send_msg_2_qywx(title, msgs)
+        return True
+    # 默认发起自愈
+    return False
 
 
 # 独立出来
@@ -99,7 +140,17 @@ def generate_single_autofix_ticket(cluster: RedisAutofixCore):
             )
         )
         if mongos_list or mongod_list:
-            mongo_create_ticket(cluster, cluster_ids, mongos_list, mongod_list)
+            logger.info(
+                "mongodb cluster_summary_fault {}; cluster_ids:{}; mongos_list:{}, mongod_list:{}".format(
+                    cluster.immute_domain, cluster_ids, mongos_list, mongod_list
+                )
+            )
+            try:
+                mongo_create_ticket(cluster, cluster_ids, mongos_list, mongod_list)
+            except Exception as e:
+                logger.error(
+                    "mongodb create autofix ticket for cluster {} , failed : {}".format(cluster.immute_domain, e)
+                )
             return
         create_ticket(cluster, cluster_ids, redis_proxies, redis_slaves)
     except Exception as e:
@@ -135,23 +186,21 @@ def create_ticket(cluster: RedisAutofixCore, cluster_ids: list, redis_proxies: l
         # 如果不存在，则取默认值
         redisDBA = DBAdministrator.objects.get(bk_biz_id=0, db_type=DBType.Redis.value)
 
-    ticket = Ticket.objects.create(
-        creator=redisDBA.users[0],
-        bk_biz_id=cluster.bk_biz_id,
-        ticket_type=TicketType.REDIS_CLUSTER_AUTOFIX.value,
-        group=DBType.Redis.value,
-        status=TicketStatus.PENDING.value,
-        remark=_("自动发起-{}".format(ips)),
-        details=details,
-        is_reviewed=True,
-    )
-
-    cluster.ticket_id = ticket.id
-    cluster.status_version = get_random_string(12)
-    cluster.deal_status = AutofixStatus.AF_WFLOW.value
-
     # 初始化builder类
     try:
+        ticket = Ticket.create_ticket(
+            bk_biz_id=cluster.bk_biz_id,
+            ticket_type=TicketType.REDIS_CLUSTER_AUTOFIX.value,
+            creator=redisDBA.users[0],
+            remark=_("自动发起-{}".format(ips)),
+            details=details,
+            helpers=get_ticket_heplers(),
+        )
+
+        cluster.ticket_id = ticket.id
+        cluster.status_version = get_random_string(12)
+        cluster.deal_status = AutofixStatus.AF_WFLOW.value
+
         msgs, title = {}, _("{} - 发起自愈".format(cluster.immute_domain))
         msgs[_("BKID")] = cluster.bk_biz_id
         msgs[_("流程ID")] = ticket.id
@@ -159,11 +208,6 @@ def create_ticket(cluster: RedisAutofixCore, cluster_ids: list, redis_proxies: l
         msgs[_("集群类型")] = cluster.cluster_type
         msgs[_("故障机S")] = json.dumps(ips)
         send_msg_2_qywx(title, msgs)
-
-        builder = BuilderFactory.create_builder(ticket)
-        builder.patch_ticket_detail()
-        builder.init_ticket_flows()
-        TicketFlowManager(ticket=ticket).run_next_flow()
     except Exception as e:
         cluster.deal_status = AutofixStatus.AF_FAIL.value
         cluster.status_version = str(e)

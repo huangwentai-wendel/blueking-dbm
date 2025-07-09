@@ -1,0 +1,22 @@
+apiVersion: apps.kubeblocks.io/v1alpha1
+kind: ClusterDefinition
+metadata:
+  name: {{ include "victoriametrics-cdName" . }}
+spec:
+  topologies:
+    - name: cluster
+      default: true
+      components:
+        - compDef: {{ include "victoriametrics-insert.cmpdName" . }}
+          name: vminsert
+        - compDef: {{ include "victoriametrics-select.cmpdName" . }}
+          name: vmselect
+        - compDef: {{ include "victoriametrics-storage.cmpdName" . }}
+          name: vmstorage
+    - name: select
+      default: false
+      components:
+        - compDef: {{ include "victoriametrics-select.cmpdName" . }}
+          name: vmselect
+
+

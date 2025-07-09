@@ -9,18 +9,21 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 import copy
+import datetime
 import logging
+import uuid
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
+from backend.components import DRSApi
 from backend.configuration.constants import DBType
 from backend.constants import IP_PORT_DIVIDER
-from backend.db_meta.enums import InstanceStatus
+from backend.db_meta.enums import ClusterPhase, InstanceStatus
 from backend.db_meta.models import Cluster
 from backend.db_services.mysql.fixpoint_rollback.handlers import FixPointRollbackHandler
-from backend.flow.consts import RollbackType
+from backend.flow.consts import MySQLBackupTypeEnum, RollbackType
 from backend.flow.engine.bamboo.scene.common.builder import Builder, SubBuilder
 from backend.flow.engine.bamboo.scene.common.get_file_list import GetFileList
 from backend.flow.engine.bamboo.scene.mysql.common.get_local_backup import check_storage_database
@@ -29,11 +32,20 @@ from backend.flow.engine.bamboo.scene.spider.common.exceptions import (
     TendbGetBackupInfoFailedException,
 )
 from backend.flow.engine.bamboo.scene.spider.spider_recover import remote_node_rollback, spider_recover_sub_flow
+from backend.flow.plugins.components.collections.common.add_alarm_shield import AddAlarmShieldComponent
+from backend.flow.plugins.components.collections.mysql.exec_actuator_script import ExecuteDBActuatorScriptComponent
 from backend.flow.plugins.components.collections.mysql.mysql_crond_control import MysqlCrondMonitorControlComponent
 from backend.flow.plugins.components.collections.mysql.trans_flies import TransFileComponent
+from backend.flow.plugins.components.collections.spider.remotedb_node_priv_recover import RemoteDbPrivRecoverComponent
 from backend.flow.plugins.components.collections.spider.spider_db_meta import SpiderDBMetaComponent
 from backend.flow.utils.mysql.common.mysql_cluster_info import get_version_and_charset
-from backend.flow.utils.mysql.mysql_act_dataclass import CrondMonitorKwargs, DBMetaOPKwargs, DownloadMediaKwargs
+from backend.flow.utils.mysql.mysql_act_dataclass import (
+    CrondMonitorKwargs,
+    DBMetaOPKwargs,
+    DownloadMediaKwargs,
+    ExecActuatorKwargs,
+)
+from backend.flow.utils.mysql.mysql_act_playload import MysqlActPayload
 from backend.flow.utils.mysql.mysql_context_dataclass import ClusterInfoContext
 from backend.flow.utils.spider.spider_db_meta import SpiderDBMeta
 from backend.flow.utils.spider.tendb_cluster_info import get_rollback_clusters_info
@@ -102,7 +114,7 @@ class TenDBRollBackDataFlow(object):
             if self.data["rollback_type"] == RollbackType.REMOTE_AND_BACKUPID.value:
                 backup_info = self.data["backupinfo"]
             else:
-                rollback_handler = FixPointRollbackHandler(self.data["source_cluster_id"])
+                rollback_handler = FixPointRollbackHandler(self.data["source_cluster_id"], check_full_backup=True)
                 rollback_time = self.data["rollback_time"]
                 backup_info = rollback_handler.query_latest_backup_log(str2datetime(rollback_time))
                 if backup_info is None:
@@ -127,6 +139,58 @@ class TenDBRollBackDataFlow(object):
             )
 
             ins_sub_pipeline_list = []
+            # rds先抽取出spider spider_slave 实例列表
+            remote_node_users = {}
+            spider_instance_list = []
+
+            cluster = {
+                "cluster_id": target_cluster.id,
+                "cluster_phase": ClusterPhase.OFFLINE.value,
+            }
+            tendb_rollback_pipeline.add_act(
+                act_name=_("设置集群为禁用状态"),
+                act_component_code=SpiderDBMetaComponent.code,
+                kwargs=asdict(
+                    DBMetaOPKwargs(
+                        db_meta_class_func=SpiderDBMeta.tendb_modify_cluster_phase.__name__,
+                        cluster=cluster,
+                        is_update_trans_data=False,
+                    )
+                ),
+            )
+            tendb_rollback_pipeline.add_act(
+                act_name=_("屏蔽 {} 告警".format(clusters_info["target_immute_domain"])),
+                act_component_code=AddAlarmShieldComponent.code,
+                kwargs={
+                    "begin_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "end_time": (datetime.datetime.now() + datetime.timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S"),
+                    "description": clusters_info["target_immute_domain"],
+                    "dimensions": [
+                        {
+                            "name": "instance_host",
+                            "values": clusters_info["ip_list"],
+                        }
+                    ],
+                },
+            )
+            cluster = {
+                "host": clusters_info["target"]["dbctl_ip"],
+                "port": clusters_info["target"]["spider_port"],
+                "backup_id": str(uuid.uuid1()),
+            }
+            exec_act_kwargs = ExecActuatorKwargs(
+                exec_ip=clusters_info["target"]["dbctl_ip"],
+                bk_cloud_id=target_cluster.bk_cloud_id,
+                cluster_type=target_cluster.cluster_type,
+                cluster=cluster,
+                get_mysql_payload_func=MysqlActPayload.spider_priv_backup_demand_payload.__name__,
+            )
+            tendb_rollback_pipeline.add_act(
+                act_name=_("回滚前在中控节点备份权限{}").format(exec_act_kwargs.exec_ip),
+                act_component_code=ExecuteDBActuatorScriptComponent.code,
+                kwargs=asdict(exec_act_kwargs),
+            )
+
             for spider_node in clusters_info["target_spiders"]:
                 if "spider_node" not in backup_info:
                     raise TendbGetBackupInfoFailedException(message=_("获取spider节点备份信息不存在"))
@@ -137,6 +201,7 @@ class TenDBRollBackDataFlow(object):
                     raise NormalSpiderFlowException(
                         message=_("回档集群 {} 空闲检查不通过，请确认回档集群是否存在非系统数据库".format(target_cluster.id))
                     )
+                spider_instance_list.append(spider_node["instance"])
                 target_spider = target_cluster.proxyinstance_set.get(
                     machine__ip=spider_node["ip"], port=spider_node["port"]
                 )
@@ -159,20 +224,21 @@ class TenDBRollBackDataFlow(object):
                     "all_database_rollback": self.data["all_database_rollback"],
                 }
                 spd_sub_pipeline = SubBuilder(root_id=self.root_id, data=copy.deepcopy(self.data))
-                spd_sub_pipeline.add_act(
-                    act_name=_("屏蔽监控 {}").format(spider_node["instance"]),
-                    act_component_code=MysqlCrondMonitorControlComponent.code,
-                    kwargs=asdict(
-                        CrondMonitorKwargs(
-                            bk_cloud_id=target_cluster.bk_cloud_id,
-                            exec_ips=[spider_node["ip"]],
-                            port=spider_node["port"],
-                        )
-                    ),
-                )
+                # spd_sub_pipeline.add_act(
+                #     act_name=_("屏蔽监控 {}").format(spider_node["instance"]),
+                #     act_component_code=MysqlCrondMonitorControlComponent.code,
+                #     kwargs=asdict(
+                #         CrondMonitorKwargs(
+                #             bk_cloud_id=target_cluster.bk_cloud_id,
+                #             exec_ips=[spider_node["ip"]],
+                #             port=spider_node["port"],
+                #         )
+                #     ),
+                # )
+
                 cluster = {"proxy_status": InstanceStatus.RESTORING.value, "proxy_ids": [target_spider.id]}
                 spd_sub_pipeline.add_act(
-                    act_name=_("写入初始化实例的db_meta元信息"),
+                    act_name=_("设置节点为恢复中状态"),
                     act_component_code=SpiderDBMetaComponent.code,
                     kwargs=asdict(
                         DBMetaOPKwargs(
@@ -190,7 +256,7 @@ class TenDBRollBackDataFlow(object):
 
                 cluster = {"proxy_status": InstanceStatus.RUNNING.value, "proxy_ids": [target_spider.id]}
                 spd_sub_pipeline.add_act(
-                    act_name=_("写入初始化实例的db_meta元信息"),
+                    act_name=_("设置节点为正常状态"),
                     act_component_code=SpiderDBMetaComponent.code,
                     kwargs=asdict(
                         DBMetaOPKwargs(
@@ -238,6 +304,46 @@ class TenDBRollBackDataFlow(object):
                         0, ctl_sub_pipeline.build_sub_process(sub_name=_("{} 中控节点恢复".format(ctl_cluster["instance"])))
                     )
 
+                    ip_results = DRSApi.rpc(
+                        {
+                            "addresses": [ctl_cluster["instance"]],
+                            "cmds": [
+                                "select distinct Host from mysql.servers where  Wrapper in ('SPIDER','TDBCTL','SPIDER_SLAVE')"
+                            ],
+                            "force": False,
+                            "bk_cloud_id": target_cluster.bk_cloud_id,
+                        }
+                    )
+                    # 查询代理层作为需要授权的白名单IP
+                    if ip_results[0]["error_msg"]:
+                        raise NormalSpiderFlowException(message=_("中控节点查询spider/spider_slave/dbCtl信息错误"))
+                    if len(ip_results[0]["cmd_results"][0]["table_data"]) < 1:
+                        raise NormalSpiderFlowException(message=_("中控节点查询spider/spider_slave/dbCtl数据为空"))
+
+                    spider_instance_list = [i["Host"] for i in ip_results[0]["cmd_results"][0]["table_data"]]
+                    # 查询数据层账号密码作为需要执行授权的信息
+                    ins_results = DRSApi.rpc(
+                        {
+                            "addresses": [ctl_cluster["instance"]],
+                            "cmds": [
+                                """select distinct concat(Host,'{}',Port) as instance, Host,Port,Username,Password from
+                                mysql.servers where  Wrapper in ('mysql','mysql_slave') order by Host,Port,Username""".format(
+                                    IP_PORT_DIVIDER
+                                )
+                            ],
+                            "force": False,
+                            "bk_cloud_id": target_cluster.bk_cloud_id,
+                        }
+                    )
+                    # 查询代理层作为需要授权的白名单IP
+                    if ins_results[0]["error_msg"]:
+                        raise NormalSpiderFlowException(message=_("中控节点查询remotedb/dr信息错误"))
+                    if len(ins_results[0]["cmd_results"][0]["table_data"]) < 1:
+                        raise NormalSpiderFlowException(message=_("中控节点查询remotedb/dr数据为空"))
+                    for one_ins in ins_results[0]["cmd_results"][0]["table_data"]:
+                        remote_node_users[one_ins["instance"]] = one_ins
+
+            # 记录实例的版本,用于权限恢复
             for shard_id, remote_node in clusters_info["shards"].items():
                 if int(shard_id) not in backup_info["remote_node"]:
                     raise TendbGetBackupInfoFailedException(message=_("获取remotedb分片 {} 的备份信息不存在".format(shard_id)))
@@ -283,7 +389,7 @@ class TenDBRollBackDataFlow(object):
                     "storage_ids": [target_slave.id, target_master.id],
                 }
                 ins_sub_pipeline.add_act(
-                    act_name=_("写入初始化实例的db_meta元信息"),
+                    act_name=_("设置分片为恢复中状态"),
                     act_component_code=SpiderDBMetaComponent.code,
                     kwargs=asdict(
                         DBMetaOPKwargs(
@@ -293,30 +399,55 @@ class TenDBRollBackDataFlow(object):
                         )
                     ),
                 )
-                # 屏蔽监控
-                ins_sub_pipeline.add_act(
-                    act_name=_("屏蔽监控 {}").format(shard_id),
-                    act_component_code=MysqlCrondMonitorControlComponent.code,
-                    kwargs=asdict(
-                        CrondMonitorKwargs(
-                            bk_cloud_id=target_cluster.bk_cloud_id,
-                            exec_ips=[remote_node["new_master"]["ip"], remote_node["new_slave"]["ip"]],
-                            port=remote_node["new_master"]["port"],
-                        )
-                    ),
-                )
+                # # 屏蔽监控
+                # ins_sub_pipeline.add_act(
+                #     act_name=_("屏蔽监控 {}").format(shard_id),
+                #     act_component_code=MysqlCrondMonitorControlComponent.code,
+                #     kwargs=asdict(
+                #         CrondMonitorKwargs(
+                #             bk_cloud_id=target_cluster.bk_cloud_id,
+                #             exec_ips=[remote_node["new_master"]["ip"], remote_node["new_slave"]["ip"]],
+                #             port=remote_node["new_master"]["port"],
+                #         )
+                #     ),
+                # )
 
                 ins_sub_pipeline.add_sub_pipeline(
                     sub_flow=remote_node_rollback(
                         root_id=self.root_id, ticket_data=copy.deepcopy(self.data), cluster=shd_cluster
                     )
                 )
+                # 恢复权限
+                if shd_cluster["backupinfo"].get("backup_type", "") == MySQLBackupTypeEnum.PHYSICAL.value:
+                    ins_sub_pipeline.add_act(
+                        act_name=_("恢复所有remoteDB->spider的权限"),
+                        act_component_code=RemoteDbPrivRecoverComponent.code,
+                        kwargs={
+                            "spider_instance_list": spider_instance_list,
+                            "bk_cloud_id": target_cluster.bk_cloud_id,
+                            "instance_version": target_master.version,
+                            "instance": remote_node["new_master"]["instance"],
+                            "remote_node_user": remote_node_users[remote_node["new_master"]["instance"]],
+                        },
+                    )
+                    ins_sub_pipeline.add_act(
+                        act_name=_("恢复所有remoteDR->spider的权限"),
+                        act_component_code=RemoteDbPrivRecoverComponent.code,
+                        kwargs={
+                            "spider_instance_list": spider_instance_list,
+                            "bk_cloud_id": target_cluster.bk_cloud_id,
+                            "instance_version": target_slave.version,
+                            "instance": remote_node["new_slave"]["instance"],
+                            "remote_node_user": remote_node_users[remote_node["new_slave"]["instance"]],
+                        },
+                    )
+
                 cluster = {
                     "storage_status": InstanceStatus.RUNNING.value,
                     "storage_ids": [target_slave.id, target_master.id],
                 }
                 ins_sub_pipeline.add_act(
-                    act_name=_("写入初始化实例的db_meta元信息"),
+                    act_name=_("设置分片为正常状态"),
                     act_component_code=SpiderDBMetaComponent.code,
                     kwargs=asdict(
                         DBMetaOPKwargs(
@@ -341,7 +472,23 @@ class TenDBRollBackDataFlow(object):
                 ins_sub_pipeline_list.append(
                     ins_sub_pipeline.build_sub_process(sub_name=_("{} 分片主从恢复".format(shard_id)))
                 )
+
             tendb_rollback_pipeline.add_parallel_sub_pipeline(sub_flow_list=ins_sub_pipeline_list)
+            cluster = {
+                "cluster_id": target_cluster.id,
+                "cluster_phase": ClusterPhase.ONLINE.value,
+            }
+            tendb_rollback_pipeline.add_act(
+                act_name=_("设置集群为正常状态"),
+                act_component_code=SpiderDBMetaComponent.code,
+                kwargs=asdict(
+                    DBMetaOPKwargs(
+                        db_meta_class_func=SpiderDBMeta.tendb_modify_cluster_phase.__name__,
+                        cluster=cluster,
+                        is_update_trans_data=False,
+                    )
+                ),
+            )
             tendb_rollback_list.append(
                 tendb_rollback_pipeline.build_sub_process(
                     sub_name=_("集群回档: src:{} desc:{}".format(source_cluster.id, target_cluster.id))

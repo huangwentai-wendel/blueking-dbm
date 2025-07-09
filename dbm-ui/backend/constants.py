@@ -29,6 +29,9 @@ IP_PORT_DIVIDER_FOR_DNS = "#"
 IP_RE_PATTERN = r"(?:(?:2(?:5[0-5]|[0-4]\d))|[0-1]?\d{1,2})(?:\.(?:(?:2(?:5[0-5]|[0-4]\d))|[0-1]?\d{1,2})){3}"
 IP_PORT_RE_PATTERN = r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}"
 
+# 域名正则表达式
+DOMAIN_PATTERN = r"^[a-zA-Z0-9][-a-zA-Z0-9]{0,62}(\.[a-zA-Z0-9][-a-zA-Z0-9]{0,62}){2,8}\.*(#(\d+))?$"
+
 # 是否有备份系统
 BACKUP_SYS_STATUS = True
 
@@ -71,6 +74,12 @@ class CommonHostDBMeta:
     db_type: str
     instance_role: str
     instance_port: str
+
+
+# 定义不同组件额外需要的host标签结构
+@dataclass
+class MongoDBHostDBMeta:
+    shard: str
 
 
 # 集群状态数据缓存key

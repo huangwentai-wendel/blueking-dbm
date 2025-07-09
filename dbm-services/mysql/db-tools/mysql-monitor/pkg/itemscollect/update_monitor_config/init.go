@@ -1,8 +1,8 @@
 package update_monitor_config
 
 import (
-	"dbm-services/common/reverse-api/apis/mysql"
-	rconfig "dbm-services/common/reverse-api/config"
+	"dbm-services/common/reverseapi/define"
+	"dbm-services/common/reverseapi/define/mysql"
 	acst "dbm-services/mysql/db-tools/dbactuator/pkg/core/cst"
 	"dbm-services/mysql/db-tools/mysql-monitor/pkg/config"
 	"encoding/json"
@@ -26,7 +26,8 @@ type Checker struct {
 func (c *Checker) Run() (msg string, err error) {
 	sii, err := c.getSelfInfo()
 	if err != nil {
-		return "", err
+		slog.Error("get self info failed", slog.String("err", err.Error()))
+		return "", nil
 	}
 	slog.Info(name, slog.Any("sii", sii))
 
@@ -115,8 +116,8 @@ func (c *Checker) updateConfigFile(sii *mysql.StorageInstanceInfo) (err error) {
 
 func (c *Checker) getSelfInfo() (sii *mysql.StorageInstanceInfo, err error) {
 	filePath := filepath.Join(
-		rconfig.CommonConfigDir,
-		rconfig.InstanceInfoFileName,
+		define.DefaultCommonConfigDir,
+		define.DefaultNginxProxyAddrsFileName,
 	)
 	f, err := os.OpenFile(filePath, os.O_RDONLY, os.ModePerm)
 	if err != nil {

@@ -15,12 +15,14 @@
   <EditableTable
     ref="table"
     class="mb-20"
-    :model="tableData">
+    :model="tableData"
+    :rules="rules">
     <EditableRow
       v-for="(item, index) in tableData"
       :key="index">
       <ClusterColumn
         v-model="item.cluster"
+        allows-duplicates
         :selected="selected"
         @batch-edit="handleBatchEditCluster" />
       <MultipleResourceHostColumn
@@ -82,6 +84,7 @@
   </EditableTable>
 </template>
 <script lang="ts" setup>
+  import _ from 'lodash';
   import { useTemplateRef } from 'vue';
   import { useI18n } from 'vue-i18n';
 
@@ -206,6 +209,32 @@
 
   const selected = computed(() => tableData.value.filter((item) => item.cluster.id).map((item) => item.cluster));
   const selectedMap = computed(() => Object.fromEntries(selected.value.map((cur) => [cur.master_domain, true])));
+  const selectedHosts = computed(() => {
+    const spiderHostIps = tableData.value
+      .filter((item) => item.spider_host.bk_host_id)
+      .map((item) => item.spider_host.ip);
+
+    const remoteHostIps = tableData.value.flatMap((item) => item.remote_hosts.map((host) => host.ip));
+
+    return [...spiderHostIps, ...remoteHostIps];
+  });
+
+  const rules = {
+    remote_hosts: [
+      {
+        message: t('主机IP重复'),
+        trigger: 'change',
+        validator: (value: string) => selectedHosts.value.filter((item) => item === value).length < 2,
+      },
+    ],
+    'spider_host.ip': [
+      {
+        message: t('主机IP重复'),
+        trigger: 'change',
+        validator: (value: string) => selectedHosts.value.filter((item) => item === value).length < 2,
+      },
+    ],
+  };
 
   watch(
     () => props.ticketDetails,
@@ -259,7 +288,7 @@
   const handleBatchEdit = (value: any, field: string) => {
     tableData.value.forEach((item) => {
       Object.assign(item, {
-        [field]: value,
+        [field as keyof RowData]: _.cloneDeep(value),
       });
     });
   };

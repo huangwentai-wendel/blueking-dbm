@@ -49,6 +49,8 @@ def get_dts_history_jobs(payload: dict) -> dict:
     """获取迁移任务列表以及其对应task cnt"""
 
     where = Q()
+    if "id" in payload:
+        where &= Q(id=payload["id"])
     if "bk_biz_id" in payload and payload["bk_biz_id"]:
         where &= Q(app=payload["bk_biz_id"])
     if "cluster_name" in payload:
@@ -227,7 +229,19 @@ def dts_job_tasks_failed_retry(payload: dict):
         task.sync_operate = ""
         task.retry_times = task.retry_times + 1
         task.update_time = datetime.now(timezone.utc)
-        task.save(update_fields=["task_type", "status", "message", "sync_operate", "retry_times", "update_time"])
+        task.dts_server = "1.1.1.1"  # 失败重试的时候， 重新分配新的DTS Server
+        task.task_type = ""  # get_job_to_schedule_tasks
+        task.save(
+            update_fields=[
+                "task_type",
+                "status",
+                "message",
+                "dts_server",
+                "sync_operate",
+                "retry_times",
+                "update_time",
+            ]
+        )
 
     return list(tasks.values_list("id", flat=True))
 

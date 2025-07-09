@@ -8,12 +8,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-import json
 import logging
-import operator
 from collections import defaultdict
 from datetime import datetime, timedelta
-from functools import reduce
 from typing import Any, Dict, List, Union
 
 from celery import shared_task
@@ -22,15 +19,16 @@ from django.db.models import Q
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
-from backend import env
-from backend.components import BKLogApi
+from backend.components.bklog.handler import BKLogHandler
 from backend.configuration.constants import PLAT_BIZ_ID, DBType
+from backend.configuration.models import DBAdministrator
 from backend.constants import DEFAULT_SYSTEM_USER
 from backend.core import notify
-from backend.db_meta.enums import ClusterType, InstanceInnerRole
+from backend.db_meta.enums import ClusterType
 from backend.db_meta.models import Cluster, StorageInstance
 from backend.ticket.builders.common.constants import MYSQL_CHECKSUM_TABLE, MySQLDataRepairTriggerMode
 from backend.ticket.constants import (
+    FLOW_TASK_TYPES,
     TICKET_EXPIRE_DEFAULT_CONFIG,
     TODO_RUNNING_STATUS,
     FlowErrCode,
@@ -43,7 +41,7 @@ from backend.ticket.constants import (
 )
 from backend.ticket.exceptions import TicketTaskTriggerException
 from backend.ticket.models.ticket import Flow, Ticket, TicketFlowsConfig
-from backend.utils.time import date2str, datetime2str
+from backend.utils.time import date2str
 
 logger = logging.getLogger("root")
 
@@ -86,24 +84,16 @@ class TicketTask(object):
         # 例行时间校验默认间隔一天
         now = datetime.now(timezone.utc).astimezone()
         start_time, end_time = now - timedelta(days=1), now
-        # TODO: 目前这个esquery_search最多支持10000条查询，后续可以改造成scroll进行查询
-        resp = BKLogApi.esquery_search(
-            {
-                "indices": f"{env.DBA_APP_BK_BIZ_ID}_bklog.mysql_checksum_result",
-                "start_time": datetime2str(start_time),
-                "end_time": datetime2str(end_time),
-                "query_string": "*",
-                "start": 0,
-                "size": 10000,
-                "sort_list": [["dtEventTimeStamp", "asc"], ["gseIndex", "asc"], ["iterationIndex", "asc"]],
-            }
-        )
 
-        # 根据集群ID聚合日志
+        total_checksum_logs = BKLogHandler.query_logs(
+            collector="mysql_checksum_result", start_time=start_time, end_time=end_time, query_string="*", size=-1
+        )
+        # 根据集群ID聚合日志，提前跳过校验一致的log
         cluster__checksum_logs_map: Dict[int, List[Dict]] = defaultdict(list)
-        for hit in resp["hits"]["hits"]:
-            checksum_log = json.loads(hit["_source"]["log"])
-            cluster__checksum_logs_map[checksum_log["cluster_id"]].append(checksum_log)
+        for log in total_checksum_logs:
+            if log["master_crc"] == log["this_crc"] and log["master_cnt"] == log["this_cnt"]:
+                continue
+            cluster__checksum_logs_map[log["cluster_id"]].append(log)
 
         cluster_map = {c.id: c for c in Cluster.objects.filter(id__in=list(cluster__checksum_logs_map.keys()))}
         biz__db_type__repair_infos: Dict[int, Dict[DBType, List]] = defaultdict(lambda: defaultdict(list))
@@ -116,29 +106,18 @@ class TicketTask(object):
                 continue
 
             cluster = cluster_map[cluster_id]
+            logger.info(_("为集群{}生成修复单据信息".format(cluster.immute_domain)))
 
-            # 根据logs获取ip:port和实例的映射
-            inst_filter_list = [
-                (
-                    Q(
-                        cluster=cluster,
-                        machine__ip=log["ip"],
-                        port=log["port"],
-                        instance_inner_role=InstanceInnerRole.SLAVE,
-                    )
-                    | Q(
-                        cluster=cluster,
-                        machine__ip=log["master_ip"],
-                        port=log["master_port"],
-                        instance_inner_role=InstanceInnerRole.MASTER,
-                    )
-                )
-                for log in checksum_logs
-            ]
-            inst_filters = reduce(operator.or_, inst_filter_list)
+            # 获取logs中的ip:port实例
+            inst_filter_list = []
+            for log in checksum_logs:
+                inst_filter_list.append(f"{log['ip']}:{log['port']}")
+                inst_filter_list.append(f"{log['master_ip']}:{log['master_port']}")
+            # 过滤需要进行修复的实例
             ip_port__instance_id_map: Dict[str, StorageInstance] = {
                 f"{inst.machine.ip}:{inst.port}": inst
-                for inst in StorageInstance.objects.select_related("machine").filter(inst_filters)
+                for inst in StorageInstance.objects.select_related("machine").filter(cluster=cluster_id)
+                if f"{inst.machine.ip}:{inst.port}" in inst_filter_list
             }
 
             data_repair_infos: List[Dict[str, Any]] = []
@@ -203,6 +182,7 @@ class TicketTask(object):
         # 构造修复单据
         for biz, db_type__repair_infos in biz__db_type__repair_infos.items():
             for db_type, repair_infos in db_type__repair_infos.items():
+                dba, second_dba, other_dba = DBAdministrator.get_dba_for_db_type(biz, db_type)
                 ticket_details = {
                     # "非innodb表是否修复"这个参数与校验保持一致，默认为false
                     "is_sync_non_innodb": False,
@@ -224,10 +204,11 @@ class TicketTask(object):
                 _create_ticket.apply_async(
                     kwargs={
                         "ticket_type": ticket_type,
-                        "creator": DEFAULT_SYSTEM_USER,
+                        "creator": dba[0],
                         "bk_biz_id": biz,
                         "remark": _("集群存在数据不一致，自动创建的数据修复单据"),
                         "details": ticket_details,
+                        "helpers": [*second_dba, *other_dba],
                     }
                 )
 
@@ -242,50 +223,68 @@ class TicketTask(object):
         now = datetime.now(timezone.utc)
         # 只考虑平台级别的过期配置，暂不考虑业务和集群粒度
         ticket_configs = TicketFlowsConfig.objects.filter(bk_biz_id=PLAT_BIZ_ID)
+        ticket_type__config = {config.ticket_type: config for config in ticket_configs}
 
-        def filter_tickets(filters, expire_type):
+        def filter_tickets(expire_type):
             ticket_ids = []
-            # itsm: 审批中的流程
+            flow_filters = None
+            todo_filters = None
+            # 待审批
             if expire_type == TicketExpireType.ITSM:
-                filters &= Q(flow_type=FlowType.BK_ITSM, status=TicketFlowStatus.RUNNING)
-                ticket_ids = list(Flow.objects.filter(filters).values_list("ticket", flat=True))
-            # inner flow / pipeline: 失败的流程和pipeline暂停节点(防止重试)
+                flow_filters = Q(flow_type=FlowType.BK_ITSM, status=TicketFlowStatus.RUNNING)
+            # 待确认
+            elif expire_type == TicketExpireType.PAUSE:
+                flow_filters = Q(flow_type=FlowType.PAUSE, status=TicketFlowStatus.RUNNING)
+            # 已失败
             elif expire_type == TicketExpireType.INNER_FLOW:
-                f = filters & Q(flow_type=FlowType.INNER_FLOW, status=TicketFlowStatus.FAILED)
-                ticket_ids = list(Flow.objects.filter(f).values_list("ticket", flat=True))
-                f = filters & Q(type=TodoType.INNER_APPROVE, status__in=TODO_RUNNING_STATUS)
-                ticket_ids.extend(list(Todo.objects.filter(f).values_list("ticket", flat=True)))
-            # flow-pause: 流程中的暂定节点
+                flow_filters = Q(flow_type__in=FLOW_TASK_TYPES, status=TicketFlowStatus.FAILED)
+            # 待继续
             elif expire_type == TicketExpireType.FLOW_TODO:
-                filters &= Q(type__in=[TodoType.APPROVE, TodoType.RESOURCE_REPLENISH], status__in=TODO_RUNNING_STATUS)
-                ticket_ids = list(Todo.objects.filter(filters).values_list("ticket", flat=True))
+                todo_filters = Q(type=TodoType.INNER_APPROVE, status__in=TODO_RUNNING_STATUS)
+            # 定时中
+            elif expire_type == TicketExpireType.TIMER:
+                todo_filters = Q(type=TodoType.TIMER, status__in=TODO_RUNNING_STATUS)
+            # 待补货
+            elif expire_type == TicketExpireType.RESOURCE_REPLENISH:
+                todo_filters = Q(type=TodoType.RESOURCE_REPLENISH, status__in=TODO_RUNNING_STATUS)
+
+            if flow_filters:
+                ticket_ids = list(Flow.objects.filter(flow_filters).values_list("ticket", flat=True))
+            elif todo_filters:
+                ticket_ids = list(Todo.objects.filter(todo_filters).values_list("ticket", flat=True))
 
             return ticket_ids
 
-        def get_expire_flow_tickets(expire_type):
+        def find_expire_flow_tickets(expire_type):
             """获取超时过期的单据"""
-            qs = []
-            for cnf in ticket_configs:
-                expire = cnf.configs.get(FlowTypeConfig.EXPIRE_CONFIG, TICKET_EXPIRE_DEFAULT_CONFIG)[expire_type]
-                # -1表示无限制，不参与终止
-                if expire < 0:
+            ticket_ids = filter_tickets(expire_type)
+            tickets = Ticket.objects.filter(id__in=ticket_ids).values("id", "ticket_type", "update_at")
+
+            for ticket in tickets:
+                if ticket["ticket_type"] not in ticket_type__config:
                     continue
-                qs.append(Q(update_at__lt=now - timedelta(days=expire), ticket__ticket_type=cnf.ticket_type))
+                cnf = ticket_type__config[ticket["ticket_type"]]
+                expire = cnf.configs.get(FlowTypeConfig.EXPIRE_CONFIG, {}).get(
+                    expire_type
+                ) or TICKET_EXPIRE_DEFAULT_CONFIG.get(expire_type)
+                # -1表示无限制，不参与终止
+                if expire > 0 and ticket["update_at"] < now - timedelta(days=expire):
+                    expire_ticket_ids.append(ticket["id"])
 
-            # 如果设置为无限制过期，则不进行过滤
-            if not qs:
-                return []
-
-            ticket_ids = filter_tickets(reduce(operator.or_, qs), expire_type)
-            return ticket_ids
-
-        def remind_expire_tickets(expire_type):
+        def notify_expire_tickets(expire_type):
             """获取即将超时需要提醒的单据"""
+            ticket_ids = filter_tickets(expire_type)
+            tickets = Ticket.objects.filter(id__in=ticket_ids).values("id", "ticket_type", "update_at")
             deadline_hours = [3, 72]
+
             for hour in deadline_hours:
-                qs = []
-                for cnf in ticket_configs:
-                    expire = cnf.configs.get(FlowTypeConfig.EXPIRE_CONFIG, TICKET_EXPIRE_DEFAULT_CONFIG)[expire_type]
+                for ticket in tickets:
+                    if ticket["ticket_type"] not in ticket_type__config:
+                        continue
+                    cnf = ticket_type__config[ticket["ticket_type"]]
+                    expire = cnf.configs.get(FlowTypeConfig.EXPIRE_CONFIG, {}).get(
+                        expire_type
+                    ) or TICKET_EXPIRE_DEFAULT_CONFIG.get(expire_type)
                     # -1表示无限制，不参与提醒
                     if expire < 0:
                         continue
@@ -293,25 +292,14 @@ class TicketTask(object):
                     # 即 terminate - hour - 1 <= now < terminate - hour; terminate = update_at + expire_days
                     st = now - timedelta(days=expire) + timedelta(hours=hour)
                     ed = now - timedelta(days=expire) + timedelta(hours=hour + 1)
-                    qs.append(Q(update_at__gte=st, update_at__lt=ed, ticket__ticket_type=cnf.ticket_type))
-
-                if not qs:
-                    continue
-
-                ticket_ids = filter_tickets(reduce(operator.or_, qs), expire_type)
-                for ticket_id in ticket_ids:
-                    notify.send_msg.apply_async(
-                        args=(
-                            ticket_id,
-                            hour,
-                        )
-                    )
+                    if st <= ticket["update_at"] < ed:
+                        notify.send_msg.apply_async(args=(ticket["id"], hour))
 
         # 根据超时保护类型，获取需要过期处理的单据
         expire_ticket_ids = []
         for expire_type in TicketExpireType.get_values():
-            expire_ticket_ids.extend(get_expire_flow_tickets(expire_type))
-            remind_expire_tickets(expire_type)
+            find_expire_flow_tickets(expire_type)
+            notify_expire_tickets(expire_type)
 
         # 终止单据
         TicketHandler.revoke_ticket(ticket_ids=expire_ticket_ids[:batch], operator=DEFAULT_SYSTEM_USER)
@@ -319,9 +307,11 @@ class TicketTask(object):
 
 # ----------------------------- 异步执行任务函数 ----------------------------------------
 @shared_task
-def _create_ticket(ticket_type, creator, bk_biz_id, remark, details) -> None:
+def _create_ticket(
+    ticket_type, creator, bk_biz_id, remark, details, auto_execute=True, send_msg_config=None, helpers=None
+) -> None:
     """创建一个新单据"""
-    Ticket.create_ticket(ticket_type=ticket_type, creator=creator, bk_biz_id=bk_biz_id, remark=remark, details=details)
+    Ticket.create_ticket(ticket_type, creator, bk_biz_id, remark, details, auto_execute, send_msg_config, helpers)
 
 
 @shared_task

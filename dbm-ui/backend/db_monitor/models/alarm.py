@@ -135,6 +135,7 @@ class NoticeGroup(AuditedModel):
                 "name": bk_monitor_group_name,
                 "alert_notice": self.details.get("alert_notice") or DEFAULT_ALERT_NOTICE,
                 "bk_biz_id": env.DBA_APP_BK_BIZ_ID,
+                "channels": self.details.get("channels") or BK_MONITOR_SAVE_USER_GROUP_TEMPLATE["channels"],
             }
         )
         if self.is_built_in:
@@ -723,8 +724,9 @@ class MonitorPolicy(AuditedModel):
         # 事件类告警，无需设置告警目标，否则要求上报的数据必须携带服务实例id（告警目标匹配依据）
         for item in items:
             # 更新监控目标为db_type对应的cmdb拓扑，其中标签 NO_MONITOR_TARGET 的策略，无需添加监控目标
+            # 如果是克隆策略(业务自定义策略)，不主动更新监控目标(继承父类监控目标)
             objs = AppMonitorTopo.get_set_by_dbtype(db_type=db_type)
-            if objs and "NO_MONITOR_TARGET" not in labels:
+            if objs and "NO_MONITOR_TARGET" not in labels and not self.bk_biz_id:
                 item["target"] = [
                     [
                         {

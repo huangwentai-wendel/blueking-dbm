@@ -17,11 +17,15 @@
       <AuthButton
         v-db-console="'es.clusterManage.instanceApply'"
         action-id="es_apply"
-        class="mb16"
         theme="primary"
         @click="handleGoApply">
         {{ t('申请实例') }}
       </AuthButton>
+      <ClusterBatchOperation
+        v-db-console="'es.clusterManage.batchOperation'"
+        :cluster-type="ClusterTypes.ES"
+        :selected="selected"
+        @success="fetchTableData" />
       <DropdownExportExcel
         v-db-console="'es.clusterManage.export'"
         :has-selected="hasSelected"
@@ -30,8 +34,8 @@
       <ClusterIpCopy
         v-db-console="'es.clusterManage.batchCopy'"
         :selected="selected" />
+      <TagSearch @search="handleTagSearch" />
       <DbSearchSelect
-        class="mb16"
         :data="serachData"
         :get-menu-list="getMenuList"
         :model-value="searchValue"
@@ -76,6 +80,9 @@
         :is-filter="isFilter"
         :selected-list="selected"
         @refresh="fetchTableData" />
+      <ClusterTagColumn
+        :cluster-type="ClusterTypes.ES"
+        @success="fetchTableData" />
       <StatusColumn :cluster-type="ClusterTypes.ES" />
       <ClusterStatsColumn :cluster-type="ClusterTypes.ES" />
       <RoleColumn
@@ -110,7 +117,9 @@
         :label="t('冷节点')"
         :search-ip="batchSearchIpInatanceList"
         :selected-list="selected" />
-      <CommonColumn :cluster-type="ClusterTypes.ES" />
+      <CommonColumn
+        :cluster-type="ClusterTypes.ES"
+        @refresh="fetchTableData" />
       <BkTableColumn
         :fixed="isStretchLayoutOpen ? false : 'right'"
         :label="t('操作')"
@@ -275,15 +284,18 @@
 
   import DbTable from '@components/db-table/index.vue';
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
+  import TagSearch from '@components/tag-search/index.vue';
 
+  import ClusterBatchOperation from '@views/db-manage/common/cluster-batch-opration/Index.vue';
   import ClusterIpCopy from '@views/db-manage/common/cluster-ip-copy/Index.vue';
-  import ClusterNameColumn from '@views/db-manage/common/cluster-table-column/ClusterNameColumn.vue';
-  import ClusterStatsColumn from '@views/db-manage/common/cluster-table-column/ClusterStatsColumn.vue';
-  import CommonColumn from '@views/db-manage/common/cluster-table-column/CommonColumn.vue';
-  import IdColumn from '@views/db-manage/common/cluster-table-column/IdColumn.vue';
-  import MasterDomainColumn from '@views/db-manage/common/cluster-table-column/MasterDomainColumn.vue';
-  import RoleColumn from '@views/db-manage/common/cluster-table-column/RoleColumn.vue';
-  import StatusColumn from '@views/db-manage/common/cluster-table-column/StatusColumn.vue';
+  import ClusterNameColumn from '@views/db-manage/common/cluster-table/ClusterNameColumn.vue';
+  import ClusterStatsColumn from '@views/db-manage/common/cluster-table/ClusterStatsColumn.vue';
+  import ClusterTagColumn from '@views/db-manage/common/cluster-table/ClusterTagColumn.vue';
+  import CommonColumn from '@views/db-manage/common/cluster-table/CommonColumn.vue';
+  import IdColumn from '@views/db-manage/common/cluster-table/IdColumn.vue';
+  import MasterDomainColumn from '@views/db-manage/common/cluster-table/MasterDomainColumn.vue';
+  import RoleColumn from '@views/db-manage/common/cluster-table/RoleColumn.vue';
+  import StatusColumn from '@views/db-manage/common/cluster-table/StatusColumn.vue';
   import DropdownExportExcel from '@views/db-manage/common/dropdown-export-excel/index.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
@@ -292,6 +304,10 @@
   import ClusterShrink from '@views/db-manage/elastic-search/common/shrink/Index.vue';
 
   import { getMenuListSearch, getSearchSelectorParams, isRecentDays } from '@utils';
+
+  interface Exposes {
+    refresh: () => void;
+  }
 
   const clusterId = defineModel<number>('clusterId');
 
@@ -324,6 +340,18 @@
     fetchDataFn: () => fetchTableData(),
     searchType: ClusterTypes.ES,
   });
+
+  const dataSource = getEsList;
+  const tableRef = ref<InstanceType<typeof DbTable>>();
+  const isShowExpandsion = ref(false);
+  const isShowShrink = ref(false);
+  const isShowPassword = ref(false);
+  const selected = ref<EsModel[]>([]);
+  const tagSearchValue = ref<Record<string, any>>({});
+
+  const operationData = shallowRef<EsModel>();
+
+  const getTableInstance = () => tableRef.value;
 
   const serachData = computed(() => [
     {
@@ -391,18 +419,6 @@
       name: t('时区'),
     },
   ]);
-
-  const dataSource = getEsList;
-  const tableRef = ref<InstanceType<typeof DbTable>>();
-  const isShowExpandsion = ref(false);
-  const isShowShrink = ref(false);
-  const isShowPassword = ref(false);
-  const isInit = ref(true);
-  const selected = ref<EsModel[]>([]);
-  const operationData = shallowRef<EsModel>();
-
-  const getTableInstance = () => tableRef.value;
-
   const hasSelected = computed(() => selected.value.length > 0);
   const selectedIds = computed(() => selected.value.map((item) => item.id));
 
@@ -439,6 +455,7 @@
       'es_client',
       'es_datanode_hot',
       'es_datanode_cold',
+      'tag',
     ],
     disabled: ['master_domain'],
   });
@@ -478,10 +495,18 @@
     return serachData.value.find((set) => set.id === item.id)?.children || [];
   };
 
-  const fetchTableData = (loading?: boolean) => {
+  const handleTagSearch = (params: Record<string, any>) => {
+    tagSearchValue.value = params;
+    fetchTableData();
+  };
+
+  const fetchTableData = () => {
     const searchParams = getSearchSelectorParams(searchValue.value);
-    tableRef.value?.fetchData(searchParams, { ...sortValue }, loading);
-    isInit.value = false;
+    tableRef.value?.fetchData({
+      ...searchParams,
+      ...tagSearchValue.value,
+      ...sortValue,
+    });
   };
 
   const handleSelection = (data: any, list: EsModel[]) => {
@@ -533,6 +558,10 @@
       handleToDetails(Number(route.query.id));
     }
   });
+
+  defineExpose<Exposes>({
+    refresh: fetchTableData,
+  });
 </script>
 <style lang="less">
   .es-list-page {
@@ -544,12 +573,16 @@
     .header-action {
       display: flex;
       flex-wrap: wrap;
+      margin-bottom: 16px;
+      gap: 8px;
+
+      .tag-search-main {
+        margin-left: auto;
+      }
 
       .bk-search-select {
         flex: 1;
         max-width: 500px;
-        min-width: 320px;
-        margin-left: auto;
       }
     }
 

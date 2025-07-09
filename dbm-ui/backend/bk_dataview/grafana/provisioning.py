@@ -107,7 +107,7 @@ class SimpleProvisioning(BaseProvisioning):
         file_content = file_content.replace("${DS_蓝鲸监控_- 指标数据}", "bkmonitor_timeseries")
         file_content = file_content.replace("${DS_日志平台}", "bklog")
         file_content = file_content.replace("${DS_蓝鲸监控_-_指标数据}", "bkmonitor_timeseries")
-        file_content = file_content.replace("${DS_DBM-STATSDB}", "bkdbm_statsdb_source")
+        file_content = file_content.replace("${DS_DBM-StatsDB}", "bkdbm_statsdb_source")
         file_content = file_content.replace('"editable": true', '"editable": false')
 
         # 批量替换基础指标来源：system -> dbm_system
@@ -122,6 +122,8 @@ class SimpleProvisioning(BaseProvisioning):
             uid = "bkmonitor_timeseries"
         elif datasource_type == "bk_log_datasource":
             uid = "bklog"
+        elif datasource_type == "mysql":
+            uid = "bkdbm_statsdb_source"
         else:
             uid = "unknown"
         return datasource_type, uid
@@ -160,7 +162,7 @@ class SimpleProvisioning(BaseProvisioning):
             datasource_type, tpl_uid = cls.get_obj_datasource_type_uid(tpl)
             if datasource_type:
                 dashboard["templating"]["list"][tpl_index]["datasource"]["uid"] = tpl_uid
-            # 隐藏掉 app（业务）选择器
+            # 集群监控视图，隐藏掉 app（业务）选择器
             if tpl["name"] == "app":
                 dashboard["templating"]["list"][tpl_index]["hide"] = 2
 

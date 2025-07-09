@@ -6,7 +6,7 @@ github:
   repo_name: "blueking-dbm"
 
   # 指定里程碑ID，
-  milestone_id: "12"
+  milestone_id: "13"
 
 project:
   # 主分支
@@ -33,4 +33,5 @@ project:
     - sqlserver
     - dbm-services
     - helm-charts
+    - k8s-dbs
     - other

@@ -46,6 +46,9 @@ export type ExtractedControllerDataKeys = Extract<keyof FunctionController, stri
 
 export default class FunctionController {
   'bizConfigManage.alarmGroup': ControllerItem<string>;
+  'bizConfigManage.businessClusterTag': ControllerItem<string>;
+  'bizConfigManage.businessResourceTag': ControllerItem<string>;
+  'bizConfigManage.bussinessDashboard': ControllerItem<string>;
   'bizConfigManage.dbConfigure': ControllerItem<string>;
   'bizConfigManage.monitorStrategy': ControllerItem<string>;
   'bizConfigManage.StaffManage': ControllerItem<string>;
@@ -54,6 +57,7 @@ export default class FunctionController {
   'bizConfigManage.ticketNoticeSetting': ControllerItem<string>;
 
   // 通用开关，涉及多个功能页面
+  'common.hcmRecycle': ControllerItem<string>;
   'common.specCostEstimate': ControllerItem<string>;
 
   'databaseManage.missionManage': ControllerItem<string>;

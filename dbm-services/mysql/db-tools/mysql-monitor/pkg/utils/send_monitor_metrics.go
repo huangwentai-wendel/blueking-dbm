@@ -20,7 +20,7 @@ func SendMonitorMetrics(name string, value int64, customDimension map[string]int
 		"bk_cloud_id":                   strconv.Itoa(*config.MonitorConfig.BkCloudID),
 		"instance_port":                 strconv.Itoa(config.MonitorConfig.Port),
 		"instance_host":                 config.MonitorConfig.Ip,
-		"bk_target_service_instance_id": strconv.FormatInt(config.MonitorConfig.BkInstanceId, 10),
+		"bk_target_service_instance_id": strconv.FormatInt(*config.MonitorConfig.BkInstanceId, 10),
 	}
 
 	if customDimension != nil {
@@ -42,6 +42,7 @@ func SendMonitorMetrics(name string, value int64, customDimension map[string]int
 			slog.String("error", err.Error()),
 			slog.String("name", name), slog.Int64("value", value),
 		)
+		return
 	}
 
 	slog.Info(

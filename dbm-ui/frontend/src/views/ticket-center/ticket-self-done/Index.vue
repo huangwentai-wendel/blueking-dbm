@@ -15,7 +15,7 @@
         :data="searchSelectData"
         parse-url
         :placeholder="t('请输入或选择条件搜索')"
-        style="width: 450px; margin-left: 16px"
+        style="width: 450px; margin-left: 8px"
         unique-select />
     </div>
     <TicketTable
@@ -41,15 +41,16 @@
 
   const { searchSelectData, value: searachSelectValue } = useSearchSelect();
 
+  const isPreChecking = useDetailPreCheck({
+    id: Number(route.params.ticketId),
+    todo: 'done',
+  });
+
   const dataSource = (params: ServiceParameters<typeof getTickets>) =>
     getTickets({
       ...params,
       todo: 'done',
     });
-
-  const isPreChecking = useDetailPreCheck({
-    id: Number(route.params.ticketId),
-  });
 </script>
 <style lang="less">
   .ticket-self-done-page {

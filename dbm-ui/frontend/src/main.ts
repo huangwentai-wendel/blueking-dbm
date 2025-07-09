@@ -34,8 +34,9 @@ import SubApp from './SubApp.vue';
 import '@blueking/ip-selector/dist/styles/vue2.6.x.css';
 import '@lib/bk-icon/iconcool';
 import '@styles/common.less';
-import 'bkui-vue/dist/style.css';
+import '@styles/toolbox.less';
 import '@xterm/xterm/css/xterm.css';
+import 'bkui-vue/dist/style.variable.css';
 import { setGlobalDirectives } from '@/directives/index';
 import { subEnv } from '@blueking/sub-saas';
 
@@ -49,6 +50,7 @@ dayjs.extend(duration);
 window.changeConfirm = false;
 
 const app = createApp(subEnv ? SubApp : App);
+
 // 自定义全局组件
 setGlobalComps(app);
 const piniaInstance = createPinia();

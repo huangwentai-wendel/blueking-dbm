@@ -36,32 +36,70 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@views/db-manage/sqlserver/Index.vue'),
     children: [
       {
-        path: 'ha-cluster-list',
-        name: 'SqlServerHaClusterList',
+        path: 'ha-cluster',
+        name: 'SqlServerHaCluster',
         meta: {
           fullscreen: true,
           navName: t('SQLServer主从集群管理'),
         },
-        component: () => import('@views/db-manage/sqlserver/ha-cluster-list/Index.vue'),
-      },
-      {
-        path: 'ha-instance-list',
-        name: 'SqlServerHaInstanceList',
-        meta: {
-          fullscreen: true,
-          navName: t('【SQLServer 主从集群】实例视图'),
+        redirect: {
+          name: 'SqlServerHaClusterList',
         },
-        component: () => import('@views/db-manage/sqlserver/ha-instance-list/Index.vue'),
+        component: () => import('@views/db-manage/sqlserver/Index.vue'),
+        children: [
+          {
+            path: 'list/:clusterId?',
+            name: 'SqlServerHaClusterList',
+            meta: {
+              fullscreen: true,
+              navName: t('SQLServer主从集群管理'),
+            },
+            component: () => import('@views/db-manage/sqlserver/ha-cluster-list/Index.vue'),
+          },
+          {
+            path: 'detail/:clusterId',
+            name: 'SqlServerHaClusterDetail',
+            meta: {
+              fullscreen: true,
+              navName: t('SQLServer主从集群详情'),
+            },
+            component: () => import('@views/db-manage/sqlserver/ha-cluster-detail/Index.vue'),
+          },
+        ],
       },
       {
-        path: 'single-cluster-list',
+        path: 'single-cluster',
         name: 'SqlServerSingle',
         meta: {
           fullscreen: true,
           navName: t('SQLServer单节点集群管理'),
         },
-        component: () => import('@views/db-manage/sqlserver/single-cluster-list/Index.vue'),
+        redirect: {
+          name: 'SqlServerSingleClusterList',
+        },
+        component: () => import('@views/db-manage/sqlserver/Index.vue'),
+        children: [
+          {
+            path: 'list/:clusterId?',
+            name: 'SqlServerSingleClusterList',
+            meta: {
+              fullscreen: true,
+              navName: t('SQLServer单节点集群管理'),
+            },
+            component: () => import('@views/db-manage/sqlserver/single-cluster-list/Index.vue'),
+          },
+          {
+            path: 'detali/:clusterId',
+            name: 'SqlServerSingleClusterDetail',
+            meta: {
+              fullscreen: true,
+              navName: t('SQLServer单节点集群详情'),
+            },
+            component: () => import('@views/db-manage/sqlserver/single-cluster-detail/Index.vue'),
+          },
+        ],
       },
+
       {
         path: 'permission-rules',
         name: 'SqlServerPermissionRules',
@@ -122,19 +160,13 @@ const toolboxRouters: RouteRecordRaw[] = [
       createRouteItem(TicketTypes.SQLSERVER_CLEAR_DBS, t('清档')),
       createRouteItem(TicketTypes.SQLSERVER_ROLLBACK, t('定点构造')),
       createRouteItem(TicketTypes.SQLSERVER_BACKUP_DBS, t('数据库备份')),
-      {
-        path: 'data-migrate/:page?',
-        name: 'sqlServerDataMigrate',
-        meta: {
-          navName: t('数据迁移'),
-        },
-        component: () => import('@views/db-manage/sqlserver/data-migrate/Index.vue'),
-      },
+      createRouteItem(TicketTypes.SQLSERVER_FULL_MIGRATE, t('数据迁移')),
+      createRouteItem(TicketTypes.SQLSERVER_INCR_MIGRATE, t('数据迁移')),
       {
         path: 'data-migrate-record',
         name: 'sqlServerDataMigrateRecord',
         meta: {
-          navName: t('数据迁移'),
+          navName: t('迁移记录'),
         },
         component: () => import('@views/db-manage/sqlserver/data-migrate-record/Index.vue'),
       },

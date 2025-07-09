@@ -15,6 +15,7 @@ from rest_framework import serializers
 
 from backend import env
 from backend.components.hcm.client import HCMApi
+from backend.components.xwork.client import XworkApi
 from backend.configuration.constants import DBType
 from backend.constants import INT_MAX
 from backend.db_dirty.constants import MachineEventType
@@ -58,18 +59,24 @@ class ResourceImportSerializer(serializers.Serializer):
         # 如果主机存在元数据，则拒绝导入
         exist_hosts = list(Machine.objects.filter(bk_host_id__in=host_ids).values_list("ip", flat=True))
         if exist_hosts:
-            raise serializers.ValidationError(_("导入主机{}存在元数据，请检查后重新导入").format(exist_hosts))
+            raise serializers.ValidationError(_("导入失败，主机{}存在元数据，请检查后重新导入").format(exist_hosts))
 
         # 存在uwork或者是待裁撤主机，则不允许导入
-        check_work = HCMApi.check_host_has_uwork(host_ids)
-        if check_work:
-            ips = [host_id__ip_map[host_id] for host_id in check_work.keys()]
-            raise serializers.ValidationError(_("导入主机{}存在uwork单据，请处理后重新导入").format(ips))
+        check_uwork = HCMApi.check_host_has_uwork(host_ids)
+        if check_uwork:
+            ips = [host_id__ip_map[host_id] for host_id in check_uwork.keys()]
+            raise serializers.ValidationError(_("导入失败，检测主机{}有关联的uwork单据，请检查后重新导入").format(ips))
+
+        host_ip__host_id_map = {host["ip"]: host["host_id"] for host in attrs["hosts"]}
+        check_xwork = XworkApi.check_xwork_list(host_ip__host_id_map)
+        if check_xwork:
+            ips = [host_id__ip_map[host_id] for host_id in check_xwork.keys()]
+            raise serializers.ValidationError(_("导入失败，检测主机{}有关联的xwork单据，请检查后重新导入").format(ips))
 
         check_dissolved = HCMApi.check_host_is_dissolved(host_ids)
         if check_dissolved:
             ips = [host_id__ip_map[host_id] for host_id in check_dissolved]
-            raise serializers.ValidationError(_("导入主机包含裁撤主机:{}，无法进行导入").format(ips))
+            raise serializers.ValidationError(_("导入失败，检测主机{}为待裁撤主机，请检查后重新导入").format(ips))
 
         return attrs
 
@@ -152,7 +159,10 @@ class ResourceListSerializer(serializers.Serializer):
                 }
                 for storage_spec in spec.storage_spec
             ]
-            attrs["cpu"], attrs["mem"], attrs["device_class"] = spec.cpu, spec.mem, spec.device_class
+            if spec.device_class:
+                attrs["device_class"] = spec.device_class
+            else:
+                attrs["cpu"], attrs["mem"] = spec.cpu, spec.mem
 
         # 转换内存查询单位, GB --> MB
         if attrs.get("mem"):
@@ -326,6 +336,7 @@ class ResourceSummaryResponseSerializer(serializers.Serializer):
 
 class SpecSerializer(serializers.ModelSerializer):
     spec_db_type = serializers.SerializerMethodField(help_text=_("规格组件类型"))
+    capacity = serializers.SerializerMethodField(help_text=_("规格容量"))
 
     class Meta:
         model = Spec
@@ -336,6 +347,9 @@ class SpecSerializer(serializers.ModelSerializer):
     def get_spec_db_type(self, obj):
         db_type = obj.spec_cluster_type
         return db_type
+
+    def get_capacity(self, obj):
+        return obj.capacity
 
     def validate_valid_cpu_mem(self, attrs):
         # 校验cpu,mem的值是int
@@ -490,13 +504,14 @@ class ListCvmDeviceClassSerializer(serializers.ModelSerializer):
         swagger_schema_fields = {"example": mock.DEVICE_CLASS_DATA}
 
 
-class UworkIpsSerializer(serializers.Serializer):
-    ips = serializers.CharField(help_text=_("ip列表，多个ip以逗号分割"))
-
-    def validate_ip_list(self, value):
-        return value.split(",")
-
-
 class AppendHostLabelSerializer(serializers.Serializer):
     bk_host_ids = serializers.ListField(help_text=_("主机ID列表"), child=serializers.IntegerField())
     labels = serializers.ListField(help_text=_("追加标签列表"), child=serializers.CharField())
+
+
+class CheckFaultHostsSerializer(serializers.Serializer):
+    class CheckHostSerializer(serializers.Serializer):
+        ip = serializers.CharField(help_text=_("ip"))
+        bk_host_id = serializers.IntegerField(help_text=_("主机ID"))
+
+    hosts = serializers.ListField(help_text=_("主机信息"), child=CheckHostSerializer())

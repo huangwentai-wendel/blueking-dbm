@@ -6,8 +6,6 @@ declare module 'vue' {
     AuthSwitch: typeof import('@components/auth-component/switch.vue').default;
     AuthTemplate: typeof import('@components/auth-component/component.vue').default;
     BkTable: typeof import('@blueking/table/typings/BkTable.vue');
-    BkTable: typeof import('@blueking/table/typings/BkTable.vue');
-    BkTableColumn: typeof import('@blueking/table/typings/BkTableColumn.vue');
     BkTableColumn: typeof import('@blueking/table/typings/BkTableColumn.vue');
     DbCard: typeof import('@components/db-card/index.vue').default;
     DbForm: typeof import('@components/db-form/index.vue').default;
@@ -29,10 +27,13 @@ declare module 'vue' {
     EditableTimePicker: typeof import('@components/editable-table/Index.vue').TimePicker;
     FunController: typeof import('@components/function-controller/FunController.vue').default;
     MoreActionExtend: typeof import('@components/more-action-extend/Index.vue').default;
+    NewFeatureGuide: typeof import('@components/new-feature-guide/Index.vue').default;
     OperationColumn: typeof import('@views/db-manage/common/toolbox-field/column/operation-column/Index.vue').default;
     ScrollFaker: typeof import('@components/scroll-faker/Index.vue').default;
     SmartAction: typeof import('@components/smart-action/Index.vue').default;
     TableDetailDialog: typeof import('@components/table-detail-dialog/Index.vue').default;
+    // TTable: typeof import('@blueking/tdesign-ui').PrimaryTable;
+    // TTableColumn: typeof import('@blueking/tdesign-ui').TableColumn;
   }
 }
 

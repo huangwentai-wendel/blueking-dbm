@@ -1,0 +1,38 @@
+{{- if .Values.observeConfig.svcMonitor.enabled }}
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-servicemonitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-servicemonitor
+    {{- if .Values.observeConfig.svcMonitor.labels }}
+    {{- toYaml .Values.observeConfig.svcMonitor.labels | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+    - interval: {{ .Values.observeConfig.svcMonitor.interval }}
+      params: {}
+      path: /metrics
+      port: http
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchExpressions:
+      - key: workloads.kubeblocks.io/instance
+        operator: In
+        values:
+          - "{{ .Release.Name }}-vmselect"
+          - "{{ .Release.Name }}-vmstorage"
+          - "{{ .Release.Name }}-vminsert"
+    matchLabels:
+      app.kubernetes.io/managed-by: kubeblocks
+      workloads.kubeblocks.io/managed-by: InstanceSet
+  targetLabels:
+    - app.kubernetes.io/instance
+    - app.kubernetes.io/managed-by
+    - apps.kubeblocks.io/component-name
+
+{{- end }}

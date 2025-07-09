@@ -13,17 +13,16 @@ import operator
 from typing import List
 
 from django.db.models import Q
+from django.utils.translation import gettext as _
 
 from backend.components.mysql_partition.client import DBPartitionApi
 from backend.db_meta.enums import ClusterType
 from backend.db_meta.models import Cluster, Machine, StorageInstance
 from backend.iam_app.dataclass.actions import ActionEnum, ActionMeta
 from backend.iam_app.dataclass.resources import ResourceEnum, ResourceMeta
-from backend.iam_app.handlers.drf_perm.base import (
-    MoreResourceActionPermission,
-    ResourceActionPermission,
-    get_request_key_id,
-)
+from backend.iam_app.exceptions import ResourceInvalidError
+from backend.iam_app.handlers.drf_perm.base import MoreResourceActionPermission, ResourceActionPermission
+from backend.ticket.builders.common.base import fetch_cluster_ids
 
 
 class ClusterDetailPermission(ResourceActionPermission):
@@ -44,6 +43,30 @@ class ClusterDetailPermission(ResourceActionPermission):
             self.actions = [ActionEnum.cluster_type_to_action(cluster.cluster_type, action_key="VIEW")]
         self.resource_meta = ResourceEnum.cluster_type_to_resource_meta(cluster.cluster_type)
         return [cluster_id]
+
+
+class ClusterEditPermission(ResourceActionPermission):
+    """
+    集群编辑相关动作鉴权
+    """
+
+    def __init__(self, actions: List[ActionMeta] = None, resource_meta: ResourceMeta = None):
+        super().__init__(actions=actions, resource_meta=resource_meta, instance_ids_getter=self.instance_ids_getter)
+
+    def instance_ids_getter(self, request, view):
+        # 从获取到集群ID后，决定动作和资源类型
+        cluster_id = self.get_key_id(request, view, key="cluster_id")
+        cluster_ids = self.get_key_id(request, view, key="cluster_ids") or [cluster_id]
+
+        # 校验操作的集群类型必须统一
+        cluster_types = Cluster.objects.filter(id__in=cluster_ids).values_list("cluster_type", flat=True).distinct()
+        db_type = [ClusterType.cluster_type_to_db_type(c) for c in cluster_types]
+        if len(set(db_type)) != 1:
+            raise ResourceInvalidError(_("不支持混合类型的集群"))
+
+        self.actions = [ActionEnum.cluster_type_to_action(cluster_types[0], action_key="EDIT")]
+        self.resource_meta = ResourceEnum.cluster_type_to_resource_meta(cluster_types[0])
+        return cluster_ids
 
 
 class InstanceDetailPermission(ResourceActionPermission):
@@ -212,18 +235,16 @@ class ClusterDBConsolePermission(ResourceActionPermission):
         super().__init__(actions=None, resource_meta=None, instance_ids_getter=self.inst_ids_getter)
 
 
-class ClusterListPermission(ResourceActionPermission):
+class ClusterActionPermission(ResourceActionPermission):
     """
-    集群/实例列表相关鉴权
+    集群相关动作鉴权
     """
 
-    def inst_ids_getter(self, request, view):
-        bk_biz_id = get_request_key_id(request, key="bk_biz_id")
-        # 有业务走业务管理鉴权，否则走平台管理鉴权
-        self.actions = [ActionEnum.DB_MANAGE] if bk_biz_id else [ActionEnum.GLOBAL_MANAGE]
-        self.resource_meta = ResourceEnum.BUSINESS if bk_biz_id else None
-        inst_ids = [bk_biz_id] if bk_biz_id else []
-        return inst_ids
+    @staticmethod
+    def inst_ids_getter(request, view):
+        data = request.data or request.query_params
+        cluster_ids = fetch_cluster_ids(data)
+        return cluster_ids
 
-    def __init__(self):
-        super().__init__(actions=None, resource_meta=None, instance_ids_getter=self.inst_ids_getter)
+    def __init__(self, actions=None, resource_meta=None):
+        super().__init__(actions=actions, resource_meta=resource_meta, instance_ids_getter=self.inst_ids_getter)

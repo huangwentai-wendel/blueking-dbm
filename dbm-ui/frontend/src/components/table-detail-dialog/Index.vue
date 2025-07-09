@@ -21,12 +21,16 @@
       <div
         ref="resizeHandleRef"
         class="dbm-table-detail-dialog-resize" />
+      <div
+        v-if="isResizeing"
+        class="dbm-table-detail-dialog-resize-mask" />
     </div>
   </Teleport>
 </template>
 <script setup lang="ts">
   import { onBeforeUnmount, onMounted, useTemplateRef } from 'vue';
   import { useI18n } from 'vue-i18n';
+  import { onBeforeRouteLeave } from 'vue-router';
 
   import useResize from './hooks/use-resize';
 
@@ -45,21 +49,23 @@
   });
 
   const emits = defineEmits<Emits>();
-
   const modelValue = defineModel<boolean>({
     default: false,
   });
 
   const { t } = useI18n();
 
+  let isRouteChange = false;
+
   const rootRef = useTemplateRef('rootRef');
   const resizeHandleRef = useTemplateRef('resizeHandleRef');
 
-  useResize(rootRef, resizeHandleRef);
+  const { resizing: isResizeing } = useResize(rootRef, resizeHandleRef);
 
   const handleClose = () => {
     modelValue.value = false;
     emits('close');
+    return true;
   };
 
   const handleExpandMax = () => {
@@ -68,8 +74,9 @@
 
   const handleClickClose = (event: Event) => {
     if (!modelValue.value) {
-      return;
+      return true;
     }
+
     const eventPath = event.composedPath() as HTMLElement[];
 
     for (const ele of eventPath) {
@@ -77,13 +84,23 @@
         ele.classList?.contains('bk-modal') ||
         ele.classList?.contains('dbm-table-detail-dialog') ||
         ele.classList?.contains('bk-popper') ||
-        ele.classList?.contains('tippy-box')
+        ele.classList?.contains('tippy-box') ||
+        ele.classList?.contains('db-navigation-side-menu') ||
+        ele.classList?.contains('bk-date-picker-dropdown')
       ) {
         return true;
       }
     }
-    handleClose();
+
+    if (!isRouteChange) {
+      handleClose();
+    }
+    return true;
   };
+
+  onBeforeRouteLeave(() => {
+    isRouteChange = true;
+  });
 
   onMounted(() => {
     document.body.addEventListener('click', handleClickClose);
@@ -186,5 +203,11 @@
         0 -4px 0 0 currentcolor,
         0 -8px 0 0 currentcolor;
     }
+  }
+
+  .dbm-table-detail-dialog-resize-mask {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
   }
 </style>

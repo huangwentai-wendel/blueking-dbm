@@ -196,7 +196,7 @@
   import useTableSetting from './hooks/useTableSetting';
 
   interface Props {
-    type: ResourcePool;
+    type?: ResourcePool;
   }
 
   const props = withDefaults(defineProps<Props>(), {
@@ -207,7 +207,9 @@
   const { currentBizId } = useGlobalBizs();
 
   const { handleChange: handleSettingChange, setting: tableSetting } = useTableSetting();
-  const { taskHistoryListHref } = useImportResourcePoolTooltip();
+  const { taskHistoryListHref } = useImportResourcePoolTooltip({
+    isCurrentBiz: props.type !== ResourcePool.global,
+  });
 
   const searchBoxRef = useTemplateRef('searchBoxRef');
   const tableRef = useTemplateRef('tableRef');
@@ -263,7 +265,7 @@
     {
       field: 'bk_cloud_name',
       label: t('管控区域'),
-      minWidth: 80,
+      minWidth: 100,
     },
     {
       field: 'agent_status',
@@ -411,7 +413,7 @@
       field: 'operator',
       label: t('转入人'),
       showOverflow: true,
-      width: 100,
+      width: 120,
     },
   ]);
 

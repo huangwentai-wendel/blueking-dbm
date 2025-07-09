@@ -16,7 +16,7 @@ from blue_krill.data_types.enum import EnumField, StructuredEnum
 
 
 class DeployPeripheralToolsDepart(str, StructuredEnum):
-    BackupClient = EnumField("backup-client", _("backup-client"))
+    # BackupClient = EnumField("backup-client", _("backup-client"))
     MySQLDBBackup = EnumField("mysql-dbbackup", _("mysql-dbbackup"))
     # 下面这些要保证和介质命名一致
     DBAToolKit = EnumField("dba-toolkit", _("dba-toolkit"))
@@ -24,10 +24,11 @@ class DeployPeripheralToolsDepart(str, StructuredEnum):
     MySQLMonitor = EnumField("mysql-monitor", _("mysql-monitor"))
     MySQLRotateBinlog = EnumField("rotate-binlog", _("rotate-binlog"))
     MySQLTableChecksum = EnumField("mysql-checksum", _("mysql-checksum"))
+    Exporter = EnumField("exporter", _("exporter"))
 
 
 ALLDEPARTS = [
-    DeployPeripheralToolsDepart.BackupClient,
+    # DeployPeripheralToolsDepart.BackupClient,
     DeployPeripheralToolsDepart.MySQLDBBackup,
     DeployPeripheralToolsDepart.DBAToolKit,
     DeployPeripheralToolsDepart.MySQLCrond,
@@ -37,6 +38,19 @@ ALLDEPARTS = [
 ]
 
 
-def remove_depart(d: DeployPeripheralToolsDepart, departs: List[DeployPeripheralToolsDepart]):
-    if d in departs:
-        departs.remove(d)
+def remove_departs(
+    departs: List[DeployPeripheralToolsDepart], *to_remove_departs: DeployPeripheralToolsDepart
+) -> List[DeployPeripheralToolsDepart]:
+    """
+    不修改源 departs
+    """
+    res = []
+    # for td in to_remove_departs:
+    #     if td not in departs:
+    #         res.append(td)
+
+    for dp in departs:
+        if dp not in to_remove_departs:
+            res.append(dp)
+
+    return res

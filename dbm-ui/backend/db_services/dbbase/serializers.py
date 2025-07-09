@@ -21,6 +21,7 @@ from backend.db_meta.models import Cluster
 from backend.db_services.dbbase.constants import ResourceType
 from backend.db_services.dbbase.resources.serializers import ListClusterEntriesSLZ, ListResourceSLZ
 from backend.db_services.ipchooser.query.resource import ResourceQueryHelper
+from backend.db_services.mysql.sql_import.constants import SQLCharset
 from backend.db_services.redis.resources.redis_cluster.query import RedisListRetrieveResource
 from backend.dbm_init.constants import CC_APP_ABBR_ATTR
 from backend.ticket.builders.common.field import DBTimezoneField
@@ -184,13 +185,19 @@ class QueryBizClusterAttrsResponseSerializer(serializers.Serializer):
 
 
 class WebConsoleSerializer(serializers.Serializer):
+    class OptionsSerializer(serializers.Serializer):
+        # redis 额外参数
+        db_num = serializers.IntegerField(help_text=_("数据库编号(redis 额外参数)"), required=False)
+        raw = serializers.BooleanField(help_text=_("源编码(redis 额外参数)"), required=False)
+        # mongodb 额外参数
+        session_time = DBTimezoneField(help_text=_("会话创建时间(mongodb 额外参数)"), required=False)
+        # mysql 额外参数
+        charset = serializers.ChoiceField(help_text=_("字符集"), choices=SQLCharset.get_choices(), required=False)
+        timezone = serializers.CharField(help_text=_("时区"), required=False)
+
     cluster_id = serializers.IntegerField(help_text=_("集群ID"))
     cmd = serializers.CharField(help_text=_("sql语句"))
-    # redis 额外参数
-    db_num = serializers.IntegerField(help_text=_("数据库编号(redis 额外参数)"), required=False)
-    raw = serializers.BooleanField(help_text=_("源编码(redis 额外参数)"), required=False)
-    # mongodb 额外参数
-    session_time = DBTimezoneField(help_text=_("会话创建时间(mongodb 额外参数)"), required=False)
+    options = OptionsSerializer(help_text=_("额外操作项合集"), required=False, default={})
 
 
 class DBConsoleSerializer(serializers.Serializer):
@@ -201,6 +208,23 @@ class DBConsoleSerializer(serializers.Serializer):
     instances = serializers.ListSerializer(help_text=_("实例列表信息"), child=DBInstanceSerializer())
     cmd = serializers.CharField(help_text=_("sql语句"))
     db_type = serializers.ChoiceField(help_text=_("组件类型"), choices=DBType.get_choices())
+
+    # mysql 额外参数
+    is_proxy = serializers.BooleanField(help_text=_("是否是proxy类型"), default=False, required=False)
+
+    def validate(self, attrs):
+        # 如果是proxy类型，则将端口号加1000
+        if attrs["is_proxy"]:
+            updated_instances = []
+            for instance_data in attrs["instances"]:
+                instance_str = instance_data["instance"]
+                ip, port = instance_str.split(":")
+                port = int(port) + 1000
+                instance_data["instance"] = f"{ip}:{port}"
+                updated_instances.append(instance_data)
+
+            attrs["instances"] = updated_instances
+        return attrs
 
 
 class WebConsoleResponseSerializer(serializers.Serializer):
@@ -247,3 +271,21 @@ class UpdateClusterAliasSerializer(serializers.Serializer):
             raise serializers.ValidationError(_("The new alias cannot be the same as the current alias."))
 
         return attrs
+
+
+class UpdateClusterTagsSerializer(serializers.Serializer):
+    bk_biz_id = serializers.IntegerField(help_text=_("业务ID"))
+    cluster_id = serializers.IntegerField(help_text=_("集群ID"))
+    tags = serializers.ListField(child=serializers.IntegerField(), help_text=_("标签列表"))
+
+
+class RemoveClusterTagKeysSerializer(serializers.Serializer):
+    bk_biz_id = serializers.IntegerField(help_text=_("业务ID"))
+    cluster_ids = serializers.ListField(child=serializers.IntegerField(), help_text=_("集群ID列表"))
+    keys = serializers.ListField(child=serializers.CharField(), help_text=_("标签键列表"))
+
+
+class AddClusterTagKeysSerializer(serializers.Serializer):
+    bk_biz_id = serializers.IntegerField(help_text=_("业务ID"))
+    cluster_ids = serializers.ListField(child=serializers.IntegerField(), help_text=_("集群ID列表"))
+    tags = serializers.ListField(child=serializers.IntegerField(), help_text=_("标签列表"))

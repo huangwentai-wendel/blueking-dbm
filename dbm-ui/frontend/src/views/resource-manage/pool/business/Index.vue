@@ -20,6 +20,7 @@
       </BkTag>
       <ImportHostBtn
         class="w-88"
+        type="business"
         @export-host="handleImportHost" />
     </Teleport>
     <BkTab
@@ -36,10 +37,11 @@
     <div class="pool-content">
       <HostList
         :key="activeTab"
-        ref="listRef"
         :type="activeTab" />
     </div>
-    <ImportHost v-model:is-show="isShowImportHost" />
+    <ImportHost
+      v-model:is-show="isShowImportHost"
+      type="business" />
   </div>
 </template>
 
@@ -57,7 +59,6 @@
   const route = useRoute();
   const router = useRouter();
   const activeTab = useDebouncedRef((route.params.page as ResourcePool) || ResourcePool.business);
-  const listRef = useTemplateRef('listRef');
 
   const isShowImportHost = ref(false);
 

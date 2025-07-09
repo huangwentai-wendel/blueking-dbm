@@ -17,7 +17,8 @@
     :cluster-type="activeTab"
     :search-attrs="searchAttrs"
     :search-select-list="searchSelectList"
-    @search-value-change="handleSearchValueChange" />
+    @search-value-change="handleSearchValueChange"
+    @tag-value-change="fetchResources" />
   <BkLoading
     :loading="isLoading"
     :z-index="2">
@@ -53,6 +54,7 @@
   import { getSearchSelectorParams } from '@utils';
 
   import type { TabItem } from '../../Index.vue';
+  import { tagsColumn } from '../common/columns';
   import SearchBar from '../common/SearchBar.vue';
   import ClusterRelatedTasks from '../common/task-panel/Index.vue';
 
@@ -64,6 +66,7 @@
     customColums?: TabItem['customColums'];
     disabledRowConfig: NonNullable<TabItem['disabledRowConfig']>;
     getResourceList: NonNullable<TabItem['getResourceList']>;
+    multiple: boolean;
     searchSelectList?: TabItem['searchSelectList'];
     selected: any[];
   }
@@ -74,13 +77,13 @@
 
   type ResourceItem = ValueOf<SelectedMap>[0];
 
-  const props = defineProps<Props>();
-
-  const emits = defineEmits<Emits>();
-
   defineOptions({
     inheritAttrs: false,
   });
+
+  const props = defineProps<Props>();
+
+  const emits = defineEmits<Emits>();
 
   const checkSelectedAll = () => {
     if (tableData.value.filter((data) => props.disabledRowConfig.find((item) => item.handler(data))).length > 0) {
@@ -148,17 +151,19 @@
   const columns = computed(() => [
     {
       fixed: 'left',
-      label: () => (
-        <div style='display:flex;align-items:center'>
-          <bk-checkbox
-            key={`${pagination.current}_${activeTab.value}`}
-            disabled={mainSelectDisable.value}
-            indeterminate={isIndeterminate.value}
-            label={true}
-            model-value={isSelectedAll.value}
-            onChange={handleWholeSelect}
-          />
-          {/* <bk-popover
+      label: () =>
+        props.multiple ? (
+          <div style='display:flex;align-items:center'>
+            <bk-checkbox
+              key={`${pagination.current}_${activeTab.value}`}
+              disabled={mainSelectDisable.value}
+              indeterminate={isIndeterminate.value}
+              label={true}
+              model-value={isSelectedAll.value}
+              onChange={handleWholeSelect}
+              onClick={(e: Event) => e.stopPropagation()}
+            />
+            {/* <bk-popover
             placement="bottom-start"
             theme="light db-table-select-menu"
             arrow={ false }
@@ -174,11 +179,13 @@
               ),
             }}>
           </bk-popover> */}
-        </div>
-      ),
-      minWidth: 70,
+          </div>
+        ) : (
+          ''
+        ),
+      minWidth: 80,
       render: ({ data }: { data: ResourceItem }) => {
-        const disabledRowConfig = props.disabledRowConfig.find((item) => item.handler(data));
+        const disabledRowConfig = props.disabledRowConfig!.find((item) => item.handler(data));
         if (disabledRowConfig) {
           return (
             <bk-popover
@@ -187,25 +194,38 @@
               theme='dark'>
               {{
                 content: () => <span>{disabledRowConfig.tip}</span>,
-                default: () => (
-                  <bk-checkbox
-                    style='vertical-align: middle;'
-                    disabled
-                  />
-                ),
+                default: () =>
+                  props.multiple ? (
+                    <bk-checkbox
+                      style='vertical-align: middle;'
+                      disabled
+                    />
+                  ) : (
+                    <bk-radio
+                      label={false}
+                      disabled
+                    />
+                  ),
               }}
             </bk-popover>
           );
         }
-        return (
+        return props.multiple ? (
           <bk-checkbox
             label={true}
             model-value={Boolean(selectedMap.value[data.id])}
             style='vertical-align: middle;'
             onChange={(value: boolean) => handleSelecteRow(data, value)}
           />
+        ) : (
+          <bk-radio
+            label={true}
+            model-value={Boolean(selectedMap.value[data.id])}
+            onChange={(value: boolean) => handleSelecteRow(data, value)}
+          />
         );
       },
+      width: 80,
     },
     {
       field: 'master_domain',
@@ -248,6 +268,7 @@
       ),
       showOverflowTooltip: true,
     },
+    tagsColumn,
     {
       field: 'status',
       filter: {
@@ -390,9 +411,9 @@
    * 选择当行数据
    */
   const handleSelecteRow = (data: ResourceItem, value: boolean) => {
-    // if (!props.multiple) {
-    //   selectedList.value = [];
-    // }
+    if (!props.multiple) {
+      selectedList.value = [];
+    }
     if (value && !selectedMap.value[data.id]) {
       selectedList.value.push(data);
     } else {

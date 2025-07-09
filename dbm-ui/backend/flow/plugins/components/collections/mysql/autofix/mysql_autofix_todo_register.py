@@ -14,8 +14,9 @@ from django.db import transaction
 from django.utils.translation import ugettext as _
 from pipeline.component_framework.component import Component
 
-from backend.db_monitor.constants import MySQLAutofixStep
-from backend.db_monitor.models import MySQLAutofixTicketStatus, MySQLAutofixTodo
+from backend.db_meta.enums import MachineType
+from backend.db_meta.models import Cluster, ProxyInstance, StorageInstance
+from backend.db_monitor.models import MySQLAutofixTodo
 from backend.flow.plugins.components.collections.common.base_service import BaseService
 
 logger = logging.getLogger("celery")
@@ -28,28 +29,28 @@ class MySQLAutofixTodoRegisterService(BaseService):
 
         for row in kwargs["infos"]:
             self.log_info("[{}] mysql autofix info row: {}".format(kwargs["node_name"], row))
+            cluster_obj = Cluster.objects.get(
+                bk_cloud_id=row["bk_cloud_id"], bk_biz_id=row["bk_biz_id"], immute_domain=row["immute_domain"]
+            )
+            if row["machine_type"] in [MachineType.SPIDER, MachineType.PROXY]:
+                ProxyInstance.objects.get(cluster=cluster_obj, machine__ip=row["ip"], port=row["port"])
+            elif row["machine_type"] in [MachineType.BACKEND, MachineType.SINGLE, MachineType.REMOTE]:
+                StorageInstance.objects.get(cluster=cluster_obj, machine__ip=row["ip"], port=row["port"])
+            else:
+                self.log_error("unsupported machine_type: {}".format(row["machine_type"]))
+                continue
+
             new_record = {
                 "bk_cloud_id": row["bk_cloud_id"],
                 "bk_biz_id": row["bk_biz_id"],
                 "check_id": row["check_id"],
-                "cluster_id": row["cluster_id"],
+                "cluster_id": cluster_obj.pk,
                 "immute_domain": row["immute_domain"],
-                "cluster_type": row["cluster_type"],
+                "cluster_type": cluster_obj.cluster_type,
                 "machine_type": row["machine_type"],
-                "instance_role": row["instance_role"],
                 "ip": row["ip"],
                 "port": row["port"],
                 "event_create_time": row["event_create_time"],
-                "dbha_gm_ip": row["dbha_gm_ip"],
-                "context_master_host": row["context_master_host"],
-                "context_master_port": row["context_master_port"],
-                "context_master_log_file": row["context_master_log_file"],
-                "context_master_log_pos": row["context_master_log_pos"],
-                "inplace_ticket_id": 0,
-                "inplace_ticket_status": MySQLAutofixTicketStatus.UNSUBMITTED.value,
-                "replace_ticket_id": 0,
-                "replace_ticket_status": MySQLAutofixTicketStatus.UNSUBMITTED.value,
-                "current_step": MySQLAutofixStep.IN_PLACE_AUTOFIX.value,
             }
 
             # 按表唯一键做 replace 操作, 防止实例重复上报

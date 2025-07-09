@@ -21,12 +21,7 @@
           v-model="formData.queryType"
           style="width: 300px"
           type="card">
-          <BkRadioButton
-            v-bk-tooltips="t('暂不支持，敬请期待')"
-            disabled
-            label="proxy">
-            Proxy
-          </BkRadioButton>
+          <BkRadioButton label="proxy"> Proxy </BkRadioButton>
           <BkRadioButton label="master_slave">Master/Slave</BkRadioButton>
         </BkRadioGroup>
       </BkFormItem>
@@ -102,7 +97,7 @@
   const formRef = ref();
   const formData = ref({
     instance: '',
-    queryType: 'master_slave',
+    queryType: '',
   });
   const invalidInstanceList = ref<string[]>([]);
   const isEditorExecutable = ref(false);
@@ -111,14 +106,23 @@
   const instanceList = computed(() =>
     formData.value.instance.split(batchInputSplitRegex).filter((item) => ipPort.test(item)),
   );
-  const alertTip = computed(() =>
-    isMysql.value ? t('执行常用管理命令，支持 Proxy 和 Backend 操作') : t('执行常用管理命令，支持spider、Backend'),
-  );
+  const alertTip = computed(() => {
+    if (isMysql.value) {
+      return t('执行常用管理命令，支持 Proxy 和 Backend 操作');
+    }
+    if (props.dbType === DBTypes.SQLSERVER) {
+      return t('执行常用管理命令');
+    }
+
+    return t('执行常用管理命令，支持spider、Backend');
+  });
 
   const autoSizeConf = {
     maxRows: 8,
     minRows: 5,
   };
+
+  let invalidList: string[] = [];
 
   const rules = {
     instance: [
@@ -137,54 +141,34 @@
         },
       },
       {
-        message: t('存在无效实例'),
+        message: () => t('无效实例：m', { m: invalidList.join(' , ') }),
         trigger: 'blur',
         validator: async (value: string) => {
-          if (!isMysql.value) {
-            return true;
-          }
-
+          invalidList = [];
           const instanceList = value.split(batchInputSplitRegex).filter((item) => ipPort.test(item));
           const instancesResult = await checkInstance({ instance_addresses: instanceList });
           const resultList = instancesResult.map((item) => item.instance_address);
-          const invalidList = _.difference(instanceList, resultList);
-          if (formData.value.queryType === 'proxy') {
-            const notMatchlist = instancesResult.reduce<string[]>((results, item) => {
-              if (item.role === 'proxy') {
-                return results;
-              }
-
-              results.push(item.instance_address);
-              return results;
-            }, []);
-            if (!notMatchlist.length && !invalidList.length) {
-              invalidInstanceList.value = [];
-              return true;
-            }
-
-            invalidInstanceList.value = [...invalidList, ...notMatchlist];
-            return false;
-          }
-
-          const notMatchlist = instancesResult.reduce<string[]>((results, item) => {
-            if (['master', 'orphan', 'repeater', 'slave'].includes(item.role)) {
-              return results;
-            }
-
-            results.push(item.instance_address);
-            return results;
-          }, []);
-          if (!notMatchlist.length && !invalidList.length) {
-            invalidInstanceList.value = [];
-            return true;
-          }
-
-          invalidInstanceList.value = [...invalidList, ...notMatchlist];
-          return false;
+          invalidList = _.difference(instanceList, resultList);
+          return !invalidList.length;
         },
       },
     ],
   };
+
+  watch(
+    isMysql,
+    () => {
+      if (isMysql.value) {
+        formData.value.queryType = 'proxy';
+        return;
+      }
+
+      formData.value.queryType = '';
+    },
+    {
+      immediate: true,
+    },
+  );
 
   const handleFormValidate = (_: unknown, isValid: boolean) => {
     isEditorExecutable.value = isValid;

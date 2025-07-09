@@ -67,7 +67,7 @@ func (e *ExecuteScript) Init(runtime *jobruntime.JobGenericRuntime) error {
 		return fmt.Errorf("get parameters of ExecuteScript fail by json.Unmarshal, error:%s", err)
 	}
 	// 执行目录
-	e.ExecuteDir = filepath.Join(consts.PackageSavePath, e.ConfParams.TaskId)
+	e.ExecuteDir = filepath.Join(consts.PackageSavePath, "dbactuator-"+e.ConfParams.TaskId)
 	// 执行脚本的路径
 	var scriptFilesPath []string
 	for _, file := range e.ConfParams.ScriptFiles {
@@ -136,7 +136,7 @@ func (e *ExecuteScript) GetDbUserName() error {
 	// []string装换成[]any
 	var dbBlurName []any
 	for _, db := range e.ConfParams.BlurDb {
-		dbBlurName = append(dbBlurName, "%"+db+"%")
+		dbBlurName = append(dbBlurName, "%"+strings.ToUpper(db)+"%")
 	}
 	db, rows, err := common.GetInfoFromOracle(e.ConfParams.ManagerUser,
 		e.ConfParams.ManagerUserPassword,

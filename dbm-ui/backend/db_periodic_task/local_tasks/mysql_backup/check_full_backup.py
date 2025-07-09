@@ -44,6 +44,52 @@ def get_query_date_time(date_str: str):
         return start_of_day, end_of_day
 
 
+def find_discontinuous_numbers(numbers):
+    """
+    判断数字列表是否连续，并返回所有不连续的值
+
+    参数:
+        numbers: 数字列表(需要是已排序的列表)
+
+    返回:
+        tuple: (是否连续, 不连续的值列表)
+    """
+    if not numbers:
+        return True, []
+
+    discontinuous = []
+    is_continuous = True
+    numbers.sort()
+    for i in range(1, len(numbers)):
+        # 检查当前数字是否比前一个数字大1
+        if numbers[i] != numbers[i - 1] + 1:
+            is_continuous = False
+            # 找出中间缺失的数字
+            missing = numbers[i - 1] + 1
+            while missing < numbers[i]:
+                discontinuous.append(missing)
+                missing += 1
+
+    return is_continuous, discontinuous
+
+
+def is_consecutive_strings(str_list: list):
+    """
+    判断字符串数字是否连续
+    """
+    int_list = [int(s) for s in str_list]
+    int_sorted = list(set(int_list))
+    int_sorted.sort()
+    if len(int_sorted) == 0:
+        return False
+    if len(int_sorted) == 1:
+        return True
+    if len(int_sorted) == int_sorted[-1] - int_sorted[0] + 1:
+        return True
+    else:
+        return False
+
+
 def check_full_backup(date_str: str):
     # tendbha 全备巡检
     _check_tendbha_full_backup(date_str)
@@ -60,16 +106,16 @@ class BackupFile:
 
 
 class MysqlBackup:
-    def __init__(self, cluster_id: int, cluster_domain: str, backup_id=""):
+    def __init__(self, cluster_id: int, cluster_domain: str, backup_id="", mysql_role=""):
         self.cluster_id = cluster_id
         self.cluster_domain = cluster_domain
         self.backup_id = backup_id
+        self.mysql_role = mysql_role
         self.backup_type = ""
-        self.backup_role = ""
+        self.shard_value = -1
         self.is_full_backup = 0
         self.data_schema_grant = ""
         self.consistent_backup_time = ""
-        self.shard_value = -1
         self.file_index = None
         self.file_priv = None
         self.file_tar = []
@@ -78,11 +124,12 @@ class MysqlBackup:
 def _build_backup_info_files(backups_info: []):
     backups = {}
     for i in backups_info:
-        if i.get("is_full_backup", 0) == 0:
+        if i.get("is_full_backup", 0) == 0 and i.get("mysql_role") not in ["spider_master", "TDBCTL"]:
             continue
-        bid = "{}#{}".format(i.get("backup_id"), i.get("shard_value"))
+        # key format backup_id#shard_value#mysql_role
+        bid = "{}#{}#{}".format(i.get("backup_id"), i.get("shard_value"), i.get("mysql_role"))
         if bid not in backups:
-            backups[bid] = MysqlBackup(i["cluster_id"], i["cluster_domain"], i["backup_id"])
+            backups[bid] = MysqlBackup(i["cluster_id"], i["cluster_domain"], i["backup_id"], i.get("mysql_role"))
 
         backups[bid].is_full_backup = i.get("is_full_backup")
         for f in i.get("file_list", []):
@@ -163,25 +210,29 @@ def _check_tendbcluster_full_backup(date_str: str):
             backup = ClusterBackup(c.id, c.immute_domain)
             items = backup.query_backup_log_from_bklog(start_time, end_time)
             backup.backups = _build_backup_info_files(items)
+            backup.success = False
+            shard_num = c.tendbclusterstorageset_set.count()
 
-            backup_id_stat = defaultdict(list)
-            backup_id_invalid = {}
+            # id : {spider_master: True, TDBCTL: True, remote: {0:True, 1:True, ...}}
+            backup_id_stat = defaultdict(dict)
             for bid, bk in backup.backups.items():
-                backup_id, shard_id = bid.split("#", 1)
-                if bk.is_full_backup == 1:
+                backup_id, shard_id, mysql_role = bid.split("#", 2)
+                if mysql_role == "spider_master" or mysql_role == "TDBCTL":
+                    backup_id_stat[backup_id][mysql_role] = True
+                elif bk.is_full_backup == 1:
+                    if "remote" not in backup_id_stat[backup_id]:
+                        backup_id_stat[backup_id]["remote"] = {}
                     if bk.file_index and bk.file_tar:
                         #  这一个 shard ok
-                        backup_id_stat[backup_id].append({shard_id: True})
-                    else:
-                        # 这一个 shard 不ok，整个backup_id 无效
-                        backup_id_invalid[backup_id] = True
-                        backup_id_stat[backup_id].append({shard_id: False})
+                        backup_id_stat[backup_id]["remote"][shard_id] = True
             message = ""
             for backup_id, stat in backup_id_stat.items():
-                if backup_id not in backup_id_invalid:
+                if stat.get("spider_master") and stat.get("TDBCTL") and len(stat.get("remote")) == shard_num:
                     backup.success = True
-                    message = "shard_id:{}".format(backup_id_stat[backup_id])
                     break
+                shard_id_list = [int(i) for i in stat.get("remote").keys()]
+                stat["remote"] = find_discontinuous_numbers(shard_id_list)
+                message = "backup_id={}:{}".format(backup_id, json.dumps(stat))
 
             # 只记录失败的结果
             if not backup.success:

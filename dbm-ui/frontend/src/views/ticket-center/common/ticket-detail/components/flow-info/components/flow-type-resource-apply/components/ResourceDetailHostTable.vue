@@ -10,49 +10,57 @@
       fixed="left"
       label="IP"
       :width="200">
-      <template #default="{ data }: { data: IResouce & { tag: string } }">
-        {{ data.ip }}
-        <BkTag v-if="data.tag">{{ data.tag }}</BkTag>
+      <template #default="{ data: rowData }: { data: IResouce & { tag: string } }">
+        {{ rowData.ip }}
+        <BkTag v-if="rowData.tag">{{ rowData.tag }}</BkTag>
       </template>
     </BkTableColumn>
     <BkTableColumn
       field="city"
       :label="t('地域')"
       :min-width="100">
-      <template #default="{ data }: { data: IResouce }">
-        {{ data.city || '--' }}
+      <template #default="{ data: rowData }: { data: IResouce }">
+        {{ rowData.city || '--' }}
       </template>
     </BkTableColumn>
     <BkTableColumn
       field="sub_zone"
       :label="t('园区')"
       :min-width="100">
-      <template #default="{ data }: { data: IResouce }">
-        {{ data.sub_zone || '--' }}
+      <template #default="{ data: rowData }: { data: IResouce }">
+        {{ rowData.sub_zone || '--' }}
       </template>
     </BkTableColumn>
     <BkTableColumn
       field="rack_id"
       :label="t('机架')"
       :min-width="100">
-      <template #default="{ data }: { data: IResouce }">
-        {{ data.rack_id || '--' }}
+      <template #default="{ data: rowData }: { data: IResouce }">
+        {{ rowData.rack_id || '--' }}
+      </template>
+    </BkTableColumn>
+    <BkTableColumn
+      field="os_name"
+      :label="t('操作系统名称')"
+      :min-width="180">
+      <template #default="{ data: rowData }: { data: IResouce }">
+        {{ rowData.os_name || '--' }}
       </template>
     </BkTableColumn>
     <BkTableColumn
       field="os_type"
-      :label="t('操作系统名称')"
+      :label="t('操作系统')"
       :min-width="180">
-      <template #default="{ data }: { data: IResouce }">
-        {{ data.os_type || '--' }}
+      <template #default="{ data: rowData }: { data: IResouce }">
+        {{ rowData.os_type || '--' }}
       </template>
     </BkTableColumn>
     <BkTableColumn
       field="device_class"
       :label="t('机型')"
       :min-width="100">
-      <template #default="{ data }: { data: IResouce }">
-        {{ data.device_class || '--' }}
+      <template #default="{ data: rowData }: { data: IResouce }">
+        {{ rowData.device_class || '--' }}
       </template>
     </BkTableColumn>
     <BkTableColumn
@@ -61,8 +69,12 @@
       :min-width="100" />
     <BkTableColumn
       field="bk_mem"
-      :label="t('内存M')"
-      :min-width="100" />
+      :label="t('内存G')"
+      :min-width="100">
+      <template #default="{ data: rowData }: { data: IResouce }">
+        {{ transformMToG(rowData.bk_mem) }}
+      </template>
+    </BkTableColumn>
     <BkTableColumn
       field="bk_disk"
       :label="t('磁盘G')"
@@ -93,4 +105,8 @@
   defineProps<Props>();
 
   const { t } = useI18n();
+
+  const transformMToG = (value: number) => {
+    return value ? (value / 1024).toFixed(2) : '--';
+  };
 </script>

@@ -220,6 +220,10 @@ class GetClusterVersionSerializer(serializers.Serializer):
     type = serializers.ChoiceField(help_text=_("请求版本类型"), choices=RedisVersionQueryType.get_choices())
 
 
+class ListClusterBigVersionSerializer(serializers.Serializer):
+    cluster_id = serializers.IntegerField(help_text=_("集群ID"))
+
+
 class GetClusterCapacityInfoSerializer(serializers.Serializer):
     cluster_id = serializers.IntegerField(help_text=_("集群ID"))
     new_storage_version = serializers.CharField(help_text=_("存储版本"))
@@ -241,3 +245,14 @@ class GetClusterCapacityInfoSerializer(serializers.Serializer):
 class GetClusterModuleInfoSerializer(serializers.Serializer):
     cluster_id = serializers.IntegerField(help_text=_("集群ID"))
     version = serializers.CharField(help_text=_("版本"))
+
+
+class ExecuteClusterTcpCmdSerializer(serializers.Serializer):
+    cluster_ids = serializers.ListField(help_text=_("集群ID列表"), child=serializers.IntegerField())
+
+    class Meta:
+        swagger_schema_fields = {"example": {"job_instance_id": 0, "job_instance_name": "xxxx"}}
+
+
+class GetClusterTcpResultSerializer(serializers.Serializer):
+    job_instance_id = serializers.IntegerField(help_text=_("job实例ID"))

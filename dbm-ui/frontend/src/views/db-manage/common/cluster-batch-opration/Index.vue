@@ -20,19 +20,18 @@
     }"
     class="cluster-batch-operation"
     :disabled="disabled"
-    :popover-options="popoverOptions"
-    @click.stop
-    @hide="() => (isShowDropdown = false)"
-    @show="() => (isShowDropdown = true)">
-    <BkButton :disabled="disabled">
-      {{ t('批量操作') }}
-      <DbIcon
-        class="cluster-batch-operation-icon ml-4"
-        :class="[{ 'cluster-batch-operation-icon-active': isShowDropdown }]"
-        type="up-big " />
-    </BkButton>
+    :popover-options="popoverOptions">
+    <template #default="{ popoverShow }">
+      <BkButton :disabled="disabled">
+        {{ t('批量操作') }}
+        <DbIcon
+          class="cluster-batch-operation-icon ml-4"
+          :class="[{ 'cluster-batch-operation-icon-active': popoverShow }]"
+          type="up-big " />
+      </BkButton>
+    </template>
     <template #content>
-      <BkDropdownMenu class="cluster-batch-operation-popover">
+      <BkDropdownMenu class="dropdown-menu-with-button">
         <Component
           :is="content"
           v-model:side-slider-show="sideSliderShow"
@@ -48,10 +47,15 @@
   import _ from 'lodash';
   import { useI18n } from 'vue-i18n';
 
+  import DorisModel from '@services/model/doris/doris';
+  import EsModel from '@services/model/es/es';
+  import HdfsModel from '@services/model/hdfs/hdfs';
+  import KafkaModel from '@services/model/kafka/kafka';
   import MongodbModel from '@services/model/mongodb/mongodb';
   import TendbHaModel from '@services/model/mysql/tendbha';
   import TendbSingleModel from '@services/model/mysql/tendbsingle';
   import RedisModel from '@services/model/redis/redis';
+  import RiakModel from '@services/model/riak/riak';
   import SqlserverHaModel from '@services/model/sqlserver/sqlserver-ha';
   import SqlserverSingleModel from '@services/model/sqlserver/sqlserver-single';
   import TendbClusterModel from '@services/model/tendbcluster/tendbcluster';
@@ -59,10 +63,15 @@
   import { ClusterTypes } from '@common/const';
 
   interface ClusterModelMap {
+    [ClusterTypes.DORIS]: DorisModel;
+    [ClusterTypes.ES]: EsModel;
+    [ClusterTypes.HDFS]: HdfsModel;
+    [ClusterTypes.KAFKA]: KafkaModel;
     [ClusterTypes.MONGO_REPLICA_SET]: MongodbModel;
     [ClusterTypes.MONGO_SHARED_CLUSTER]: MongodbModel;
     [ClusterTypes.REDIS_INSTANCE]: RedisModel;
     [ClusterTypes.REDIS]: RedisModel;
+    [ClusterTypes.RIAK]: RiakModel;
     [ClusterTypes.SQLSERVER_HA]: SqlserverHaModel;
     [ClusterTypes.SQLSERVER_SINGLE]: SqlserverSingleModel;
     [ClusterTypes.TENDBCLUSTER]: TendbClusterModel;
@@ -71,14 +80,14 @@
   }
 </script>
 <script setup lang="ts" generic="T extends keyof ClusterModelMap">
-  interface Props {
+  export interface Props<T extends keyof ClusterModelMap> {
     clusterType: T;
     selected: ClusterModelMap[T][];
   }
 
   type Emits = (e: 'success') => void;
 
-  const props = defineProps<Props>();
+  const props = defineProps<Props<T>>();
   const emits = defineEmits<Emits>();
 
   const { t } = useI18n();
@@ -91,7 +100,6 @@
     eager: true,
   });
 
-  const isShowDropdown = ref(false);
   const sideSliderShow = ref(false);
   const renderKey = ref(new Date().getTime());
 
@@ -114,6 +122,7 @@
     boundary: 'body',
     clickContentAutoHide: true,
     disableOutsideClick: sideSliderShow.value,
+    hideIgnoreReference: true,
     renderDirective: 'show',
   }));
 
@@ -127,19 +136,6 @@
     emits('success');
   };
 </script>
-
-<style lang="less">
-  .cluster-batch-operation-popover {
-    .bk-dropdown-item {
-      padding: 0;
-
-      .opration-button {
-        width: 100%;
-        padding: 0 16px;
-      }
-    }
-  }
-</style>
 
 <style lang="less" scoped>
   .cluster-batch-operation {

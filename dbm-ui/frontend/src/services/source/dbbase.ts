@@ -11,9 +11,9 @@
  * the specific language governing permissions and limitations under the License.
  */
 
-import type { InstanceInfos } from '@services/types';
+import type { InstanceInfos, ListBase, MachineInfos } from '@services/types';
 
-import { ClusterTypes } from '@common/const';
+import { ClusterTypes, DBTypes } from '@common/const';
 
 import http, { type IRequestPayload } from '../http';
 
@@ -38,11 +38,19 @@ export function filterClusters<
     cluster_type: string;
     db_module_id: number;
     db_module_name: string;
+    db_type: string;
     id: number;
     major_version: string;
     master_domain: string;
   },
->(params: { bk_biz_id: number; cluster_ids?: string; domain?: string; exact_domain?: string }) {
+>(params: {
+  bk_biz_id: number;
+  cluster_ids?: string;
+  cluster_type?: string;
+  db_type?: DBTypes;
+  domain?: string;
+  exact_domain?: string;
+}) {
   return http.get<T[]>(`${path}/filter_clusters/`, params);
 }
 
@@ -91,7 +99,7 @@ export function queryResourceAdministrationAttrs(params: { limit?: number; offse
 /**
  * webconsole查询
  */
-export function queryWebconsole(params: { cluster_id: number; cmd: string }) {
+export function queryWebconsole(params: { cluster_id: number; cmd: string, options?: Record<string, unknown> }) {
   return http.post<{
     error_msg?: string;
     query: string | Record<string, string>[];
@@ -103,8 +111,24 @@ export function checkClusterDatabase(params: { bk_biz_id: number; cluster_id: nu
   return http.post<Record<string, boolean>>(`${path}/check_cluster_databases/`, params);
 }
 
+// 批量查询集群的库是否存在
+export function batchCheckClusterDatabase(params: { bk_biz_id: number; cluster_ids: number[]; db_list: string[] }) {
+  return http.post<{
+    [clusterId: string]: {
+      [dbName: string]: boolean;
+    };
+  }>(`${path}/batch_check_cluster_databases/`, params);
+}
+
 // 根据用户手动输入的ip[:port]查询真实的实例
-export function checkInstance<T extends InstanceInfos>(params: { bk_biz_id?: number; instance_addresses: string[] }) {
+export function checkInstance<T extends InstanceInfos>(params: {
+  bk_biz_id?: number;
+  cluster_ids?: number[];
+  cluster_type?: ClusterTypes[];
+  db_type?: DBTypes;
+  instance_addresses: string[];
+  instance_role?: string[];
+}) {
   return http.post<T[]>(`${path}/check_instances/`, params);
 }
 
@@ -179,6 +203,7 @@ export function dbConsole(params: {
     bk_cloud_id: number;
     instance: string;
   }[];
+  is_proxy?: boolean;
 }) {
   return http.post<
     {
@@ -187,4 +212,118 @@ export function dbConsole(params: {
       table_data: Record<string, string>[];
     }[]
   >(`${path}/dbconsole/`, params);
+}
+
+// 批量增加集群标签键
+export function addClusterTagKeys(params: { bk_biz_id: number; cluster_ids: number[]; tags: number[] }) {
+  return http.post(`${path}/add_cluster_tag_keys/`, params);
+}
+
+// 批量移除集群标签键
+export function removeClusterTagKeys(params: { bk_biz_id: number; cluster_ids: number[]; keys: string[] }) {
+  return http.post(`${path}/remove_cluster_tag_keys/`, params);
+}
+
+// 更新集群标签
+export function updateClusterTag(params: { bk_biz_id: number; cluster_id: number; tags: number[] }) {
+  return http.post(`${path}/update_cluster_tag/`, params);
+}
+
+// 查询全局实例
+export function getGlobalInstance(params: {
+  bk_biz_id?: number; // 业务ID
+  cluster_id?: number; // 集群ID
+  cluster_type?: string; // 集群类型
+  db_module_id?: number; // 模块ID
+  db_type: DBTypes; // 组件类型
+  domain?: string; // 域名查询
+  exact_ip?: string; // 精确IP查询
+  group_id?: string; // 分组ID
+  instance_address?: string; // 实例地址查询
+  ip?: string; // 主机IP查询
+  limit?: number;
+  offset?: number;
+  port?: string; // 端口查询
+  role?: string; // 过滤的实例角色
+  status?: string; // 实例状态
+}) {
+  return http.get<ListBase<InstanceInfos[]>>(`${path}/get_global_instance/`, params);
+}
+
+// 查询全局主机
+export function getGlobalMachine(params: {
+  add_role_count?: boolean; // 是否增加角色数量
+  bk_agent_id?: string; // agent ID
+  bk_biz_id?: number; // 业务ID
+  bk_city_name?: string; // 城市名称
+  bk_cloud_id?: number; // 云区域ID
+  bk_host_id?: number; // 主机ID
+  bk_os_name?: string; // 操作系统
+  cluster_ids?: string; // 集群ID列表
+  cluster_status?: string;
+  cluster_type?: string;
+  creator?: string; // 创建人
+  db_module_id?: number; // 模块ID
+  db_type: DBTypes; // 数据库类型
+  instance_address?: string;
+  instance_role?: string; // 实例角色
+  instance_status?: string; // 实例状态
+  ip?: string; // 主机IP
+  limit?: number; // 分页限制
+  machine_type?: string; // 机器类型
+  offset?: number;
+  spider_role?: string; // spider角色
+}) {
+  return http.get<ListBase<MachineInfos[]>>(`${path}/get_global_machine/`, params);
+}
+
+// 查询全局集群
+export function getGlobalCluster<
+  T extends {
+    bk_biz_id: number;
+    bk_biz_name: string;
+    bk_cloud_id: number;
+    bk_cloud_name: string;
+    cluster_type: string;
+    cluster_type_name: string;
+    db_module_id: number;
+    db_module_name: string;
+    db_type: string;
+    id: number;
+    master_domain: string;
+    phase: string;
+    phase_name: string;
+    region: string;
+    slave_domain: string;
+    status: string;
+  },
+>(params: {
+  bk_biz_id?: number; // 业务ID
+  bk_cloud_id?: number; // 云区域ID
+  city?: string; // 城市
+  cluster_ids?: string; // 集群ID列表
+  cluster_type?: string; // 集群类型
+  creator?: string; // 创建人
+  db_module_id?: number; // 模块ID
+  db_type: DBTypes; // 数据库类型
+  domain?: string; // 域名
+  domains?: string; // 域名列表
+  exact_domain?: string; // 精确域名查询
+  id?: number; // 集群ID
+  instance?: string; // 实例地址
+  limit?: number; // 分页限制
+  major_version?: string; // 主版本
+  master_domain?: string; // 主域名
+  name?: string; // 集群名称
+  offset?: number;
+  ordering?: string; // 排序字段
+  region?: string; // 区域
+  slave_domain?: string; // 从域名
+  spider_slave_exist?: boolean; // 是否存在spider从节点
+  status?: string; // 集群状态
+  sys_mode?: string; // 系统模式
+  tag_ids?: string; // 标签ID列表
+  tag_keys?: string; // 标签键列表
+}) {
+  return http.get<ListBase<T[]>>(`${path}/get_global_cluster/`, params);
 }

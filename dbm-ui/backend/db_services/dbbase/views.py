@@ -22,18 +22,23 @@ from backend import env
 from backend.bk_web import viewsets
 from backend.bk_web.pagination import AuditedLimitOffsetPagination
 from backend.bk_web.swagger import ResponseSwaggerAutoSchema, common_swagger_auto_schema
-from backend.components import BKBaseApi
+from backend.components import BKBaseApi, DRSApi
 from backend.configuration.constants import DBType
 from backend.db_meta.enums import ClusterType, InstanceRole
-from backend.db_meta.models import Cluster, DBModule, ProxyInstance, StorageInstance
+from backend.db_meta.models import Cluster, DBModule, ProxyInstance, StorageInstance, Tag
 from backend.db_services.dbbase.cluster.handlers import ClusterServiceHandler
-from backend.db_services.dbbase.cluster.serializers import CheckClusterDbsResponseSerializer, CheckClusterDbsSerializer
+from backend.db_services.dbbase.cluster.serializers import (
+    BatchCheckClusterDbsSerializer,
+    CheckClusterDbsResponseSerializer,
+    CheckClusterDbsSerializer,
+)
 from backend.db_services.dbbase.instances.handlers import InstanceHandler
 from backend.db_services.dbbase.instances.yasg_slz import CheckInstancesResSLZ, CheckInstancesSLZ
 from backend.db_services.dbbase.resources import register
 from backend.db_services.dbbase.resources.query import ListRetrieveResource, ResourceList
 from backend.db_services.dbbase.resources.serializers import ClusterSLZ
 from backend.db_services.dbbase.serializers import (
+    AddClusterTagKeysSerializer,
     ClusterDbTypeSerializer,
     ClusterEntryFilterSerializer,
     ClusterFilterSerializer,
@@ -49,8 +54,10 @@ from backend.db_services.dbbase.serializers import (
     QueryClusterCapResponseSerializer,
     QueryClusterCapSerializer,
     QueryClusterInstanceCountSerializer,
+    RemoveClusterTagKeysSerializer,
     ResourceAdministrationSerializer,
     UpdateClusterAliasSerializer,
+    UpdateClusterTagsSerializer,
     WebConsoleResponseSerializer,
     WebConsoleSerializer,
 )
@@ -59,7 +66,11 @@ from backend.db_services.mongodb.cluster.handlers import ClusterServiceHandler a
 from backend.db_services.mysql.remote_service.handlers import RemoteServiceHandler
 from backend.db_services.redis.toolbox.handlers import ToolboxHandler
 from backend.iam_app.handlers.drf_perm.base import DBManagePermission
-from backend.iam_app.handlers.drf_perm.cluster import ClusterDBConsolePermission, ClusterWebconsolePermission
+from backend.iam_app.handlers.drf_perm.cluster import (
+    ClusterDBConsolePermission,
+    ClusterEditPermission,
+    ClusterWebconsolePermission,
+)
 
 SWAGGER_TAG = _("集群通用接口")
 
@@ -79,9 +90,16 @@ class DBBaseViewSet(viewsets.SystemViewSet):
         (
             "simple_query_cluster",
             "common_query_cluster",
+            "filter_clusters",
         ): [DBManagePermission()],
         ("webconsole",): [ClusterWebconsolePermission()],
         ("dbconsole",): [ClusterDBConsolePermission()],
+        (
+            "update_cluster_alias",
+            "update_cluster_tag",
+            "remove_cluster_tag_keys",
+            "add_cluster_tag_keys",
+        ): [ClusterEditPermission()],
     }
     default_permission_class = [DBManagePermission()]
 
@@ -196,7 +214,27 @@ class DBBaseViewSet(viewsets.SystemViewSet):
     def check_cluster_databases(self, request, *args, **kwargs):
         validated_data = self.params_validate(self.get_serializer_class())
         bk_biz_id = validated_data.pop("bk_biz_id")
-        return Response(ClusterServiceHandler(bk_biz_id).check_cluster_databases(**validated_data))
+        user_id = request.user.id
+        return Response(ClusterServiceHandler(bk_biz_id).check_cluster_databases(user_id=user_id, **validated_data))
+
+    @common_swagger_auto_schema(
+        operation_summary=_("查询多个集群的库是否存在"),
+        request_body=BatchCheckClusterDbsSerializer(),
+        tags=[SWAGGER_TAG],
+        responses={status.HTTP_200_OK: CheckClusterDbsResponseSerializer()},
+    )
+    @action(methods=["POST"], detail=False, serializer_class=BatchCheckClusterDbsSerializer)
+    def batch_check_cluster_databases(self, request, *args, **kwargs):
+        validated_data = self.params_validate(self.get_serializer_class())
+        bk_biz_id = validated_data.pop("bk_biz_id")
+        cluster_ids = validated_data.pop("cluster_ids")
+        cluster_dict = {
+            cluster_id: ClusterServiceHandler(bk_biz_id).check_cluster_databases(
+                cluster_id=cluster_id, **validated_data
+            )
+            for cluster_id in cluster_ids
+        }
+        return Response(cluster_dict)
 
     @common_swagger_auto_schema(
         operation_summary=_("查询业务下集群的属性字段"),
@@ -302,7 +340,8 @@ class DBBaseViewSet(viewsets.SystemViewSet):
             data = MongoClusterServiceHandler(bk_biz_id=cluster.bk_biz_id).webconsole_rpc(**data)
         # 对外部查询进行数据脱敏
         if getattr(request, "is_external", False) and env.BKDATA_DATA_TOKEN:
-            data = BKBaseApi.data_desensitization(text=json.dumps(data), bk_biz_id=cluster.bk_biz_id)
+            username = request.user.username
+            data = BKBaseApi.data_desensitization(user=username, text=json.dumps(data), bk_biz_id=cluster.bk_biz_id)
             data = json.loads(data)
 
         return Response(data)
@@ -316,9 +355,20 @@ class DBBaseViewSet(viewsets.SystemViewSet):
     def dbconsole(self, request):
         data = self.params_validate(self.get_serializer_class())
         db_type = data.pop("db_type")
+        is_proxy = data.pop("is_proxy")
         # mysql / tendbcluster
         if db_type in [DBType.MySQL, DBType.TenDBCluster]:
-            return Response(RemoteServiceHandler.dbconsole_rpc(**data))
+            if db_type == DBType.MySQL and is_proxy:
+                return Response(RemoteServiceHandler.dbconsole_proxy_rpc(**data))
+            return Response(
+                ClusterServiceHandler.console_rpc(**data, db_query=True, rpc_function=DRSApi.webconsole_rpc)
+            )
+        if db_type == DBType.Sqlserver:
+            return Response(
+                ClusterServiceHandler.console_rpc(
+                    **data, db_query=False, rpc_function=DRSApi.sqlserver_sys_read_rpc, is_check=False
+                )
+            )
 
     @common_swagger_auto_schema(
         operation_summary=_("根据db类型查询ip列表"),
@@ -456,5 +506,54 @@ class DBBaseViewSet(viewsets.SystemViewSet):
         cluster = Cluster.objects.get(bk_biz_id=validated_data["bk_biz_id"], id=validated_data["cluster_id"])
         cluster.alias = validated_data["new_alias"]
         cluster.save(update_fields=["alias"])
-        serializer = ClusterSLZ(cluster)
-        return Response(serializer.data)
+        return Response(ClusterSLZ(cluster).data)
+
+    @common_swagger_auto_schema(
+        operation_summary=_("更新集群标签"),
+        request_body=UpdateClusterTagsSerializer(),
+        tags=[SWAGGER_TAG],
+    )
+    @action(methods=["POST"], detail=False, serializer_class=UpdateClusterTagsSerializer)
+    def update_cluster_tag(self, request):
+        """更新集群标签"""
+        data = self.params_validate(self.get_serializer_class())
+        cluster = Cluster.objects.get(bk_biz_id=data["bk_biz_id"], id=data["cluster_id"])
+        tags = Tag.objects.filter(id__in=data["tags"])
+        # 清空旧标签，添加新标签
+        cluster.tags.clear()
+        cluster.tags.add(*tags)
+        return Response(ClusterSLZ(cluster).data)
+
+    @common_swagger_auto_schema(
+        operation_summary=_("批量移除标签键"),
+        request_body=RemoveClusterTagKeysSerializer(),
+        tags=[SWAGGER_TAG],
+    )
+    @action(methods=["POST"], detail=False, serializer_class=RemoveClusterTagKeysSerializer)
+    def remove_cluster_tag_keys(self, request):
+        """批量移除标签键"""
+        data = self.params_validate(self.get_serializer_class())
+        tag_ids = list(Tag.objects.filter(key__in=data["keys"]).values_list("id", flat=True))
+        Cluster.tags.through.objects.filter(cluster_id__in=data["cluster_ids"], tag_id__in=tag_ids).delete()
+        return Response()
+
+    @common_swagger_auto_schema(
+        operation_summary=_("批量增加标签键"),
+        request_body=AddClusterTagKeysSerializer(),
+        tags=[SWAGGER_TAG],
+    )
+    @action(methods=["POST"], detail=False, serializer_class=AddClusterTagKeysSerializer)
+    def add_cluster_tag_keys(self, request):
+        """批量增加标签键"""
+        data = self.params_validate(self.get_serializer_class())
+
+        tags = Tag.objects.filter(id__in=data["tags"])
+        through = Cluster.tags.through
+
+        # 这里需要先获取到所有标签键，然后排除已经存在该key的集群，考虑到这里标签一次性不会太多，暂用for循环处理
+        for tag in tags:
+            add_clusters = Cluster.objects.filter(id__in=data["cluster_ids"]).exclude(tags__key=tag.key)
+            add_tags = [through(cluster_id=cluster.id, tag_id=tag.id) for cluster in add_clusters]
+            through.objects.bulk_create(add_tags)
+
+        return Response()

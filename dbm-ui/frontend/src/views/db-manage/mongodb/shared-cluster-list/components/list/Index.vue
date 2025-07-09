@@ -15,17 +15,15 @@
   <div class="mongodb-shared-cluster-list-page">
     <div class="header-action">
       <BkButton
-        class="mb-8"
         theme="primary"
         @click="handleApply">
         {{ t('申请实例') }}
       </BkButton>
       <ClusterBatchOperation
         v-db-console="'mongodb.sharedClusterList.batchOperation'"
-        class="ml-8"
         :cluster-type="ClusterTypes.MONGO_SHARED_CLUSTER"
         :selected="selected"
-        @success="handleBatchOperationSuccess" />
+        @success="fetchData" />
       <span
         v-bk-tooltips="{
           disabled: hasData,
@@ -33,18 +31,17 @@
         }"
         class="inline-block">
         <BkButton
-          class="ml-8 mb-8"
           :disabled="!hasData"
           @click="handleShowExcelAuthorize">
           {{ t('导入授权') }}
         </BkButton>
       </span>
       <DropdownExportExcel
-        class="ml-8 mb-8"
         :has-selected="hasSelected"
         :ids="selectedIds"
         type="mongodb" />
       <ClusterIpCopy :selected="selected" />
+      <TagSearch @search="handleTagSearch" />
       <DbSearchSelect
         class="header-action-search-select"
         :data="searchSelectData"
@@ -98,6 +95,9 @@
         :is-filter="isFilter"
         :selected-list="selected"
         @refresh="fetchData" />
+      <ClusterTagColumn
+        :cluster-type="ClusterTypes.MONGO_SHARED_CLUSTER"
+        @success="fetchData" />
       <StatusColumn :cluster-type="ClusterTypes.MONGO_SHARED_CLUSTER" />
       <ClusterStatsColumn :cluster-type="ClusterTypes.MONGO_SHARED_CLUSTER" />
       <RoleColumn
@@ -133,7 +133,7 @@
         <template #default="{data}: {data: MongodbModel}">
           <BkButton
             v-db-console="'mongodb.sharedClusterList.getAccess'"
-            class="ml-8 mr-8"
+            class="mr-8"
             :disabled="data.isOffline"
             text
             theme="primary"
@@ -167,7 +167,9 @@
                 </BkButton>
               </OperationBtnStatusTips>
             </BkDropdownItem>
-            <BkDropdownItem v-db-console="'mongodb.sharedClusterList.enableCLB'">
+            <BkDropdownItem
+              v-if="!data.isOnlineCLB"
+              v-db-console="'mongodb.sharedClusterList.enableCLB'">
               <OperationBtnStatusTips
                 :data="data"
                 :disabled="!data.isOffline">
@@ -179,7 +181,7 @@
                   text
                   theme="primary"
                   @click="handleSwitchClb(data)">
-                  {{ data.isOnlineCLB ? t('禁用CLB') : t('启用CLB') }}
+                  {{ t('启用CLB') }}
                 </AuthButton>
               </OperationBtnStatusTips>
             </BkDropdownItem>
@@ -262,18 +264,20 @@
 
   import DbTable from '@components/db-table/index.vue';
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
+  import TagSearch from '@components/tag-search/index.vue';
 
   import ClusterAuthorize from '@views/db-manage/common/cluster-authorize/Index.vue';
   import ClusterBatchOperation from '@views/db-manage/common/cluster-batch-opration/Index.vue';
   import ClusterEntryPanel from '@views/db-manage/common/cluster-entry-panel/Index.vue';
   import ClusterIpCopy from '@views/db-manage/common/cluster-ip-copy/Index.vue';
-  import ClusterNameColumn from '@views/db-manage/common/cluster-table-column/ClusterNameColumn.vue';
-  import ClusterStatsColumn from '@views/db-manage/common/cluster-table-column/ClusterStatsColumn.vue';
-  import CommonColumn from '@views/db-manage/common/cluster-table-column/CommonColumn.vue';
-  import IdColumn from '@views/db-manage/common/cluster-table-column/IdColumn.vue';
-  import MasterDomainColumn from '@views/db-manage/common/cluster-table-column/MasterDomainColumn.vue';
-  import RoleColumn from '@views/db-manage/common/cluster-table-column/RoleColumn.vue';
-  import StatusColumn from '@views/db-manage/common/cluster-table-column/StatusColumn.vue';
+  import ClusterNameColumn from '@views/db-manage/common/cluster-table/ClusterNameColumn.vue';
+  import ClusterStatsColumn from '@views/db-manage/common/cluster-table/ClusterStatsColumn.vue';
+  import ClusterTagColumn from '@views/db-manage/common/cluster-table/ClusterTagColumn.vue';
+  import CommonColumn from '@views/db-manage/common/cluster-table/CommonColumn.vue';
+  import IdColumn from '@views/db-manage/common/cluster-table/IdColumn.vue';
+  import MasterDomainColumn from '@views/db-manage/common/cluster-table/MasterDomainColumn.vue';
+  import RoleColumn from '@views/db-manage/common/cluster-table/RoleColumn.vue';
+  import StatusColumn from '@views/db-manage/common/cluster-table/StatusColumn.vue';
   import DropdownExportExcel from '@views/db-manage/common/dropdown-export-excel/index.vue';
   import ExcelAuthorize from '@views/db-manage/common/ExcelAuthorize.vue';
   import { useOperateClusterBasic, useSwitchClb } from '@views/db-manage/common/hooks';
@@ -281,6 +285,10 @@
   import AccessEntry from '@views/db-manage/mongodb/components/AccessEntry.vue';
 
   import { getMenuListSearch, getSearchSelectorParams } from '@utils';
+
+  interface Exposes {
+    refresh: () => void;
+  }
 
   const clusterId = defineModel<number>('clusterId');
 
@@ -313,9 +321,19 @@
       id: 'domain',
       name: t('访问入口'),
     },
-    fetchDataFn: () => fetchData(isInit),
+    fetchDataFn: () => fetchData(),
     searchType: ClusterTypes.MONGO_SHARED_CLUSTER,
   });
+
+  const tableRef = ref<InstanceType<typeof DbTable>>();
+  const clusterAuthorizeShow = ref(false);
+  const excelAuthorizeShow = ref(false);
+  const selected = ref<MongodbModel[]>([]);
+  const accessEntryInfoShow = ref(false);
+  const accessEntryInfo = ref<MongodbModel | undefined>();
+  const tagSearchValue = ref<Record<string, any>>({});
+
+  const getTableInstance = () => tableRef.value;
 
   const searchSelectData = computed(() => [
     {
@@ -386,15 +404,6 @@
     },
   ]);
 
-  const tableRef = ref<InstanceType<typeof DbTable>>();
-  const clusterAuthorizeShow = ref(false);
-  const excelAuthorizeShow = ref(false);
-  const selected = ref<MongodbModel[]>([]);
-  const accessEntryInfoShow = ref(false);
-  const accessEntryInfo = ref<MongodbModel | undefined>();
-
-  const getTableInstance = () => tableRef.value;
-
   const tableDataList = computed(() => tableRef.value?.getData<MongodbModel>() || []);
   const hasData = computed(() => tableDataList.value.length > 0);
   const hasSelected = computed(() => selected.value.length > 0);
@@ -414,6 +423,7 @@
         'mongo_config',
         'mongos',
         'mongodb',
+        'tag',
       ],
       disabled: ['master_domain'],
     },
@@ -510,25 +520,24 @@
     window.open(routeInfo.href, '_blank');
   };
 
-  let isInit = true;
-  const fetchData = (loading?: boolean) => {
-    tableRef.value!.fetchData(
-      {
-        ...getSearchSelectorParams(searchValue.value),
-        cluster_type: ClusterTypes.MONGO_SHARED_CLUSTER,
-      },
-      { ...sortValue },
-      loading,
-    );
-    isInit = false;
-  };
-
-  const handleBatchOperationSuccess = () => {
-    tableRef.value!.clearSelected();
+  const handleTagSearch = (params: Record<string, any>) => {
+    tagSearchValue.value = params;
     fetchData();
   };
-</script>
 
+  const fetchData = () => {
+    tableRef.value!.fetchData({
+      ...getSearchSelectorParams(searchValue.value),
+      cluster_type: ClusterTypes.MONGO_SHARED_CLUSTER,
+      ...tagSearchValue.value,
+      ...sortValue,
+    });
+  };
+
+  defineExpose<Exposes>({
+    refresh: fetchData,
+  });
+</script>
 <style lang="less">
   .mongodb-shared-cluster-list-page {
     height: 100%;
@@ -539,11 +548,16 @@
     .header-action {
       display: flex;
       flex-wrap: wrap;
-      margin-bottom: 8px;
+      margin-bottom: 16px;
+      gap: 8px;
+
+      .tag-search-main {
+        margin-left: auto;
+      }
 
       .header-action-search-select {
-        width: 500px;
-        margin-left: auto;
+        flex: 1;
+        max-width: 500px;
       }
 
       .header-action-deploy-time {

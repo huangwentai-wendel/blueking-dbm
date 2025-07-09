@@ -631,18 +631,18 @@ def install_mysql_in_cluster_sub_flow(
             ]
         )
 
-    acts_list = []
-    for mysql_ip in new_mysql_list:
-        exec_act_kwargs.exec_ip = mysql_ip
-        exec_act_kwargs.get_mysql_payload_func = MysqlActPayload.get_deploy_mysql_crond_payload.__name__
-        acts_list.append(
-            {
-                "act_name": _("部署mysql-crond {}".format(exec_act_kwargs.exec_ip)),
-                "act_component_code": ExecuteDBActuatorScriptComponent.code,
-                "kwargs": asdict(exec_act_kwargs),
-            }
-        )
-    sub_pipeline.add_parallel_acts(acts_list=acts_list)
+    # acts_list = []
+    # for mysql_ip in new_mysql_list:
+    #     exec_act_kwargs.exec_ip = mysql_ip
+    #     exec_act_kwargs.get_mysql_payload_func = MysqlActPayload.get_deploy_mysql_crond_payload.__name__
+    #     acts_list.append(
+    #         {
+    #             "act_name": _("部署mysql-crond {}".format(exec_act_kwargs.exec_ip)),
+    #             "act_component_code": ExecuteDBActuatorScriptComponent.code,
+    #             "kwargs": asdict(exec_act_kwargs),
+    #         }
+    #     )
+    # sub_pipeline.add_parallel_acts(acts_list=acts_list)
 
     # 阶段3 并发安装mysql实例(一个活动节点部署多实例)
     acts_list = []
@@ -979,13 +979,27 @@ def authorize_sub_flow_v2(root_id: str, uid: str, bk_biz_id: int, operator: str,
     # 获得用户规则字典
     db_type = ClusterType.cluster_type_to_db_type(rules_set[0]["cluster_type"])
     user_db_rules_map = AccountHandler.aggregate_user_db_rules(bk_biz_id, db_type, rule_key="")
-    # 构造授权并行网关流程
-    act_lists = []
+    # act_lists = []
     for authorize_data in rules_set:
-        act = {
-            "act_name": _("{} 进行授权".format(authorize_data["user"])),
-            "act_component_code": AuthorizeRulesV2Component.code,
-            "kwargs": asdict(
+        # act = {
+        #     "act_name": _("{} 进行授权".format(authorize_data["user"])),
+        #     "act_component_code": AuthorizeRulesV2Component.code,
+        #     "kwargs": asdict(
+        #         AuthorizeKwargs(
+        #             uid=uid,
+        #             root_id=root_id,
+        #             bk_biz_id=bk_biz_id,
+        #             operator=operator,
+        #             db_type=db_type,
+        #             authorize_data=authorize_data,
+        #             user_db_rules_map=dict(user_db_rules_map),
+        #         )
+        #     ),
+        # }
+        sub_pipeline.add_act(
+            act_name=_("{} 进行授权".format(authorize_data["user"])),
+            act_component_code=AuthorizeRulesV2Component.code,
+            kwargs=asdict(
                 AuthorizeKwargs(
                     uid=uid,
                     root_id=root_id,
@@ -996,7 +1010,8 @@ def authorize_sub_flow_v2(root_id: str, uid: str, bk_biz_id: int, operator: str,
                     user_db_rules_map=dict(user_db_rules_map),
                 )
             ),
-        }
-        act_lists.append(act)
-    sub_pipeline.add_parallel_acts(acts_list=act_lists)
+        )
+        # act_lists.append(act)
+
+    # sub_pipeline.add_parallel_acts(acts_list=act_lists)
     return sub_pipeline.build_sub_process(sub_name=_("授权执行"))

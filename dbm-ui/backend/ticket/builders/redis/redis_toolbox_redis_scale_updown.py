@@ -12,10 +12,13 @@ from django.utils.translation import ugettext_lazy as _
 from rest_framework import serializers
 
 from backend.configuration.constants import AffinityEnum
+from backend.db_meta.enums import ClusterType
+from backend.db_meta.models import Cluster, Machine
 from backend.db_services.dbbase.constants import IpSource
 from backend.flow.consts import RedisCapacityUpdateType
 from backend.flow.engine.controller.redis import RedisController
 from backend.flow.utils.redis.redis_proxy_util import get_major_version_by_version_name
+from backend.flow.utils.redis.redis_util import get_tendisplus_shutdown_hosts
 from backend.ticket import builders
 from backend.ticket.builders.common.base import (
     BaseOperateResourceParamBuilder,
@@ -51,7 +54,7 @@ class RedisScaleUpDownDetailSerializer(SkipToRepresentationMixin, serializers.Se
         group_num = serializers.IntegerField(help_text=_("部署机器组数"))
         db_version = serializers.CharField(help_text=_("版本号"))
         capacity = serializers.FloatField(help_text=_("当前容量需求"))
-        future_capacity = serializers.IntegerField(help_text=_("未来容量需求"))
+        future_capacity = serializers.FloatField(help_text=_("未来容量需求"))
         online_switch_type = serializers.ChoiceField(
             help_text=_("切换类型"), choices=SwitchConfirmType.get_choices(), default=SwitchConfirmType.NO_CONFIRM
         )
@@ -60,6 +63,11 @@ class RedisScaleUpDownDetailSerializer(SkipToRepresentationMixin, serializers.Se
         )
         resource_spec = ResourceSpecSerializer(help_text=_("资源申请"))
         old_nodes = OldNodesSerializer(help_text=_("下架机器"))
+
+        def validate(self, attr):
+            if attr["shard_num"] % attr["group_num"] != 0:
+                raise serializers.ValidationError(_("所选方案分片数不能整除机器组数"))
+            return attr
 
     ip_source = serializers.ChoiceField(
         help_text=_("主机来源"), choices=IpSource.get_choices(), default=IpSource.RESOURCE_POOL
@@ -96,4 +104,25 @@ class RedisScaleUpDownFlowBuilder(BaseRedisTicketFlowBuilder):
     need_patch_recycle_host_details = True
 
     def patch_ticket_detail(self):
+        cluster_ids = [info["cluster_id"] for info in self.ticket.details["infos"]]
+        id__cluster_type = {cluster.id: cluster.cluster_type for cluster in Cluster.objects.filter(id__in=cluster_ids)}
+        for info in self.ticket.details["infos"]:
+            if id__cluster_type[info["cluster_id"]] == ClusterType.TendisPredixyTendisplusCluster.value:
+
+                shutdown_master_hosts, shutdown_slave_hosts = get_tendisplus_shutdown_hosts(
+                    info["cluster_id"], info["group_num"], info["update_mode"]
+                )
+                info.update(
+                    {"shutdown_master_hosts": shutdown_master_hosts, "shutdown_slave_hosts": shutdown_slave_hosts}
+                )
+                # 主从主机一一对应，只需要判断主即可
+                if not shutdown_master_hosts:
+                    continue
+                machine_ips = shutdown_master_hosts + shutdown_slave_hosts
+                machine_infos = Machine.objects.filter(ip__in=machine_ips, bk_cloud_id=info["bk_cloud_id"]).values(
+                    "ip", "bk_biz_id", "bk_host_id", "bk_cloud_id"
+                )
+                info["old_nodes"]["backend_hosts"].extend(machine_infos)
+
+        self.ticket.save(update_fields=["details"])
         super().patch_ticket_detail()

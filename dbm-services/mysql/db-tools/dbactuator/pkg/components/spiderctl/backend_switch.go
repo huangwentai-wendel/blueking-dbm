@@ -330,7 +330,7 @@ func checkReplicationStatus(conns map[IPPORT]*native.DbWorker) (err error) {
 			return err
 		}
 		if !slaveStatus.ReplSyncIsOk() {
-			return fmt.Errorf("%s replication status is abnormal ,IO Thread: %s,SQL Thread:%s", addr,
+			return fmt.Errorf("[%s] replication status is abnormal ,IO Thread: %s,SQL Thread:%s", addr,
 				slaveStatus.SlaveIORunning,
 				slaveStatus.SlaveSQLRunning)
 		}
@@ -341,7 +341,7 @@ func checkReplicationStatus(conns map[IPPORT]*native.DbWorker) (err error) {
 			return conn.ReplicateDelayCheck(1, 1024)
 		})
 		if err != nil {
-			logger.Error("delay check failed %s", err.Error())
+			logger.Error("[%s]心跳表延迟检查失败: %s", addr, err.Error())
 			return err
 		}
 	}
@@ -428,6 +428,12 @@ func (r *SpiderClusterBackendSwitchComp) CutOver() (err error) {
 		logger.Error("get file lock failed %s", err.Error())
 		return err
 	}
+	defer func() {
+		if uerr := r.fdLock.Unlock(); uerr != nil {
+			logger.Error("unlock file lock failed %s", uerr.Error())
+			return
+		}
+	}()
 	logger.Info("the switching operation will be performed")
 	defer func() {
 		if err != nil && len(r.primaryShardrollbackSqls) > 0 {
@@ -441,10 +447,6 @@ func (r *SpiderClusterBackendSwitchComp) CutOver() (err error) {
 				return
 			}
 			if ferr := r.flushrouting(); ferr != nil {
-				return
-			}
-			if uerr := r.fdLock.Unlock(); uerr != nil {
-				logger.Error("unlock file lock failed %s", uerr.Error())
 				return
 			}
 			logger.Info("flush rollback route successfully~")

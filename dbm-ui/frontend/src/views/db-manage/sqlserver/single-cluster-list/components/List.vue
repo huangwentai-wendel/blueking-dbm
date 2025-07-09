@@ -1,35 +1,32 @@
 <template>
   <div class="sqlserver-single-cluster-list">
-    <div class="header-action mb-16">
-      <div>
-        <BkButton
-          v-db-console="'sqlserver.singleClusterList.instanceApply'"
-          theme="primary"
-          @click="handleApply">
-          {{ t('申请实例') }}
-        </BkButton>
-        <ClusterBatchOperation
-          v-db-console="'sqlserver.singleClusterList.batchOperation'"
-          class="ml-8"
-          :cluster-type="ClusterTypes.SQLSERVER_SINGLE"
-          :selected="selected"
-          @success="handleBatchOperationSuccess" />
-        <BkButton
-          v-db-console="'sqlserver.singleClusterList.importAuthorize'"
-          class="ml-8"
-          @click="handleShowExcelAuthorize">
-          {{ t('导入授权') }}
-        </BkButton>
-        <DropdownExportExcel
-          v-db-console="'sqlserver.singleClusterList.export'"
-          export-type="cluster"
-          :has-selected="hasSelected"
-          :ids="selectedIds"
-          type="sqlserver_single" />
-        <ClusterIpCopy
-          v-db-console="'sqlserver.singleClusterList.batchCopy'"
-          :selected="selected" />
-      </div>
+    <div class="header-action">
+      <BkButton
+        v-db-console="'sqlserver.singleClusterList.instanceApply'"
+        theme="primary"
+        @click="handleApply">
+        {{ t('申请实例') }}
+      </BkButton>
+      <ClusterBatchOperation
+        v-db-console="'sqlserver.singleClusterList.batchOperation'"
+        :cluster-type="ClusterTypes.SQLSERVER_SINGLE"
+        :selected="selected"
+        @success="fetchData" />
+      <BkButton
+        v-db-console="'sqlserver.singleClusterList.importAuthorize'"
+        @click="handleShowExcelAuthorize">
+        {{ t('导入授权') }}
+      </BkButton>
+      <DropdownExportExcel
+        v-db-console="'sqlserver.singleClusterList.export'"
+        export-type="cluster"
+        :has-selected="hasSelected"
+        :ids="selectedIds"
+        type="sqlserver_single" />
+      <ClusterIpCopy
+        v-db-console="'sqlserver.singleClusterList.batchCopy'"
+        :selected="selected" />
+      <TagSearch @search="handleTagSearch" />
       <DbSearchSelect
         class="header-select"
         :data="searchSelectData"
@@ -76,6 +73,9 @@
           :is-filter="isFilter"
           :selected-list="selected"
           @refresh="fetchData" />
+        <ClusterTagColumn
+          :cluster-type="ClusterTypes.SQLSERVER_SINGLE"
+          @success="fetchData" />
         <StatusColumn :cluster-type="ClusterTypes.SQLSERVER_SINGLE" />
         <ClusterStatsColumn :cluster-type="ClusterTypes.SQLSERVER_SINGLE" />
         <RoleColumn
@@ -86,7 +86,9 @@
           :label="t('实例')"
           :search-ip="batchSearchIpInatanceList"
           :selected-list="selected" />
-        <CommonColumn :cluster-type="ClusterTypes.SQLSERVER_SINGLE" />
+        <CommonColumn
+          :cluster-type="ClusterTypes.SQLSERVER_SINGLE"
+          @refresh="fetchData" />
         <BkTableColumn
           :fixed="isStretchLayoutOpen ? false : 'right'"
           :label="t('操作')"
@@ -126,17 +128,17 @@
               </BkButton>
             </OperationBtnStatusTips>
             <MoreActionExtend>
-              <OperationBtnStatusTips
-                v-db-console="'sqlserver.singleClusterList.disable'"
-                :data="data">
-                <BkButton
-                  :disabled="data.isOffline || Boolean(data.operationTicketId)"
-                  text
-                  theme="primary"
-                  @click="handleDisableCluster([data])">
-                  {{ t('禁用') }}
-                </BkButton>
-              </OperationBtnStatusTips>
+              <BkDropdownItem v-db-console="'sqlserver.singleClusterList.disable'">
+                <OperationBtnStatusTips :data="data">
+                  <BkButton
+                    :disabled="data.isOffline || Boolean(data.operationTicketId)"
+                    text
+                    theme="primary"
+                    @click="handleDisableCluster([data])">
+                    {{ t('禁用') }}
+                  </BkButton>
+                </OperationBtnStatusTips>
+              </BkDropdownItem>
               <BkDropdownItem v-db-console="'sqlserver.singleClusterList.delete'">
                 <OperationBtnStatusTips :data="data">
                   <BkButton
@@ -193,17 +195,19 @@
 
   import DbTable from '@components/db-table/index.vue';
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
+  import TagSearch from '@components/tag-search/index.vue';
 
   import ClusterAuthorize from '@views/db-manage/common/cluster-authorize/Index.vue';
   import ClusterBatchOperation from '@views/db-manage/common/cluster-batch-opration/Index.vue';
   import ClusterIpCopy from '@views/db-manage/common/cluster-ip-copy/Index.vue';
-  import ClusterNameColumn from '@views/db-manage/common/cluster-table-column/ClusterNameColumn.vue';
-  import ClusterStatsColumn from '@views/db-manage/common/cluster-table-column/ClusterStatsColumn.vue';
-  import CommonColumn from '@views/db-manage/common/cluster-table-column/CommonColumn.vue';
-  import IdColumn from '@views/db-manage/common/cluster-table-column/IdColumn.vue';
-  import MasterDomainColumn from '@views/db-manage/common/cluster-table-column/MasterDomainColumn.vue';
-  import RoleColumn from '@views/db-manage/common/cluster-table-column/RoleColumn.vue';
-  import StatusColumn from '@views/db-manage/common/cluster-table-column/StatusColumn.vue';
+  import ClusterNameColumn from '@views/db-manage/common/cluster-table/ClusterNameColumn.vue';
+  import ClusterStatsColumn from '@views/db-manage/common/cluster-table/ClusterStatsColumn.vue';
+  import ClusterTagColumn from '@views/db-manage/common/cluster-table/ClusterTagColumn.vue';
+  import CommonColumn from '@views/db-manage/common/cluster-table/CommonColumn.vue';
+  import IdColumn from '@views/db-manage/common/cluster-table/IdColumn.vue';
+  import MasterDomainColumn from '@views/db-manage/common/cluster-table/MasterDomainColumn.vue';
+  import RoleColumn from '@views/db-manage/common/cluster-table/RoleColumn.vue';
+  import StatusColumn from '@views/db-manage/common/cluster-table/StatusColumn.vue';
   import DropdownExportExcel from '@views/db-manage/common/dropdown-export-excel/index.vue';
   import ExcelAuthorize from '@views/db-manage/common/ExcelAuthorize.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
@@ -211,6 +215,10 @@
   import ClusterReset from '@views/db-manage/sqlserver/components/cluster-reset/Index.vue';
 
   import { getMenuListSearch, getSearchSelectorParams } from '@utils';
+
+  interface Exposes {
+    refresh: () => void;
+  }
 
   const singleClusterData = defineModel<{ clusterId: number }>('singleClusterData');
 
@@ -246,7 +254,7 @@
       id: 'domain',
       name: t('访问入口'),
     },
-    fetchDataFn: () => fetchData(isInit),
+    fetchDataFn: () => fetchData(),
     searchType: ClusterTypes.SQLSERVER_SINGLE,
   });
 
@@ -267,6 +275,7 @@
       master_domain: string;
     }[]
   >([]);
+  const tagSearchValue = ref<Record<string, any>>({});
 
   const getTableInstance = () => tableRef.value;
 
@@ -348,7 +357,7 @@
   ]);
 
   const { settings, updateTableSettings } = useTableSettings(UserPersonalSettings.SQLSERVER_SINGLE_TABLE_SETTINGS, {
-    checked: ['master_domain', 'status', 'cluster_stats', 'storages', 'db_module_id', 'major_version', 'region'],
+    checked: ['master_domain', 'status', 'cluster_stats', 'storages', 'db_module_id', 'major_version', 'region', 'tag'],
     disabled: ['master_domain'],
   });
 
@@ -397,14 +406,13 @@
     isShowExcelAuthorize.value = true;
   };
 
-  let isInit = true;
-  const fetchData = (loading?: boolean) => {
-    tableRef.value!.fetchData(
-      { ...getSearchSelectorParams(searchValue.value) },
-      { bk_biz_id: window.PROJECT_CONFIG.BIZ_ID, ...sortValue },
-      loading,
-    );
-    isInit = false;
+  const handleTagSearch = (params: Record<string, any>) => {
+    tagSearchValue.value = params;
+    fetchData();
+  };
+
+  const fetchData = () => {
+    tableRef.value!.fetchData({ ...getSearchSelectorParams(searchValue.value), ...tagSearchValue.value, ...sortValue });
   };
 
   // 设置行样式
@@ -454,10 +462,9 @@
     });
   };
 
-  const handleBatchOperationSuccess = () => {
-    tableRef.value!.clearSelected();
-    fetchData();
-  };
+  defineExpose<Exposes>({
+    refresh: fetchData,
+  });
 </script>
 <style lang="less">
   @import '@styles/mixins.less';
@@ -471,12 +478,16 @@
     .header-action {
       display: flex;
       flex-wrap: wrap;
+      margin-bottom: 16px;
+      gap: 8px;
+
+      .tag-search-main {
+        margin-left: auto;
+      }
 
       .header-select {
         flex: 1;
         max-width: 500px;
-        min-width: 320px;
-        margin-left: auto;
       }
     }
 

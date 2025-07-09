@@ -103,6 +103,7 @@ BK_CMDB_URL = get_type_env(key="BK_CMDB_URL", _type=str, default=BK_PAAS_URL.rep
 BK_JOB_URL = get_type_env(key="BK_JOB_HOST", _type=str, default=None)
 BK_NODEMAN_URL = get_type_env(key="BK_NODEMAN_URL", _type=str, default="http://apps.example.com/bk--nodeman")
 BK_SCR_URL = get_type_env(key="BK_SCR_URL", _type=str, default="http://scr.example.com")
+BK_HCM_URL = get_type_env(key="BK_HCM_URL", _type=str, default="")
 BK_SOPS_URL = get_type_env(key="BK_SOPS_HOST", _type=str, default=None)
 BK_HELPER_URL = get_type_env(key="BK_HELPER_URL", _type=str, default=None)
 # 北极星服务
@@ -178,6 +179,10 @@ BKDATA_FRONTEND_DATA_ID = get_type_env(key="BKDATA_FRONTEND_DATA_ID", _type=str,
 # gcs/scr平台
 GCS_SCR_OPERATOR = get_type_env(key="GCS_SCR_OPERATOR", _type=str, default="scr-system")
 
+# HCM/Uwork/Xwork
+XWORK_CALLER_USER = get_type_env(key="XWORK_CALLER_USER", _type=str, default="")
+XWORK_CALLER_KEY = get_type_env(key="XWORK_CALLER_KEY", _type=str, default="")
+
 # 是否启动mysql-dbbackup程序的版本逻辑选择，不启动默认统一安装社区版本
 MYSQL_BACKUP_PKG_MAP_ENABLE = get_type_env(key="MYSQL_BACKUP_PKG_MAP_ENABLE", _type=bool, default=False)
 
@@ -196,3 +201,15 @@ REPO_VERSION_FOR_DEV = get_type_env(key="REPO_VERSION_FOR_DEV", _type=str, defau
 
 # 机器主动下载文件
 INITIATIVE_DOWNLOAD = get_type_env(key="INITIATIVE_DOWNLOAD", _type=bool, default=False)
+
+# 反向查询接口禁用安全检查
+DEBUG_REVERSE_API = get_type_env(key="DEBUG_REVERSE_API", _type=bool, default=False)
+
+# 反向上报接口 kafka 参数
+# DBM 带鉴权的连接串
+# export REVERSE_REPORT_KAFKA_OPTIONS=bootstrap_servers=:9092, \
+# sasl_mechanism=SCRAM-SHA-512,security_protocol=SASL_PLAINTEXT, \
+# sasl_plain_username=kafka_user,sasl_plain_password=kafka_pass
+REVERSE_REPORT_KAFKA_OPTIONS = get_type_env(
+    key="REVERSE_REPORT_KAFKA_OPTIONS", _type=dict, default={"bootstrap_servers": ":9092"}
+)

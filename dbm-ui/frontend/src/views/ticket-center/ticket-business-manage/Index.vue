@@ -15,7 +15,7 @@
         :data="searchSelectData"
         parse-url
         :placeholder="t('请输入或选择条件搜索')"
-        style="width: 450px; margin-left: 16px"
+        style="width: 450px; margin-left: 8px"
         unique-select />
     </div>
     <TicketTable
@@ -61,6 +61,7 @@
   });
 
   const isPreChecking = useDetailPreCheck({
+    bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
     id: Number(route.params.ticketId),
   });
 

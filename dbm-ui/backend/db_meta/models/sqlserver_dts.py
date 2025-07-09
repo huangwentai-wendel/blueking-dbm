@@ -54,6 +54,7 @@ class SqlserverDtsInfo(AuditedModel):
     bk_biz_id = models.IntegerField(default=0, help_text=_("关联的业务id，对应cmdb"))
     source_cluster_id = models.IntegerField(default=0, help_text=_("源集群ID"))
     target_cluster_id = models.IntegerField(default=0, help_text=_("目标集群ID"))
+    target_cluster_ids = models.JSONField(default=list, help_text=_("目标集群id列表"))
     db_list = models.JSONField(default=list, blank=True, null=True, help_text=_("库正则"))
     ignore_db_list = models.JSONField(default=list, blank=True, null=True, help_text=_("忽略库正则"))
     dts_mode = models.CharField(max_length=64, choices=SqlserverDtsMode.get_choices(), help_text=_("迁移类型"))
@@ -66,12 +67,6 @@ class SqlserverDtsInfo(AuditedModel):
 
     class Meta:
         verbose_name = verbose_name_plural = _("sqlserver数据迁移记录表")
-        # 单据ID-源集群-目标集群组成唯一键
-        unique_together = (
-            "ticket_id",
-            "source_cluster_id",
-            "target_cluster_id",
-        )
 
     def to_dict(self):
         """重写model_to_dict()方法转字典"""

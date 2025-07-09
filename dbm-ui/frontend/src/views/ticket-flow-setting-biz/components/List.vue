@@ -39,6 +39,7 @@
       <BkLoading :loading="loading">
         <BkTable
           :data="tableData"
+          :max-height="tableMaxHeight"
           :pagination="pagination"
           remote-pagination
           :row-config="{
@@ -190,13 +191,19 @@
             field="updater"
             :label="t('更新人')"
             show-overflow-tooltip
-            :width="120" />
+            :width="100" />
           <BkTableColumn
             field="updateAtDisplay"
             :label="t('更新时间')"
+            :min-width="200"
             show-overflow-tooltip
             sort
-            :width="240" />
+            :width="200" />
+            <BkTableColumn
+            field="remark"
+            :label="t('备注')"
+            show-overflow-tooltip
+            :width="200" />
           <BkTableColumn
             fixed="right"
             :label="t('操作')"
@@ -259,7 +266,7 @@
   import TicketFlowDescribeModel from '@services/model/ticket-flow-describe/TicketFlowDescribe';
   import { getTicketTypes, queryTicketFlowDescribe } from '@services/source/ticket';
 
-  import { useDefaultPagination } from '@hooks';
+  import { useDefaultPagination, useTableMaxHeight } from '@hooks';
 
   import { useGlobalBizs } from '@stores';
 
@@ -287,6 +294,7 @@
 
   const { t } = useI18n();
   const { currentBizId } = useGlobalBizs();
+  const tableMaxHeight = useTableMaxHeight(240);
 
   const ticketTypeList = shallowRef<ISearchItem[]>([]);
   const searchValue = ref<Array<{ values: ISearchItem[] } & ISearchItem>>([]);

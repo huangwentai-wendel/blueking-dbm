@@ -92,6 +92,7 @@ class DBType(str, StructuredEnum):
     Sqlserver = EnumField("sqlserver", _("SQLServer"))
     Doris = EnumField("doris", _("Doris"))
     Vm = EnumField("vm", _("Vm"))
+    Oracle = EnumField("oracle", _("Oracle"))
 
     # 不属于DB类型，仅用于云区域组件的单据部署的分组
     Cloud = EnumField("cloud", _("Cloud"))
@@ -134,6 +135,12 @@ class SystemSettingsEnum(str, StructuredEnum):
     MACHINE_PROPERTY = EnumField("MACHINE_PROPERTY", _("主机属性开关"))
     PADDING_PROXY_APPS = EnumField("PADDING_PROXY_APPS", _("补全proxy业务"))
     DISABLE_DBHA_APPS_CLUSTER_TYPE = EnumField("DISABLE_DBHA_APPS_CLUSTER_TYPE", _("禁用DBHA业务"))
+    # 内置标签列表
+    BUILTIN_LABELS = EnumField("BUILTIN_LABELS", _("内置标签列表"))
+    # 反向上报事件类型
+    REVERSE_REPORT_EVENT_TYPES = EnumField("REVERSE_REPORT_EVENT_TYPES", _("反向上报事件类型"))
+    # 大数据管理端域名映射
+    DBM_MANAGE_ADDRESS = EnumField("DBM_MANAGE_ADDRESS", _("大数据管理端域名映射"))
 
 
 class BizSettingsEnum(str, StructuredEnum):
@@ -196,11 +203,11 @@ COST_ESTIMATE_TEMPLATE = {
     # 内存/G
     "mem": 0,
     # 磁盘/G
-    "storage": {"SSD": 0, "HDD": 0, "ALL": 0},
+    "storage": {"SSD": 0, "CLOUD_SSD": 0, "HDD": 0, "LOCAL_HDD": 0, "ALL": 0},
 }
 
 # 磁盘类型，目前固定写死
-DISK_CLASSES = ["SSD", "HDD", "ALL"]
+DISK_CLASSES = ["SSD", "CLOUD_SSD", "HDD", "LOCAL_HDD", "ALL"]
 
 # 默认轮值通知配置
 BKM_DUTY_NOTICE_VALUE = {
@@ -274,6 +281,7 @@ DEFAULT_SETTINGS = [
     [SystemSettingsEnum.MACHINE_PROPERTY, "dict", DEFAULT_MACHINE_PROPERTY, _("主机属性开关配置")],
     [SystemSettingsEnum.PADDING_PROXY_APPS, "list", [], _("补全proxy业务")],
     [SystemSettingsEnum.DISABLE_DBHA_APPS_CLUSTER_TYPE, "dict", {}, _("禁用DBHA业务")],
+    [SystemSettingsEnum.REVERSE_REPORT_EVENT_TYPES, "list", [], _("反向上报事件类型")],
 ]
 
 # 环境配置项 是否支持DNS解析 pulsar flow used

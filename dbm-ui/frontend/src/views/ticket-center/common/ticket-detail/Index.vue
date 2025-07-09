@@ -42,6 +42,9 @@
             <TicketRevoke
               class="mr-8"
               :data="ticketData" />
+            <!-- <TicketTerminate
+              class="mr-8"
+              :data="ticketData" /> -->
           </template>
         </SmartAction>
       </PermissionCatch>
@@ -55,11 +58,14 @@
   import TicketModel from '@services/model/ticket/ticket';
   import { getTicketDetails } from '@services/source/ticket';
 
+  import { useEventBus } from '@hooks';
+
   import PermissionCatch from '@components/apply-permission/Catch.vue';
 
   import TicketClone from '@views/ticket-center/common/TicketClone.vue';
   import TicketRevoke from '@views/ticket-center/common/TicketRevoke.vue';
 
+  // import TicketTerminate from '@views/ticket-center/common/TicketTerminate.vue';
   import BaseInfo from './components/BaseInfo.vue';
   import FlowInfos from './components/flow-info/Index.vue';
   import TaskInfo from './components/task-info/Index.vue';
@@ -74,6 +80,7 @@
   });
 
   const route = useRoute();
+  const eventBus = useEventBus();
 
   const getOffsetTarget = () => document.body.querySelector('.ticket-details-box .db-card');
 
@@ -115,6 +122,18 @@
       immediate: true,
     },
   );
+
+  const refreshTicketData = () => {
+    fetchTicketDetails({
+      id: props.ticketId,
+    });
+  };
+
+  eventBus.on('refreshTicketData', refreshTicketData);
+
+  onBeforeUnmount(() => {
+    eventBus.off('refreshTicketData', refreshTicketData);
+  });
 </script>
 
 <style lang="less">
@@ -123,6 +142,8 @@
     font-size: 12px;
 
     .db-card {
+      box-shadow: unset;
+
       .db-card__content {
         padding-left: 116px;
         overflow: hidden;

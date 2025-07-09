@@ -47,6 +47,7 @@ class MysqlProxySwitchDetailSerializer(MySQLBaseOperateDetailSerializer):
     force = serializers.BooleanField(help_text=_("是否强制替换"), required=False, default=False)
     infos = serializers.ListField(help_text=_("替换信息"), child=SwitchInfoSerializer())
     opera_object = serializers.ChoiceField(help_text=_("操作对象类型"), choices=OperaObjType.get_choices(), required=False)
+    disable_manual_confirm = serializers.BooleanField(help_text=(_("自愈单据禁用人工确认")), default=False)
 
     def validate(self, attrs):
         # 校验集群是否可用，集群类型为高可用

@@ -23,12 +23,14 @@ import getDbManageRoutes, { getDbaManageRoutes } from '@views/db-manage/routes';
 import getDbhaSwitchEventsRouters from '@views/dbha-switch-events/routes';
 import getDutyRuleManageRoutes from '@views/duty-rule-manage/routes';
 import getInspectionRoutes from '@views/inspection-manage/routes';
+import getMonitorAlarmRoutes from '@views/monitor-alarm/routes';
 import getNotificationSettingRoutes from '@views/notification-setting/routes';
 import getPasswordManageRoutes from '@views/password-manage/routes';
 import getPlatformDbConfigureRoutes from '@views/platform-db-configure/routes';
 import getQuickSearchRoutes from '@views/quick-search/routes';
-import getResourceManageRoutes from '@views/resource-manage/routes';
+import getResourceManageRoutes, { getBizResourcePoolRoute } from '@views/resource-manage/routes';
 import getServiceApplyRoutes from '@views/service-apply/routes';
+import getServiceStatusRoutes from '@views/service-status/routes';
 import getStaffManageRoutes from '@views/staff-manage/routes';
 import getResourceTagRoutes from '@views/tag-manage/routes';
 import getTaskHistoryRoutes from '@views/task-history/routes';
@@ -42,8 +44,6 @@ import getVersionFilesRoutes from '@views/version-files/routes';
 import getWhitelistRoutes from '@views/whitelist/routes';
 
 import { checkDbConsole } from '@utils';
-
-import getMonitorAlarmRoutes from '@/views/monitor-alarm/routes';
 
 let appRouter: Router;
 
@@ -105,6 +105,7 @@ export default () => {
   getInspectionRoutes();
   getDbaManageRoutes();
   getMonitorAlarmRoutes();
+  getBizResourcePoolRoute();
 
   const routes = [
     {
@@ -116,6 +117,7 @@ export default () => {
         ...getServiceApplyRoutes(),
         ...getQuickSearchRoutes(),
         ...getDutyRuleManageRoutes(),
+        ...getServiceStatusRoutes(),
         ...moduleList,
       ],
       name: 'index',

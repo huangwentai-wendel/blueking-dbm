@@ -20,6 +20,7 @@ import { getSearchSelectorParams } from '@utils';
  * 处理集群列表数据
  */
 export function useClusterData<T>(searchSelectValue: Ref<ISearchValue[]>) {
+  let baseExtraParamsMemo: Record<string, any> = {};
   const currentInstance = getCurrentInstance() as {
     proxy: {
       activeTab: string;
@@ -35,6 +36,7 @@ export function useClusterData<T>(searchSelectValue: Ref<ISearchValue[]>) {
     current: 1,
     limit: 10,
     limitList: [10, 20, 50, 100, 500],
+    remote: true,
     small: true,
   });
 
@@ -54,14 +56,19 @@ export function useClusterData<T>(searchSelectValue: Ref<ISearchValue[]>) {
   /**
    * 获取列表
    */
-  const fetchResources = async () => {
+  const fetchResources = async (extraParams?: Record<string, any>) => {
     isLoading.value = true;
+    baseExtraParamsMemo = extraParams ? extraParams : baseExtraParamsMemo;
+    if (extraParams) {
+      pagination.current = 1;
+    }
     return currentInstance.proxy
       .getResourceList({
         cluster_type: currentInstance.proxy.activeTab,
         limit: pagination.limit,
         offset: pagination.limit * (pagination.current - 1),
         ...getSearchSelectorParams(searchSelectValue.value),
+        ...baseExtraParamsMemo,
       })
       .then((res) => {
         pagination.count = res.count;

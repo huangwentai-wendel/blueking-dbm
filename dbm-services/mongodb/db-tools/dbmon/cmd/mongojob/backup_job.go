@@ -12,6 +12,7 @@ import (
 	"path"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -47,8 +48,11 @@ type BackupJob struct { // NOCC:golint/naming(其他:设计如此)
 	ReportDir string // 如 /data/dbbak/dbareport
 }
 
+var cleanReportLastTime = int64(0)
+
 // Run 执行例行备份. 被cron对象调用
 func (job *BackupJob) Run() {
+	job.LoopTimes++
 	// try to reload configure file if needed
 	job.Logger.Info("start", zap.Uint64("loopTimes", job.LoopTimes))
 	if err := job.UpdateConf(); err != nil {
@@ -63,10 +67,18 @@ func (job *BackupJob) Run() {
 		job.Logger.Error(fmt.Sprintf("prepare backup dir failed, dir:%q err: %v", job.BackupDir, err))
 		os.Exit(1)
 	}
+
 	// 存放备份报告的目录
 	if err := job.prepareReportDir(); err != nil {
 		job.Logger.Error(fmt.Sprintf("prepare report dir failed, err: %v", err))
 		os.Exit(1)
+	}
+
+	nowTime := time.Now()
+	if nowTime.Unix()-cleanReportLastTime > 24*3600 {
+		// 清理过期的报告文件. 每天执行一次.
+		_ = job.cleanReport(nowTime, 90)
+		cleanReportLastTime = nowTime.Unix()
 	}
 
 	myconf := job.MyConf
@@ -94,7 +106,9 @@ func (job *BackupJob) Run() {
 
 			zipEnable, _ := config.ClusterConfig.GetOne(&svrItem, "backup", "zip")
 			job.Logger.Debug(fmt.Sprintf("get backup.zip : %s", zipEnable))
-			job.runOneServer(&svrItem, zipEnable == "true")
+			archiveEnable, _ := config.ClusterConfig.GetOne(&svrItem, "backup", "archive")
+			job.Logger.Debug(fmt.Sprintf("get backup.archive : %s", archiveEnable))
+			job.runOneServer(&svrItem, zipEnable == "true", archiveEnable == "true")
 		} else {
 			job.Logger.Info(fmt.Sprintf("skip backup for %s", svrItem.MetaRole),
 				zap.String("instance", svrItem.Addr()))
@@ -104,7 +118,7 @@ func (job *BackupJob) Run() {
 }
 
 // runOneServer 执行单个实例的备份
-func (job *BackupJob) runOneServer(svrItem *config.ConfServerItem, zipEnable bool) {
+func (job *BackupJob) runOneServer(svrItem *config.ConfServerItem, zipEnable bool, archiveEnable bool) {
 	// 1，检查实例是否可用
 	// 2，检查实例是否需要备份
 	// 3，执行备份
@@ -127,6 +141,7 @@ func (job *BackupJob) runOneServer(svrItem *config.ConfServerItem, zipEnable boo
 		IncrFreq:           3600,
 		Labels:             getBkSvrLabels(svrItem),
 		Zip:                zipEnable,
+		Archive:            archiveEnable,
 	}
 	backupTask := NewBackupTask()
 	backupTask.Do(option, logger)
@@ -153,6 +168,44 @@ func (job *BackupJob) prepareReportDir() error {
 	var reportFilePath string
 	reportFilePath, job.ReportDir, _ = consts.GetMongoBackupReportPath()
 	return report.PrepareReportPath(reportFilePath)
+}
+
+// cleanReport delete report file if mtime > 90 day
+func (job *BackupJob) cleanReport(nowTime time.Time, reportSavedDays int) error {
+	job.Logger.Info("cleanReport start")
+	reportFilePath := job.ReportDir
+	if reportFilePath == "" {
+		job.Logger.Warn("report file path is empty")
+	}
+	if _, err := os.Stat(reportFilePath); os.IsNotExist(err) {
+		job.Logger.Warn(fmt.Sprintf("report file path %s not exist", reportFilePath))
+		return nil
+	}
+	// get files of report dir
+	files, err := os.ReadDir(reportFilePath)
+	if err != nil {
+		job.Logger.Warn(fmt.Sprintf("read report dir %s failed", reportFilePath))
+		return nil
+	}
+	// delete report file if mtime > 90 day
+	for _, file := range files {
+		filePath := path.Join(reportFilePath, file.Name())
+		fileInfo, err := os.Stat(filePath)
+		if err != nil {
+			job.Logger.Warn(fmt.Sprintf("get file %s info failed", filePath))
+			continue
+		}
+		// now - modTime > 90 days
+		if nowTime.Sub(fileInfo.ModTime()) > time.Duration(reportSavedDays)*time.Hour*24 {
+			if err := os.Remove(filePath); err != nil {
+				job.Logger.Warn(fmt.Sprintf("delete report file %s failed", filePath))
+			} else {
+				job.Logger.Info(fmt.Sprintf("delete report file %s success", filePath))
+			}
+		}
+	}
+	job.Logger.Info("cleanReport end")
+	return nil
 }
 
 // PrepareDir 准备目录

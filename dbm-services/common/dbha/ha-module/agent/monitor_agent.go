@@ -232,6 +232,9 @@ func (a *MonitorAgent) FetchDBInstance() error {
 	log.Logger.Debugf("hash mod:%d, hash value:%d, dbType:%s", mod, modValue, a.DetectType)
 	a.HashMod = mod
 	a.HashValue = modValue
+	if a.Conf.AgentConf.HashMod > 0 {
+		a.HashMod = a.Conf.AgentConf.HashMod
+	}
 
 	req := client.DBInstanceByCityRequest{
 		LogicalCityIDs: []int{a.CityID},
@@ -381,7 +384,7 @@ func (a *MonitorAgent) ReportDetectInfoToGM(reporterInstance dbutil.DataBaseDete
 		sortedIp := gmIPs[checkIndex]
 		gmIns := a.GMInstance[sortedIp]
 		gmIns.Mutex.Lock()
-		if !gmIns.IsConnection {
+		if !gmIns.IsConnected {
 			gmIns.Mutex.Unlock()
 			continue
 		}
@@ -396,7 +399,7 @@ func (a *MonitorAgent) ReportDetectInfoToGM(reporterInstance dbutil.DataBaseDete
 		err = gmIns.ReportInstance(reporterInstance.GetDetectType(), jsonInfo)
 		if err != nil {
 			log.Logger.Warnf("reporter gm failed. gm_ip:%s, gm_port:%d, err:%s", gmIns.Ip, gmIns.Port, err.Error())
-			gmIns.IsConnection = false
+			gmIns.IsConnected = false
 			gmIns.Mutex.Unlock()
 			a.RepairGMConnection(gmIns)
 			//do retry
@@ -423,6 +426,8 @@ func (a *MonitorAgent) ReportDetectInfoToGM(reporterInstance dbutil.DataBaseDete
 	if !isReported {
 		err = fmt.Errorf("get report GM failed: all gm disconnect")
 		log.Logger.Error(err.Error())
+		log.Logger.Infof("try to reconnect all gm")
+		a.RefreshGMCache()
 		return err
 	}
 
@@ -454,7 +459,7 @@ func (a *MonitorAgent) RepairGMConnection(gmIns *GMConnection) {
 	go func(gmIns *GMConnection) {
 		for {
 			gmIns.Mutex.Lock()
-			if gmIns.IsClose || gmIns.IsConnection {
+			if gmIns.IsClose || gmIns.IsConnected {
 				gmIns.Mutex.Unlock()
 				return
 			}
@@ -465,7 +470,7 @@ func (a *MonitorAgent) RepairGMConnection(gmIns *GMConnection) {
 					"RepairGMConnection: ip:", gmIns.Ip, " port:", gmIns.Port, " connect failed, err:", err.Error())
 			} else {
 				gmIns.NetConnection = conn
-				gmIns.IsConnection = true
+				gmIns.IsConnected = true
 				log.Logger.Info("RepairGMConnection: ip:", gmIns.Ip, " port:", gmIns.Port, " connect success.")
 				gmIns.Mutex.Unlock()
 				return

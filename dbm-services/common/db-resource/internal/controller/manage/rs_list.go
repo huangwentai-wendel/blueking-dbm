@@ -164,13 +164,12 @@ func (c *MachineResourceGetterInputParam) queryBs(db *gorm.DB) (err error) {
 	db.Where("status = ? ", model.Unused)
 	if len(c.Hosts) > 0 {
 		db.Where("ip in (?)", c.Hosts)
-		return nil
 	}
 	switch strings.TrimSpace(strings.ToLower(c.GseAgentAlive)) {
 	case "true":
-		db.Where("gse_agent_status_code = ?  ", bk.GSE_AGENT_OK)
+		db.Where("gse_agent_status_code = ?  ", bk.GseAlive)
 	case "false":
-		db.Where("gse_agent_status_code != ?  ", bk.GSE_AGENT_OK)
+		db.Where("gse_agent_status_code != ?  ", bk.GseAlive)
 	}
 	if len(c.BkCloudIds) > 0 {
 		db.Where("bk_cloud_id in (?) ", c.BkCloudIds)

@@ -33,7 +33,7 @@ export default [
       },
       {
         dbConsoleValue: 'mysql.toolbox.dbRename',
-        id: 'MySQLDBRename',
+        id: TicketTypes.MYSQL_RENAME_DATABASE,
         name: t('DB重命名'),
         parentId: 'sql',
       },
@@ -121,7 +121,7 @@ export default [
       },
       {
         dbConsoleValue: 'mysql.toolbox.masterSlaveSwap',
-        id: 'MySQLMasterSlaveSwap',
+        id: TicketTypes.MYSQL_MASTER_SLAVE_SWITCH,
         name: t('主从互切'),
         parentId: 'migrate',
       },

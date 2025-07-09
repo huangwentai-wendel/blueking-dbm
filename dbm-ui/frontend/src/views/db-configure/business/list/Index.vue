@@ -22,9 +22,9 @@
   </div>
 </template>
 <script setup lang="ts">
-  import ClusterTab from '@components/cluster-tab/Index.vue';
+  import { ClusterTypes } from '@common/const';
 
-  import { ClusterTypes } from '@/common/const';
+  import ClusterTab from '@components/cluster-tab/Index.vue';
 
   import Content from './components/Content.vue';
 
@@ -49,8 +49,8 @@
 </script>
 <style lang="less">
   .business-db-configure-list-page {
-    height: calc(100vh - 105px);
     display: flex;
+    height: calc(100vh - var(--notice-height) - 105px);
     flex-direction: column;
 
     .content-main {

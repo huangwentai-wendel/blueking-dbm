@@ -12,7 +12,7 @@
 -->
 
 <template>
-  <SmartAction>
+  <SmartAction class="db-toolbox">
     <EditableTable
       ref="table"
       class="mb-20"
@@ -20,8 +20,10 @@
       <EditableRow
         v-for="(item, index) in formData.tableData"
         :key="index">
-        <SingleClusterColumn
+        <WithRelatedClustersColumn
           v-model="item.cluster"
+          :cluster-types="[ClusterTypes.TENDBSINGLE]"
+          role="orphan"
           :selected="selected"
           @batch-edit="handleBatchEdit" />
         <CurrentVersionColumn :cluster="item.cluster" />
@@ -34,9 +36,16 @@
           :create-row-method="createTableRow" />
       </EditableRow>
     </EditableTable>
-    <IgnoreBiz
-      v-model="formData.force"
-      v-bk-tooltips="t('如忽略_有连接的情况下也会执行')" />
+    <BkFormItem
+      v-bk-tooltips="t('存在业务连接时需要人工确认')"
+      class="fit-content">
+      <BkCheckbox
+        v-model="formData.force"
+        :false-label="false"
+        true-label>
+        <span class="safe-action-text">{{ t('检查业务连接') }}</span>
+      </BkCheckbox>
+    </BkFormItem>
     <TicketPayload v-model="formData.payload" />
     <template #action>
       <BkButton
@@ -68,21 +77,20 @@
 
   import { useCreateTicket } from '@hooks';
 
-  import { TicketTypes } from '@common/const';
+  import { ClusterTypes, TicketTypes } from '@common/const';
 
-  import IgnoreBiz from '@views/db-manage/common/toolbox-field/form-item/ignore-biz/Index.vue';
   import TicketPayload, {
     createTickePayload,
   } from '@views/db-manage/common/toolbox-field/form-item/ticket-payload/Index.vue';
+  import WithRelatedClustersColumn from '@views/db-manage/mysql/common/edit-table-column/WithRelatedClustersColumn.vue';
 
   import CurrentVersionColumn from '../components/CurrentVersionColumn.vue';
-  import SingleClusterColumn from '../components/SingleClusterColumn.vue';
   import TargetVersionColumn from '../components/TargetVersionColumn.vue';
 
   interface RowData {
     cluster: {
       bk_cloud_id: number;
-      cluster_type: string;
+      cluster_type: ClusterTypes;
       current_version: string;
       db_module_id: number;
       db_module_name: string;
@@ -116,7 +124,7 @@
   const createTableRow = (data = {} as Partial<RowData>) => ({
     cluster: data.cluster || {
       bk_cloud_id: 0,
-      cluster_type: '',
+      cluster_type: ClusterTypes.TENDBSINGLE,
       current_version: '',
       db_module_id: 0,
       db_module_name: '',
@@ -136,7 +144,7 @@
   });
 
   const defaultData = () => ({
-    force: false,
+    force: true,
     payload: createTickePayload(),
     tableData: [createTableRow()],
   });
@@ -183,8 +191,9 @@
     () => props.ticketDetails,
     () => {
       if (props.ticketDetails) {
-        const { clusters, infos } = props.ticketDetails;
+        const { clusters, force, infos } = props.ticketDetails;
         if (infos.length > 0) {
+          formData.force = force;
           formData.tableData = infos.map((item) => {
             const clusterInfo = clusters[item.cluster_ids[0]];
             return createTableRow({
@@ -245,7 +254,7 @@
         details: {
           force: formData.force,
           infos: formData.tableData.map((item) => ({
-            cluster_ids: [item.cluster.id],
+            cluster_ids: [item.cluster.id, ...item.cluster.related_clusters.map((item) => item.id)],
             display_info: {
               charset: item.target_version.charset,
               cluster_type: item.cluster.cluster_type,

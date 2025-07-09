@@ -37,6 +37,14 @@ from backend.flow.views.es_destroy import DestroyEsSceneApiView
 from backend.flow.views.es_disable import DisableEsSceneApiView
 from backend.flow.views.es_enable import EnableEsSceneApiView
 from backend.flow.views.es_machine_clear import EsMachineClearApiView
+from backend.flow.views.es_name_service import (
+    EsClbCreateSceneApiView,
+    EsClbDeleteSceneApiView,
+    EsDomainBindClbIpSceneApiView,
+    EsDomainUnBindClbIpSceneApiView,
+    EsPolarisCreateSceneApiView,
+    EsPolarisDeleteSceneApiView,
+)
 from backend.flow.views.es_reboot import RebootEsSceneApiView
 from backend.flow.views.es_replace import ReplaceEsSceneApiView
 from backend.flow.views.es_scale_up import ScaleUpEsSceneApiView
@@ -63,6 +71,7 @@ from backend.flow.views.kafka_destroy import DestroyKafkaSceneApiView
 from backend.flow.views.kafka_disable import DisableKafkaSceneApiView
 from backend.flow.views.kafka_enable import EnableKafkaSceneApiView
 from backend.flow.views.kafka_machine_clear import KafkaMachineClearApiView
+from backend.flow.views.kafka_rebalance import RebalanceKafkaSceneApiView
 from backend.flow.views.kafka_reboot import RebootKafkaSceneApiView
 from backend.flow.views.kafka_replace import ReplaceKafkaSceneApiView
 from backend.flow.views.kafka_scale_up import ScaleUpKafkaSceneApiView
@@ -163,6 +172,7 @@ from backend.flow.views.name_service import (
     PolarisCreateSceneApiView,
     PolarisDeleteSceneApiView,
 )
+from backend.flow.views.oracle_scene import MultiOracleExecuteScriptApiView
 from backend.flow.views.pulsar_apply import InstallPulsarSceneApiView
 from backend.flow.views.pulsar_destroy import DestroyPulsarSceneApiView
 from backend.flow.views.pulsar_disable import DisablePulsarSceneApiView
@@ -334,9 +344,15 @@ urlpatterns = [
     url(r"^scene/nameservice_clb_delete$", ClbDeleteSceneApiView.as_view()),
     url(r"^scene/nameservice_domain_bind_clb_ip$", DomainBindClbIpSceneApiView.as_view()),
     url(r"^scene/nameservice_domain_unbind_clb_ip$", DomainUnBindClbIpSceneApiView.as_view()),
+    url(r"^scene/es/nameservice_clb_create$", EsClbCreateSceneApiView.as_view()),
+    url(r"^scene/es/nameservice_clb_delete$", EsClbDeleteSceneApiView.as_view()),
+    url(r"^scene/es/nameservice_domain_bind_clb_ip$", EsDomainBindClbIpSceneApiView.as_view()),
+    url(r"^scene/es/nameservice_domain_unbind_clb_ip$", EsDomainUnBindClbIpSceneApiView.as_view()),
     # name_service polaris
     url(r"^scene/nameservice_polaris_create$", PolarisCreateSceneApiView.as_view()),
     url(r"^scene/nameservice_polaris_delete$", PolarisDeleteSceneApiView.as_view()),
+    url(r"^scene/es/nameservice_polaris_create$", EsPolarisCreateSceneApiView.as_view()),
+    url(r"^scene/es/nameservice_polaris_delete$", EsPolarisDeleteSceneApiView.as_view()),
     # name_service end
     # mongodb start
     url(r"^scene/multi_replicaset_create$", MultiReplicasetInstallApiView.as_view()),
@@ -363,6 +379,9 @@ urlpatterns = [
     url(r"^scene/multi_cluster_migrate_meta$", MongoDBClusterMigrateView.as_view()),
     url(r"^scene/multi_instance_deinstall$", MongoDBInstanceDeInstallView.as_view()),
     # mongodb end
+    # oracle start
+    url(r"^scene/multi_oracle_execute_script$", MultiOracleExecuteScriptApiView.as_view()),
+    # oracle end
     # mysql upgrade
     url(r"^scene/upgrade_mysql_proxy$", UpgradeMySQLProxySceneApiView.as_view()),
     url(r"^scene/upgrade_mysql$", UpgradeMySQLSceneApiView.as_view()),
@@ -412,6 +431,7 @@ urlpatterns = [
     url(r"^scene/shrink_kafka$", ShrinkKafkaSceneApiView.as_view()),
     url(r"^scene/replace_kafka$", ReplaceKafkaSceneApiView.as_view()),
     url(r"^scene/reboot_kafka$", RebootKafkaSceneApiView.as_view()),
+    url(r"^scene/rebalance_kafka$", RebalanceKafkaSceneApiView.as_view()),
     url(r"^scene/kafka_machine_clear$", KafkaMachineClearApiView.as_view()),
     url(r"^scene/install_es$", InstallEsSceneApiView.as_view()),
     url(r"^scene/fake_install_es$", FakeInstallEsSceneApiView.as_view()),

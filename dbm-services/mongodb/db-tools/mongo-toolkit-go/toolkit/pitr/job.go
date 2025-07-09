@@ -26,6 +26,7 @@ type BackupOption struct {
 	RemoveOldFileFirst bool
 	ReportFile         string
 	BkDbmLabel         *config.BkDbmLabel
+	Archive            bool
 	DryRun             bool
 }
 
@@ -63,14 +64,16 @@ func DoJob(option *BackupOption) {
 	}
 
 	log.Printf("lastBackup %+v", lastBackup)
-	currBackup, err := DoBackup(option.MongoHost, option.BackupType, option.Dir, option.Zip, lastBackup, nil)
+	currBackup, err := DoBackup(option.MongoHost, option.BackupType, option.Dir, option.Zip, option.Archive,
+		lastBackup, nil)
 	if err != nil || currBackup == nil {
 		log.Errorf("backup failed %v %v", currBackup, err)
 		return
 	}
 	bm.Append(currBackup) // 保存一次.meta文件，给result.FileName赋值
 	// backup success. filename: 这是给dbmon接收的，格式不能改.
-	log.Printf("do %s backup success. filename:'%s'", option.BackupType, currBackup.GetFullPath())
+	log.Printf("do %s backup success. filename:'%s'. size:%d",
+		option.BackupType, currBackup.GetFullPath(), currBackup.FileSize)
 	// todo 如果备份系统返回TaskId失败怎么办？ 要写入另外一个文件。另外一段时间后再尝试重试.
 	// todo 提前检查 ReportFile 是否存在，是否可写
 	uploadFileAndAppendToReportFile(option, currBackup)
@@ -89,7 +92,10 @@ func backupIncrForPrevFull(option *BackupOption, bm *BackupMetaV2,
 		lastIncr = prevFull
 		log.Warnf("set lastInc to lastFull %+v", lastIncr)
 	}
-	incrResult, err := DoBackup(option.MongoHost, BackupTypeIncr, option.Dir, option.Zip, lastIncr, &currBackup.LastTs)
+
+	incrResult, err := DoBackup(option.MongoHost, BackupTypeIncr, option.Dir, option.Zip, option.Archive,
+		lastIncr, &currBackup.LastTs)
+
 	if incrResult != nil {
 		bm.Append(incrResult)
 		uploadFileAndAppendToReportFile(option, incrResult)

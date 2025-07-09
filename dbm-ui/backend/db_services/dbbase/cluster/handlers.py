@@ -12,30 +12,35 @@ import importlib
 import operator
 from collections import defaultdict
 from functools import reduce
-from typing import Any, Dict, List, Set
+from typing import Any, Callable, Dict, List, Set
 
 from django.db.models import F, Prefetch, Q
 from django.utils.translation import ugettext_lazy as _
 
+from backend.components import DRSApi
 from backend.configuration.constants import DBType
 from backend.db_meta.enums import AccessLayer, ClusterType, InstanceInnerRole, InstanceStatus
 from backend.db_meta.exceptions import ClusterNotExistException, InstanceNotExistException
 from backend.db_meta.models import Cluster, ProxyInstance, StorageInstance, StorageInstanceTuple
 from backend.db_meta.models.machine import Machine
 from backend.db_services.dbbase.dataclass import DBInstance
+from backend.db_services.mysql.sql_import.constants import SQLCharset
+from backend.db_services.mysql.sqlparse.handlers import SQLParseHandler
 from backend.utils.basic import remove_duplicated_dict
+from backend.utils.time import get_local_charset
 
 
 class ClusterServiceHandler:
     def __init__(self, bk_biz_id: int):
         self.bk_biz_id = bk_biz_id
 
-    def check_cluster_databases(self, cluster_id: int, db_list: List[int]) -> Dict:
+    def check_cluster_databases(self, cluster_id: int, db_list: List[int], user_id: int = 0) -> Dict:
         """
         校验集群的库名是否存在，支持各个类型的集群
         注意：这个方法是通用查询库表是否存在，子类需要单独实现check_cluster_database,而不是覆写该方法
         @param cluster_id: 集群ID
         @param db_list: 库名列表
+        @param user_id: 用户ID 访问mongodb rpc专用
         """
         try:
             cluster = Cluster.objects.get(id=cluster_id)
@@ -53,6 +58,11 @@ class ClusterServiceHandler:
             from backend.db_services.sqlserver.cluster.handlers import ClusterServiceHandler as SQLServer
 
             return SQLServer(self.bk_biz_id).check_cluster_database(cluster_id, db_list)
+
+        if cluster.cluster_type in [ClusterType.MongoReplicaSet, ClusterType.MongoShardedCluster]:
+            from backend.db_services.mongodb.cluster.handlers import ClusterServiceHandler as MongoDB
+
+            return MongoDB(self.bk_biz_id).check_cluster_database(cluster_id, db_list, user_id)
         # 对于其他不存在单据校验逻辑的集群类型，直接抛错
         raise NotImplementedError
 
@@ -356,6 +366,180 @@ class ClusterServiceHandler:
             ),
         ]
         return instance_objs
+
+    @staticmethod
+    def console_rpc(
+        instances: list, cmd: str, db_query: bool, rpc_function: Callable, is_check: bool = True, **kwargs
+    ):
+        """
+        通用的RPC命令执行器，只支持select语句
+        @param instances: 实例信息
+        @param cmd: 执行命令
+        @param db_query: 是否只允许查询系统库 -- DB自助查询
+        @param rpc_function: 用于执行RPC请求的函数
+        @param is_check: 校验select语句
+        """
+        # 校验select语句
+        if is_check:
+            SQLParseHandler().parse_select_statement(sql=cmd, db_query=db_query)
+
+        # 按云区域对instance分组
+        bk_cloud__instances_map: Dict[int, List] = defaultdict(list)
+        for info in instances:
+            bk_cloud__instances_map[info["bk_cloud_id"]].append(info["instance"])
+
+        # 获取rpc结果
+        instance_rpc_results: List = []
+
+        if ClusterServiceHandler.__check_special_sql(cmd):
+            instance_rpc_results = ClusterServiceHandler.__dbconsole_special_query(
+                bk_cloud__instances_map, cmd, **kwargs
+            )
+        else:
+            for bk_cloud_id, addresses in bk_cloud__instances_map.items():
+                params = {
+                    "bk_cloud_id": bk_cloud_id,
+                    "addresses": addresses,
+                    "cmds": [cmd],
+                    "charset": kwargs["options"].get("charset", SQLCharset.DEFAULT.value),
+                    "timezone": kwargs["options"].get("timezone", get_local_charset()),
+                }
+                # 使用传入的rpc_function进行rpc调用
+                rpc_results = rpc_function(params)
+
+                cmd_results = [
+                    {
+                        "instance": res["address"],
+                        "table_data": res["cmd_results"][0]["table_data"] if not res["error_msg"] else None,
+                        "error_msg": res["error_msg"],
+                    }
+                    for res in rpc_results
+                ]
+                instance_rpc_results.extend(cmd_results)
+
+        return instance_rpc_results
+
+    @classmethod
+    def __dbconsole_special_query(cls, bk_cloud__instances_map, cmd, **kwargs):
+        """
+        用于dbaconsole的特殊查询，目前复用webconsole，因此不支持单次多条查询
+        webconsole账户也不支持查询主从同步信息
+        当前这个函数主要用于处理：
+        1. mysql配置信息查询（多条查询合并）
+        2. mysql主从同步信息查询
+
+        @param bk_cloud__instances_map:
+        @param cmd:
+        @return:
+        """
+        special_sql = {
+            "show mysql configurations": [
+                "show variables like 'version';",
+                "show variables like 'character_set_server';",
+                "show variables like 'character_set_database';",
+                "show variables like 'max_connections';",
+                "show variables like 'spider_max_connections';",
+                "show variables like 'log_bin';",
+                "show variables like 'binlog_format';",
+                "show variables like 'long_query_time';",
+                "show variables like 'lower_case_table_names';",
+                "show variables like 'slave_parallel_threads';",
+                "show variables like 'innodb_buffer_pool_size';",
+                "show variables like 'innodb_data_file_path';",
+            ],
+            "show slave status": ["show slave status;"],
+        }
+        standard_cmd = " ".join(cmd.split()).lower()
+        cmds = []
+        for special in special_sql:
+            if standard_cmd.startswith(special):
+                cmds = special_sql[special]
+
+        instance_rpc_results: List = []
+        for bk_cloud_id, addresses in bk_cloud__instances_map.items():
+            params = {
+                "bk_cloud_id": bk_cloud_id,
+                "addresses": addresses,
+                "cmds": cmds,
+                "charset": kwargs["options"].get("charset", SQLCharset.DEFAULT.value),
+                "timezone": kwargs["options"].get("timezone", get_local_charset()),
+            }
+            rpc_results = DRSApi.rpc(params)
+            cmd_results = [
+                {
+                    "instance": res["address"],
+                    "table_data": cls.__merge_drs_result(res, standard_cmd) if not res["error_msg"] else None,
+                    "error_msg": res["error_msg"],
+                }
+                for res in rpc_results
+            ]
+            instance_rpc_results.extend(cmd_results)
+
+        return instance_rpc_results
+
+    @classmethod
+    def __check_special_sql(cls, cmd):
+        """
+        检查是否是特殊sql查询
+        @param cmd:
+        @return:
+        """
+        special_sql = ["show mysql configurations", "show slave status"]
+
+        for special in special_sql:
+            if " ".join(cmd.split()).lower().startswith(special):
+                return True
+
+        return False
+
+    @classmethod
+    def __merge_drs_result(cls, res, cmd):
+        """
+        用于合并单个实例查询多条sql的结果合并
+        指定主从信息
+        @param res:
+        @return:
+
+        """
+        table_data = []
+        merge_data = {}
+        if cmd.startswith("show mysql configurations"):
+            for cmd_result in res["cmd_results"]:
+                # 有的子查询没有结果或者报错，一律跳过 只记录有值的
+                if not cmd_result["error_msg"] and len(cmd_result["table_data"]) > 0:
+                    merge_data.update(
+                        {cmd_result["table_data"][0]["Variable_name"]: cmd_result["table_data"][0]["Value"]}
+                    )
+            table_data.append(merge_data)
+        elif cmd.startswith("show slave status"):
+            k_list = [
+                "Master_Host",
+                "Master_Port",
+                "Master_User",
+                "Slave_IO_State",
+                "Slave_IO_Running",
+                "Slave_SQL_Running",
+                "Seconds_Behind_Master",
+                "Connect_Retry",
+                "Master_File",
+                "Master_Position",
+                "Master_Log_File",
+                "Read_Master_Log_Pos",
+                "Relay_Master_Log_File",
+                "Exec_Master_Log_Pos",
+                "Replicate_Do_DB",
+                "Replicate_Ignore_DB",
+                "Last_Errno",
+                "Last_Error",
+            ]
+            td = res["cmd_results"][0]["table_data"]
+            merge_data.update({k: td[0][k] for k in k_list if len(td) > 0 and k in td[0]})
+            table_data.append(merge_data)
+        else:
+            for cmd_result in res["cmd_results"]:
+                table_data.extend(cmd_result["table_data"] if not cmd_result["error_msg"] else None)
+
+        return table_data
 
 
 def get_cluster_service_handler(bk_biz_id: int, db_type: str = "dbbase"):

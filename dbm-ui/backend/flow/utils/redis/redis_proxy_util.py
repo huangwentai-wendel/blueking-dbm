@@ -426,16 +426,20 @@ def get_cluster_storage_versions_for_upgrade(cluster_id: int) -> list:
     online_redis_ver = get_cluster_redis_version(cluster_id=cluster_id)
     versions = []
     if is_redis_instance_type(cluster.cluster_type):
-        ret = Package.objects.filter(
-            db_type=DBType.Redis.value, pkg_type=MediumEnum.Redis.value, enable=True
-        ).values_list("name", flat=True)
+        ret = (
+            Package.objects.filter(db_type=DBType.Redis.value, pkg_type=MediumEnum.Redis.value, enable=True)
+            .order_by("-priority")
+            .values_list("name", flat=True)
+        )
         for version in ret:
             if version_ge(version, online_redis_ver):
                 versions.append(version)
     elif is_tendisplus_instance_type(cluster.cluster_type):
-        ret = Package.objects.filter(
-            db_type=DBType.Redis.value, pkg_type=MediumEnum.TendisPlus.value, enable=True
-        ).values_list("name", flat=True)
+        ret = (
+            Package.objects.filter(db_type=DBType.Redis.value, pkg_type=MediumEnum.TendisPlus.value, enable=True)
+            .order_by("-priority")
+            .values_list("name", flat=True)
+        )
         for version in ret:
             if version_ge(version, online_redis_ver):
                 versions.append(version)
@@ -818,11 +822,11 @@ def get_cluster_capacity_update_required_info(
                 return capacity_update_type, require_spec_id, require_machine_group_num, err_msg, empty_info
         elif new_shards_num < len(master_insts):
             # tendislus集群,分片数变少
-            if new_machine_group_num > len(master_machines):
+            if new_machine_group_num >= len(master_machines):
                 # 机器数 变多，报错
-                err_msg = _("tendisplus集群 分片数变少,不允许机器数 变多。如果有需要,请使用 集群分片数变更 单据")
+                err_msg = _("tendisplus集群 分片数变少,不允许机器数不变 or 变多。如果有需要,请使用 集群分片数变更 单据")
             else:
-                # 机器数不变 or 变少,不需要申请机器
+                # 机器变少,不需要申请机器
                 capacity_update_type = RedisCapacityUpdateType.KEEP_CURRENT_MACHINES.value
             return capacity_update_type, 0, 0, err_msg, empty_info
 
@@ -1182,3 +1186,17 @@ def lightning_cluster_nodes(cluster_id: int) -> list:
         if master_addr not in master_to_item:
             raise Exception(_("redis集群 {} master {} 没有对应running的slave节点").format(cluster.immute_domain, master_addr))
     return list(master_to_item.values())
+
+
+def get_cluster_update_version(cluster_id: int) -> List[str]:
+    """
+    获取集群容量变更允许的Redis大版本
+    """
+    cluster = Cluster.objects.get(id=cluster_id)
+    curr_version = cluster.major_version
+    # 如果是SSD,不允许跨版本
+    if is_tendisssd_instance_type(cluster.cluster_type):
+        return [curr_version]
+
+    major_version_list = get_storage_versions_by_cluster_type(cluster.cluster_type)
+    return list(set([version for version in major_version_list if version_ge(version, curr_version)]))

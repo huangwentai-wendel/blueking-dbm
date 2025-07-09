@@ -114,6 +114,24 @@ INSTANCE_MONITOR_PLUGINS = {
 # mysql和tendbcluster采集器一致
 INSTANCE_MONITOR_PLUGINS[DBType.TenDBCluster] = INSTANCE_MONITOR_PLUGINS[DBType.MySQL]
 
+INSTANCE_BKLOG_PLUGINS = {
+    DBType.Redis: {
+        MachineType.PREDIXY: {"name": "predixy", "plugin_id": "redis_slowlog"},
+        MachineType.TWEMPROXY: {"name": "twemproxy", "plugin_id": "redis_slowlog"},
+        MachineType.REDIS: {"name": "redis", "plugin_id": "redis_slowlog"},
+        MachineType.TENDISCACHE: {"name": "tendiscache", "plugin_id": "redis_slowlog"},
+        MachineType.TENDISSSD: {"name": "tendisssd", "plugin_id": "redis_slowlog"},
+        MachineType.TENDISPLUS: {"name": "tendisplus", "plugin_id": "redis_slowlog"},
+    },
+    DBType.MySQL: {
+        MachineType.BACKEND: {"name": "mysql", "plugin_id": "mysql_slowlog"},
+    },
+    DBType.TenDBCluster: {
+        MachineType.SPIDER: {"name": "spider", "plugin_id": "mysql_slowlog"},
+        MachineType.REMOTE: {"name": "mysql", "plugin_id": "mysql_slowlog"},
+    },
+}
+
 SET_NAME_TEMPLATE = "db.{db_type}.{monitor_plugin_name}"
 
 SHORT_NAMES = list(
@@ -130,6 +148,13 @@ SHORT_NAMES = list(
 def get_monitor_plugin(db_type, machine_type):
     """主机实例 -> 监控插件类型"""
     return INSTANCE_MONITOR_PLUGINS[db_type][machine_type]
+
+
+def get_monitor_set_name(db_type, monitor_plugin_name):
+    """获取监控采集模块"""
+    # 目前tendbcluster主机都放在mysql模块
+    db_type = DBType.MySQL if db_type == DBType.TenDBCluster else db_type
+    return SET_NAME_TEMPLATE.format(db_type=db_type, monitor_plugin_name=monitor_plugin_name)
 
 
 class AppMonitorTopo(AuditedModel):
@@ -162,6 +187,8 @@ class AppMonitorTopo(AuditedModel):
     @classmethod
     def get_set_by_dbtype(cls, db_type):
         """获取指定db_type的拓扑配置"""
+        # tendbcluster主机都放在mysql模块
+        db_type = DBType.MySQL if db_type == DBType.TenDBCluster else db_type
         topos = cls.objects.filter(db_type=db_type)
         # tbinlogdumper 归属于 MySQL，比较特殊，此处做一个转换
         if db_type == DBType.TBinlogDumper.value:
@@ -219,7 +246,8 @@ class AppMonitorTopo(AuditedModel):
                     obj.save()
                     continue
 
-                bk_set_name = SET_NAME_TEMPLATE.format(db_type=db_type, monitor_plugin_name=monitor_plugin_name)
+                # tendbcluster的主机
+                bk_set_name = get_monitor_set_name(db_type, monitor_plugin_name)
 
                 # 本地没有 -> 远程没有 -> 创建远程   |
                 #        ->  远程有               |---> 更新本地
@@ -253,10 +281,8 @@ class AppMonitorTopo(AuditedModel):
                     res = CCApi.create_set(
                         params={
                             "bk_biz_id": env.DBA_APP_BK_BIZ_ID,
-                            "data": {
-                                "bk_parent_id": env.DBA_APP_BK_BIZ_ID,
-                                "bk_set_name": bk_set_name,
-                            },
+                            "bk_parent_id": env.DBA_APP_BK_BIZ_ID,
+                            "bk_set_name": bk_set_name,
                         }
                     )
                     bk_set_id = res["bk_set_id"]

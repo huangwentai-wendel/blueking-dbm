@@ -21,7 +21,7 @@
       <BkInput
         v-model="modelValue.count"
         clearable
-        :min="1"
+        :min="countMin"
         show-clear-only-hover
         style="width: 314px"
         type="number" />
@@ -30,7 +30,8 @@
     <DbFormItem
       :label="t('单机分片数')"
       property="shardNum"
-      required>
+      required
+      :rules="shardNumRules">
       <BkInput
         v-model="modelValue.shardNum"
         clearable
@@ -87,8 +88,8 @@
 
   interface ModelValue {
     clusterShardNum: number;
-    count: number;
-    shardNum: number;
+    count: string | number;
+    shardNum: number | string;
     specId: number | string;
     totalCapcity: number;
   }
@@ -98,7 +99,7 @@
       cluster_capacity: number;
       cluster_shard_num: number;
       machine_pair: number;
-    } & ReturnType<ComponentExposed<typeof SpecSelector>['getData']>;
+    } & Omit<ReturnType<ComponentExposed<typeof SpecSelector>['getData']>, 'capacity'>;
   }
 
   const props = withDefaults(defineProps<Props>(), {
@@ -123,11 +124,27 @@
     },
   ];
 
+  const shardNumRules = [
+    {
+      message: t('请输入单机分片数'),
+      trigger: 'change',
+      validator: (value: number) => value > 0,
+    },
+  ];
+
+  const countMin = computed(() =>
+    [ClusterTypes.PREDIXY_REDIS_CLUSTER, ClusterTypes.PREDIXY_TENDISPLUS_CLUSTER].includes(
+      props.clusterInfo.clusterType as ClusterTypes,
+    )
+      ? 3
+      : 1,
+  );
+
   watch(
     () => [modelValue.value.count, modelValue.value.shardNum],
     ([newCount, newShardNum]) => {
       if (!props.shardNumDisabled) {
-        modelValue.value.clusterShardNum = newCount * newShardNum;
+        modelValue.value.clusterShardNum = Number(newCount) * Number(newShardNum);
       }
     },
     {
@@ -140,7 +157,9 @@
     () => {
       if (props.shardNumDisabled) {
         if (modelValue.value.count) {
-          modelValue.value.shardNum = Number((modelValue.value.clusterShardNum / modelValue.value.count).toFixed(2));
+          modelValue.value.shardNum = Number(
+            (modelValue.value.clusterShardNum / Number(modelValue.value.count)).toFixed(2),
+          );
         } else {
           modelValue.value.shardNum = 0;
         }
@@ -161,7 +180,7 @@
           return '';
         }
 
-        modelValue.value.totalCapcity = modelValue.value.count * getSpecCapacity(data);
+        modelValue.value.totalCapcity = Math.floor(Number(modelValue.value.count) * data.capacity);
       });
     },
     {
@@ -169,28 +188,29 @@
     },
   );
 
-  const getSpecCapacity = (resourceSpec: ReturnType<ComponentExposed<typeof SpecSelector>['getData']>) => {
-    if (
-      [ClusterTypes.PREDIXY_TENDISPLUS_CLUSTER, ClusterTypes.TWEMPROXY_TENDIS_SSD_INSTANCE].includes(
-        props.clusterInfo.clusterType as ClusterTypes,
-      )
-    ) {
-      const specItem = resourceSpec.storage_spec.find((storageSpecItem) => storageSpecItem.mount_point === '/data1');
-      return specItem?.size || 0;
-    }
-    return resourceSpec.mem.min;
-  };
+  // const getSpecCapacity = (resourceSpec: ReturnType<ComponentExposed<typeof SpecSelector>['getData']>) => {
+  //   if (
+  //     [ClusterTypes.PREDIXY_TENDISPLUS_CLUSTER, ClusterTypes.TWEMPROXY_TENDIS_SSD_INSTANCE].includes(
+  //       props.clusterInfo.clusterType as ClusterTypes,
+  //     )
+  //   ) {
+  //     const specItem = resourceSpec.storage_spec.find((storageSpecItem) => storageSpecItem.mount_point === '/data1');
+  //     return specItem?.size || 0;
+  //   }
+  //   return resourceSpec.mem.min;
+  // };
 
   defineExpose<Expose>({
     getInfo() {
       const specData = specSelectorRef.value!.getData();
       return {
         cluster_capacity: modelValue.value.totalCapcity || 0,
-        cluster_shard_num: modelValue.value.shardNum,
+        cluster_shard_num: Number(modelValue.value.shardNum),
         cpu: specData.cpu,
-        machine_pair: modelValue.value.count,
+        machine_pair: Number(modelValue.value.count),
         mem: specData.mem,
         qps: specData.qps,
+        spec_id: specData.spec_id,
         spec_name: specData?.spec_name || '',
         storage_spec: specData.storage_spec,
       };

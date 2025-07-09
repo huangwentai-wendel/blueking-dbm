@@ -28,6 +28,14 @@
             {{ t('查看详情') }}
           </a>
         </template>
+        <FlowCollapse
+          v-if="data.err_msg"
+          danger
+          :title="t('失败原因')">
+          <div style="padding-left: 16px">
+            {{ data.err_msg }}
+          </div>
+        </FlowCollapse>
         <div
           v-if="isCanOperation && isNeedOperation"
           class="mt-12">
@@ -42,13 +50,8 @@
           </ProcessRetry>
         </div>
       </slot>
-      <div
-        v-if="data.err_msg"
-        style="padding: 12px; margin-top: 12px; background: #f5f7fa; border: 2px">
-        {{ data.err_msg }}
-      </div>
       <!-- 系统自动终止 -->
-      <template v-if="data.err_code === 3 && data.context.expire_time && data.todos.length === 0">
+      <template v-if="data.err_code === 3 && data.context.expire_time && renderTodoList.length === 0">
         <div style="margin-top: 8px; color: #ea3636">
           <span>{{ t('system已处理') }}</span>
           <span> ({{ t('超过n天未处理，自动终止', { n: data.context.expire_time }) }}) </span>
@@ -57,6 +60,7 @@
           {{ utcDisplayTime(data.update_at) }}
         </div>
       </template>
+      <Abstract :data="data" />
     </template>
     <template #desc>
       {{ utcDisplayTime(data.update_at) }}
@@ -64,6 +68,8 @@
   </DbTimeLineItem>
 </template>
 <script setup lang="ts">
+  import _ from 'lodash';
+  import { type VNode } from 'vue';
   import { useI18n } from 'vue-i18n';
 
   import FlowMode from '@services/model/ticket/flow';
@@ -78,6 +84,9 @@
   import { utcDisplayTime, utcTimeToSeconds } from '@utils';
 
   import DbTimeLineItem from '../time-line/TimeLineItem.vue';
+
+  import Abstract from './components/abstract/Index.vue';
+  import FlowCollapse from './components/FlowCollapse.vue';
 
   interface Props {
     data: FlowMode<unknown, any>;
@@ -105,4 +114,7 @@
       props.ticketDetail.todo_helpers.includes(username),
   );
   const isNeedOperation = computed(() => [0, 2].includes(props.data.err_code));
+  const renderTodoList = computed(() =>
+    _.filter(props.data.todos, (item) => item.type !== FlowMode.TODO_TYPE_INNER_FAILED),
+  );
 </script>

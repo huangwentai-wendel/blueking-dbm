@@ -111,14 +111,14 @@ func (u *UnInstallMySQLComp) PreCheck() (err error) {
 			Socket: u.runTimeCtx.insMyObj[port].Socket,
 		}
 		if _, err := inst.ConnBySocket(); err != nil {
-			logger.Warn("try connent this mysql instance [%p] failed:%s", port, err.Error())
+			logger.Warn("try connect this mysql instance [%p] failed:%s", port, err.Error())
 			u.insMyObj[port].IsShutdown = true
 		}
 		if !u.Params.Force && !u.insMyObj[port].IsShutdown {
 			// 非强制下架，且实例正常的情况下，需要判断实例是否有业务连接,
 			// todo 这里重新去创建连接，如果检测实例状态和连接业务访问之间出现实例异常，则会触发bug，后续考虑怎么优化这点
 			if err := inst.CheckInstanceConnIdle(u.GeneralParam.GetAllSysAccount(), time.Second*1); err != nil {
-				logger.Warn("try connent this mysql instance [%p] failed:%s", port, err.Error())
+				logger.Warn("try connect this mysql instance [%p] failed:%s", port, err.Error())
 				u.insMyObj[port].IsShutdown = true
 			}
 		}
@@ -193,6 +193,7 @@ func (u *UnInstallMySQLComp) ClearMachine() (err error) {
 				cst.AlterNativeMysqlDataRootPath,
 				cst.DefaultBackupBasePath,
 			) //  "/data/dbbak/"
+			myFile     = util.GetMyCnfFileName(port)
 			suffix     = fmt.Sprintf("_bak_%s", time.Now().Format(cst.TIMELAYOUTSEQ))
 			dataLogBak = path.Join(
 				cst.DefaultMysqlLogRootPath,
@@ -202,7 +203,7 @@ func (u *UnInstallMySQLComp) ClearMachine() (err error) {
 				cst.AlterNativeMysqlLogRootPath,
 				fmt.Sprintf("%s_%d%s", cst.DefaultMysqlLogBasePath, port, suffix),
 			) // "/data/mysqllog_{port}_bak__xxxx"
-
+			myFileBak = fmt.Sprintf("%s_%s", myFile, suffix) // /etc/my.cnf.{port}_bak__xxx
 		)
 
 		if cmutil.FileExists(dataLog) {
@@ -226,7 +227,7 @@ func (u *UnInstallMySQLComp) ClearMachine() (err error) {
 		if cmutil.FileExists(dataPath) {
 			var shellCMD string
 			if !cmutil.FileExists(dataBak) {
-				shellCMD += fmt.Sprintf("mkdir %s;", dataBak)
+				shellCMD += fmt.Sprintf("mkdir -p %s;", dataBak)
 			}
 			shellCMD += fmt.Sprintf(
 				"mv %s %s_%d%s;",
@@ -245,7 +246,7 @@ func (u *UnInstallMySQLComp) ClearMachine() (err error) {
 		if cmutil.FileExists(data1Path) {
 			var shellCMD string
 			if !cmutil.FileExists(data1Bak) {
-				shellCMD += fmt.Sprintf("mkdir %s;", data1Bak)
+				shellCMD += fmt.Sprintf("mkdir -p %s;", data1Bak)
 			}
 			shellCMD += fmt.Sprintf(
 				"mv %s %s_%d%s;",
@@ -254,6 +255,17 @@ func (u *UnInstallMySQLComp) ClearMachine() (err error) {
 				port,
 				suffix,
 			)
+			logger.Info("backup command [%s]", shellCMD)
+			output, err := osutil.ExecShellCommand(false, shellCMD)
+			if err != nil {
+				err = fmt.Errorf("execute [%s] get an error:%w,output:%s", shellCMD, err, output)
+				return err
+			}
+		}
+		// 备份实例的my.cnf文件
+		if cmutil.FileExists(myFile) {
+			var shellCMD string
+			shellCMD += fmt.Sprintf("mv %s %s;", myFile, myFileBak)
 			logger.Info("backup command [%s]", shellCMD)
 			output, err := osutil.ExecShellCommand(false, shellCMD)
 			if err != nil {

@@ -26,6 +26,7 @@ import { messageError } from '@utils';
 import { locale, t } from '@locales/index';
 
 import http, { type IRequestPayload } from '../http';
+import type { DetailClusters } from '../model/ticket/details/common';
 
 const path = '/apis/tickets';
 
@@ -66,6 +67,27 @@ export function createTicketNew<T>(params: {
   ticket_type: TicketTypes;
 }) {
   return http.post<{ id: number }>(`${path}/`, params, { catchError: true });
+}
+
+/**
+ * 批量创建单据
+ */
+export function createTicketBatch<T>(params: {
+  tickets: {
+    bk_biz_id: number;
+    details: T;
+    ignore_duplication?: boolean;
+    remark: string;
+    ticket_type: TicketTypes;
+  }[];
+}) {
+  return http.post<{ bk_biz_id: number; clusters: DetailClusters; id: number }[]>(
+    `${path}/batch_create_ticket/`,
+    params,
+    {
+      catchError: true,
+    },
+  );
 }
 
 /**
@@ -168,6 +190,7 @@ export function getClusterOperateRecords(params: { cluster_id: number } & Record
     ListBase<
       {
         create_at: string;
+        creator: string;
         op_status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'REVOKED';
         op_type: string;
         ticket_id: number;
@@ -293,6 +316,7 @@ export function createTicketFlowConfig(params: {
   bk_biz_id: number;
   cluster_ids?: number[];
   configs: Record<string, boolean>;
+  remark?: string;
   ticket_types: string[];
 }) {
   return http.post<{
@@ -304,10 +328,11 @@ export function createTicketFlowConfig(params: {
  * 修改可编辑的单据流程规则
  */
 export function updateTicketFlowConfig(params: {
-  bk_biz_id?: number;
+  bk_biz_id: number;
   cluster_ids?: number[];
   config_ids?: number[];
   configs: Record<string, boolean>;
+  remark?: string;
   ticket_types: string[];
 }) {
   return http.post<{

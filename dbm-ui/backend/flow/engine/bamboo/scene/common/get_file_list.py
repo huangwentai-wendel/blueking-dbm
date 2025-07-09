@@ -178,7 +178,7 @@ class GetFileList(object):
             f"{env.BKREPO_PROJECT}/{env.BKREPO_BUCKET}/{proxy_pkg.path}",
         ]
 
-    def spider_upgrade_package(self, pkg_id: str) -> list:
+    def spider_upgrade_package(self, pkg_id: int) -> list:
         """
         spider 升级需要的安装包列表
         """
@@ -727,3 +727,12 @@ class GetFileList(object):
         vm的dbactuator包
         """
         return self.get_db_actuator_package()
+
+    def oracle_actuator_pkg(self) -> list:
+        """
+        oracle的actuator包
+        """
+
+        return [
+            f"{env.BKREPO_PROJECT}/{env.BKREPO_BUCKET}/{self.actuator_pkg.path}",
+        ]

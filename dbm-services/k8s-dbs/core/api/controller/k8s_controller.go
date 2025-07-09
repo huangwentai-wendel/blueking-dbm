@@ -1,0 +1,138 @@
+/*
+TencentBlueKing is pleased to support the open source community by making
+蓝鲸智云-DB管理系统(BlueKing-BK-DBM) available.
+
+Copyright (C) 2017-2023 THL A29 Limited, a Tencent company. All rights reserved.
+
+Licensed under the MIT License (the "License");
+you may not use this file except in compliance with the License.
+
+You may obtain a copy of the License at
+https://opensource.org/licenses/MIT
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	coreconst "k8s-dbs/common/constant"
+	commentity "k8s-dbs/common/entity"
+	"k8s-dbs/core/entity"
+	"k8s-dbs/core/errors"
+	"k8s-dbs/core/provider"
+	metahelper "k8s-dbs/metadata/helper"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jinzhu/copier"
+
+	reqvo "k8s-dbs/core/api/vo/req"
+
+	respvo "k8s-dbs/core/api/vo/resp"
+
+	pventity "k8s-dbs/core/provider/entity"
+
+	metarespvo "k8s-dbs/metadata/api/vo/resp"
+)
+
+// K8sController k8s 集群管理 controller
+type K8sController struct {
+	k8sProvider *provider.K8sProvider
+}
+
+// CreateNamespace 创建 namespace
+func (k *K8sController) CreateNamespace(ctx *gin.Context) {
+	var namespaceReq reqvo.K8sNamespaceReqVo
+	if err := ctx.ShouldBindJSON(&namespaceReq); err != nil {
+		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.CreateK8sNsError, err))
+		return
+	}
+	var namespaceEntity pventity.K8sNamespaceEntity
+	if err := copier.Copy(&namespaceEntity, &namespaceReq); err != nil {
+		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.CreateK8sNsError, err))
+		return
+	}
+	dbsContext := commentity.DbsContext{
+		BkAuth: &namespaceReq.BKAuth,
+	}
+	added, err := k.k8sProvider.CreateNamespace(&dbsContext, &namespaceEntity)
+	if err != nil {
+		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.CreateK8sNsError, err))
+		return
+	}
+	var data respvo.K8sNamespaceRespVo
+	if err := copier.Copy(&data, added); err != nil {
+		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.CreateK8sNsError, err))
+		return
+	}
+	entity.SuccessResponse(ctx, data, coreconst.Success)
+}
+
+// GetPodLogs 获取 pod 日志详情
+func (k *K8sController) GetPodLogs(ctx *gin.Context) {
+	var logReq reqvo.K8sPodLogReqVo
+	if err := ctx.ShouldBindJSON(&logReq); err != nil {
+		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetPodLogError, err))
+		return
+	}
+	var podLogEntity pventity.K8sPodLogEntity
+	if err := copier.Copy(&podLogEntity, &logReq); err != nil {
+		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetPodLogError, err))
+		return
+	}
+	logs, _, err := k.k8sProvider.GetPodLog(&podLogEntity, nil)
+	if err != nil {
+		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetPodLogError, err))
+		return
+	}
+	data := respvo.K8sPodLogRespVo{
+		Logs:           logs,
+		K8sClusterName: logReq.K8sClusterName,
+		ClusterName:    logReq.ClusterName,
+		Namespace:      logReq.Namespace,
+		PodName:        logReq.PodName,
+		Container:      logReq.Container,
+	}
+	entity.SuccessResponse(ctx, data, coreconst.Success)
+}
+
+// ListPodLogs 获取 pod 日志分页结果
+func (k *K8sController) ListPodLogs(ctx *gin.Context) {
+	pagination, err := metahelper.BuildPagination(ctx)
+	if err != nil {
+		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetMetaDataErr, err))
+		return
+	}
+	var logReq reqvo.K8sPodLogReqVo
+	if err := ctx.ShouldBindJSON(&logReq); err != nil {
+		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetPodLogError, err))
+		return
+	}
+	var podLogEntity pventity.K8sPodLogEntity
+	if err := copier.Copy(&podLogEntity, &logReq); err != nil {
+		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetPodLogError, err))
+		return
+	}
+	logs, count, err := k.k8sProvider.GetPodLog(&podLogEntity, pagination)
+	if err != nil {
+		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetPodLogError, err))
+		return
+	}
+
+	var responseData = metarespvo.PageResult{
+		Count:  count,
+		Result: logs,
+	}
+	entity.SuccessResponse(ctx, responseData, coreconst.Success)
+}
+
+// NewK8sController 构建 K8sController
+func NewK8sController(k8sProvider *provider.K8sProvider) *K8sController {
+	return &K8sController{
+		k8sProvider,
+	}
+}

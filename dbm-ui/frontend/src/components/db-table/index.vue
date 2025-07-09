@@ -22,10 +22,10 @@
         :key="tableKey"
         ref="bkTableRef"
         :columns="localColumns"
-        :data="tableData.results"
         :max-height="tableMaxHeight"
         :pagination="pagination"
         :remote-pagination="remotePagination"
+        :settings="settings"
         show-overflow
         :show-settings="showSettings"
         v-bind="$attrs"
@@ -36,7 +36,7 @@
         <BkTableColumn
           v-if="columns.length < 1 && selectable"
           fixed="left"
-          width="80">
+          width="70">
           <template #header>
             <div class="db-table-select-cell">
               <div
@@ -114,6 +114,11 @@
               @refresh="fetchListData" />
           </slot>
         </template>
+        <template
+          v-if="slots.setting"
+          #setting>
+          <slot name="setting" />
+        </template>
       </BkTable>
     </BkLoading>
   </div>
@@ -121,8 +126,9 @@
 <script setup lang="tsx">
   import type { Table } from 'bkui-vue';
   import _ from 'lodash';
-  import { computed, nextTick, onMounted, reactive, type Ref, ref, shallowRef } from 'vue';
+  import { computed, nextTick, onMounted, reactive, type Ref, ref, shallowRef, type VNode } from 'vue';
   import { useI18n } from 'vue-i18n';
+  import { useRouter } from 'vue-router';
 
   import type { IRequestPayload } from '@services/http';
   import type { ListBase } from '@services/types';
@@ -145,6 +151,8 @@
     dataSource: (params: any, payload?: IRequestPayload) => Promise<any>;
     disableSelectMethod?: (data: any) => boolean | string;
     fixedPagination?: boolean;
+    // 跨业务
+    ignoreBiz?: boolean;
     paginationExtra?: {
       small?: boolean;
     };
@@ -156,6 +164,13 @@
     remoteSort?: boolean;
     // 是否开启远程分页
     selectable?: boolean;
+    // 默认选中
+    selected?: any[];
+    settings?: {
+      checked?: string[];
+      disabled?: string[];
+      size?: string;
+    };
     // 是否开启跨页全选
     showSelectAllPage?: boolean;
     showSettings?: boolean;
@@ -167,7 +182,13 @@
     (e: 'requestFinished', value: any[]): void;
     (e: 'clearSearch'): void;
     (e: 'selection', key: string[], list: any[]): void;
-    (e: 'selection', key: number[], list: any[]): void;
+  }
+
+  export interface Slots {
+    default: () => VNode;
+    empty: () => VNode;
+    expandRow: () => VNode;
+    setting: () => VNode;
   }
 
   export interface Exposes {
@@ -188,19 +209,22 @@
     containerHeight: undefined,
     disableSelectMethod: () => false,
     fixedPagination: false,
+    ignoreBiz: false,
     paginationExtra: () => ({}),
     primaryKey: 'id',
     releateUrlQuery: false,
     remotePagination: true,
     remoteSort: false,
     selectable: false,
+    selected: () => [],
+    settings: undefined,
     showSelectAllPage: true,
     showSettings: false,
     sortType: 'default',
   });
 
   const emits = defineEmits<Emits>();
-
+  const slots = defineSlots<Slots>();
   // defineOptions({
   //   inheritAttrs: false,
   // });
@@ -285,9 +309,10 @@
         </span>
       );
     },
-    width: 80,
+    width: 70,
   });
 
+  const router = useRouter();
   const { t } = useI18n();
   const paginationLimitCache = useStorage('table_pagination_limit', 20);
 
@@ -385,12 +410,13 @@
     emits('selection', Object.keys(rowSelectMemo.value), Object.values(rowSelectMemo.value));
   };
 
+  let daymicTimer: NodeJS.Timeout;
   const fetchListData = (loading = true) => {
-    isReady = true;
+    clearTimeout(daymicTimer);
     Promise.resolve().then(() => {
       isLoading.value = loading;
       const params = {
-        bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
+        bk_biz_id: props.ignoreBiz ? undefined : window.PROJECT_CONFIG.BIZ_ID,
         limit: pagination.limit,
         offset: (pagination.current - 1) * pagination.limit,
         ...paramsMemo,
@@ -409,6 +435,18 @@
       props
         .dataSource(params, payload)
         .then((data) => {
+          bkTableRef.value.getVxeTableInstance().loadData(data.results.slice(0, 20));
+          if (data.results.length > 20) {
+            daymicTimer = setTimeout(() => {
+              bkTableRef.value.getVxeTableInstance().loadData(data.results.slice(0, 50));
+              if (data.results.length > 50) {
+                daymicTimer = setTimeout(() => {
+                  bkTableRef.value.getVxeTableInstance().loadData(data.results);
+                }, 3000);
+              }
+            }, 1500);
+          }
+
           tableData.value = data;
           pagination.count = data.count;
           isSearching.value = getSearchingStatus();
@@ -420,12 +458,13 @@
           }
 
           if (!props.fixedPagination && props.releateUrlQuery) {
-            replaceSearchParams(params);
+            router.replace({
+              query: replaceSearchParams(params, false),
+            });
           }
           if (!isPaginationChangeFetch) {
-            isPaginationChangeFetch = false;
-            rowSelectMemo.value = {};
             isWholeChecked.value = false;
+            isPaginationChangeFetch = false;
             triggerSelection();
           }
 
@@ -438,24 +477,49 @@
           isAnomalies.value = true;
         })
         .finally(() => {
-          isReady = false;
           isLoading.value = false;
-          emits('requestFinished', tableData.value.results);
         });
     });
   };
 
   // 拉取全量数据
   const fetchAllData = async () => {
-    const { results } = await props.dataSource({
-      bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
+    const params = {
       limit: -1,
       offset: (pagination.current - 1) * pagination.limit,
       ...paramsMemo,
       ...sortParams,
-    });
+    };
+    if (!props.ignoreBiz) {
+      Object.assign(params, {
+        bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
+      });
+    }
+    const { results } = await props.dataSource(params);
     return results;
   };
+
+  watch(
+    () => props.columns,
+    () => {
+      tableKey.value = Date.now().toString();
+    },
+  );
+
+  watch(
+    () => props.selected,
+    () => {
+      const selectMap = props.selected.reduce<Record<string, any>>((acc, item) => {
+        Object.assign(acc, {
+          [item[props.primaryKey]]: item,
+        });
+        return acc;
+      }, {});
+      rowSelectMemo.value = {
+        ...selectMap,
+      };
+    },
+  );
 
   // 解析 URL 上面的分页信息
   const parseURL = () => {
@@ -474,7 +538,7 @@
         order_type: orderType,
       };
     }
-    isReady = false;
+    isReady = true;
   };
 
   // 全选当前页
@@ -525,26 +589,18 @@
       return;
     }
 
-    props
-      .dataSource({
-        bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
-        limit: -1,
-        offset: (pagination.current - 1) * pagination.limit,
-        ...paramsMemo,
-        ...sortParams,
-      })
-      .then((data) => {
-        const selectMap = { ...rowSelectMemo.value };
-        data.results.forEach((dataItem: any) => {
-          if (props.disableSelectMethod(dataItem)) {
-            return;
-          }
-          selectMap[_.get(dataItem, props.primaryKey)] = dataItem;
-        });
-        rowSelectMemo.value = selectMap;
-        isWholeChecked.value = true;
-        triggerSelection();
+    fetchAllData().then((results) => {
+      const selectMap = { ...rowSelectMemo.value };
+      results.forEach((dataItem: any) => {
+        if (props.disableSelectMethod(dataItem)) {
+          return;
+        }
+        selectMap[_.get(dataItem, props.primaryKey)] = dataItem;
       });
+      rowSelectMemo.value = selectMap;
+      isWholeChecked.value = true;
+      triggerSelection();
+    });
   };
 
   // 选中单行
@@ -718,6 +774,7 @@
     position: relative;
     display: flex;
     align-items: center;
+    width: 64px;
 
     .db-table-whole-check {
       position: relative;

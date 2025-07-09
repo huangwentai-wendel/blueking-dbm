@@ -33,7 +33,9 @@
       </div>
     </template>
     <template #menu>
-      <component :is="renderMenuCom" />
+      <div class="db-navigation-side-menu">
+        <component :is="renderMenuCom" />
+      </div>
     </template>
     <div class="db-navigation-content-header">
       <slot name="content-header" />
@@ -129,6 +131,7 @@
     [menuEnum.configManage]: [
       'BizResourcePool',
       'BizResourceTag',
+      'businessClusterTag',
       'DbConfigure',
       'DBMonitorStrategy',
       'DBMonitorAlarmGroup',
@@ -139,6 +142,7 @@
       'TicketNoticeSetting',
     ],
     [menuEnum.databaseManage]: [
+      'DbManage',
       'MysqlManage',
       'EsManage',
       'HdfsManage',
@@ -183,6 +187,7 @@
       'inspectionReportGlobal',
       'DbaManage',
       'AlarmEventsGlobal',
+      'ServiceStatus',
     ],
     [menuEnum.resourceManage]: ['ResourceSpec', 'resourceManage', 'resourcePoolDirtyMachines'],
   } as Record<string, string[]>;
@@ -240,7 +245,6 @@
 
   const handleCollapse = () => {
     isSideMenuFlod.value = !isSideMenuFlod.value;
-    console.log('handleCollapse');
   };
 
   const handleMenuChange = (type: string) => {

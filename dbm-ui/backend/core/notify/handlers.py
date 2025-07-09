@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 from celery import shared_task
 from django.utils.translation import gettext as _
-from jinja2 import Environment
+from jinja2.sandbox import SandboxedEnvironment as Environment
 
 from backend import env
 from backend.components import CmsiApi
@@ -299,9 +299,9 @@ class NotifyAdapter:
 
         # 渲染通知内容
         jinja_env = Environment()
-        if self.phase in [TicketStatus.SUCCEEDED]:
+        if self.phase == TicketStatus.SUCCEEDED:
             template = jinja_env.from_string(FINISHED_TEMPLATE)
-        elif self.phase in [TicketStatus.FAILED]:
+        elif self.phase == TicketStatus.FAILED:
             template = jinja_env.from_string(FAILED_TEMPLATE)
         elif self.phase == TicketStatus.TERMINATED:
             template = jinja_env.from_string(TERMINATE_TEMPLATE)
@@ -336,8 +336,8 @@ class NotifyAdapter:
 
     def send_msg(self):
         # 获取单据通知设置，优先: 单据配置 > 业务配置 > 默认业务配置
-        if self.phase in self.ticket.send_msg_config:
-            send_msg_config = self.ticket.send_msg_config[self.phase]
+        if self.phase in self.ticket.msg_config:
+            send_msg_config = self.ticket.msg_config[self.phase]
         else:
             biz_notify_config = BizSettings.get_setting_value(
                 self.bk_biz_id, key=BizSettingsEnum.NOTIFY_CONFIG, default=DEFAULT_BIZ_NOTIFY_CONFIG

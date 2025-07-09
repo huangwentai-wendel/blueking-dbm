@@ -349,6 +349,7 @@
   </div>
 </template>
 <script setup lang="tsx">
+  import dayjs from 'dayjs';
   import _ from 'lodash';
   import type { Instance } from 'tippy.js';
   import type { Ref } from 'vue';
@@ -656,6 +657,11 @@
 
   let expandFailedNodeObjects: TaskflowList = [];
   let expandTodoNodeObjects: TaskflowList = [];
+  const gatewayInstanceMap: Record<string, Instance[]> = {
+    branch: [],
+    converge: [],
+    parallel: [],
+  };
   const expandNodes: string[] = [];
   const showResultFileTypes: TicketTypesStrings[] = [TicketTypes.REDIS_KEYS_EXTRACT, TicketTypes.REDIS_KEYS_DELETE];
 
@@ -929,6 +935,20 @@
         logState.node = node;
       }
     }
+    setTimeout(() => {
+      gatewayInstanceMap.converge.forEach((t) => t.destroy());
+      gatewayInstanceMap.converge = dbTippy(document.querySelectorAll('.bk-dbm-icon.db-icon-converge-gateway'), {
+        content: '汇聚网关',
+      });
+      gatewayInstanceMap.branch.forEach((t) => t.destroy());
+      gatewayInstanceMap.branch = dbTippy(document.querySelectorAll('.bk-dbm-icon.db-icon-branch-gateway'), {
+        content: '分支网关',
+      });
+      gatewayInstanceMap.parallel.forEach((t) => t.destroy());
+      gatewayInstanceMap.parallel = dbTippy(document.querySelectorAll('.bk-dbm-icon.db-icon-parallel-gateway'), {
+        content: '并行网关',
+      });
+    }, 100);
   };
 
   /**
@@ -963,6 +983,8 @@
     flowState.instance && renderNodes(true);
   };
 
+  let lasteQueryTime: number | dayjs.Dayjs = 0;
+
   /**
    * 获取任务详情数据
    */
@@ -975,6 +997,14 @@
       },
     )
       .then((res) => {
+        const nowTime = dayjs();
+        const firstLevelNodesCount = Object.values(res.activities).length;
+        const firstLevelFlowsCount = Object.values(res.flows).length;
+        const queryTimeDiff = nowTime.diff(lasteQueryTime, 'second');
+        if (firstLevelNodesCount > 500 && firstLevelFlowsCount > 500 && lasteQueryTime && queryTimeDiff < 60) {
+          return;
+        }
+        lasteQueryTime = nowTime;
         flowState.details = res;
         retryRenderFailedTips();
       })
@@ -989,7 +1019,7 @@
       });
   };
 
-  const { isActive, pause, resume } = useTimeoutPoll(fetchTaskflowDetails, 10000);
+  const { isActive, pause, resume } = useTimeoutPoll(fetchTaskflowDetails, 15000);
 
   /**
    * 重试节点
@@ -1624,6 +1654,58 @@
         font-size: 14px;
         cursor: pointer;
         flex-shrink: 0;
+      }
+    }
+
+    .node-conditional-gateway-layout {
+      .flex();
+
+      height: 100%;
+      background-color: #fff;
+      border-radius: 24px;
+      .box-shadow();
+
+      align-items: center;
+
+      .icon-box {
+        width: 40px;
+        height: 40px;
+        margin: 0 12px 0 4px;
+        font-size: 28px;
+        color: #979ba5;
+        background-color: #f0f1f5;
+        border-radius: 50%;
+
+        .flex();
+      }
+
+      .display-name {
+        margin-right: 4px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+      }
+    }
+
+    .node-gateway-layout {
+      .flex();
+      .box-shadow();
+
+      height: 100%;
+      cursor: pointer;
+      background-color: #fff;
+      border-radius: 50%;
+
+      .icon-box {
+        .flex();
+
+        width: 40px;
+        height: 40px;
+        font-size: 28px;
+        color: #979ba5;
+        background-color: #f0f1f5;
+        border-radius: 50%;
       }
     }
 

@@ -27,14 +27,12 @@
         <EditableTable
           ref="editableTable"
           class="mt16 mb16"
-          :model="formData.tableData"
-          :rules="rules">
+          :model="formData.tableData">
           <EditableRow
             v-for="(item, index) in formData.tableData"
             :key="index">
             <ClusterColumn
               v-model="item.cluster"
-              :cluster-types="[ClusterTypes.MONGO_REPLICA_SET, ClusterTypes.MONGO_SHARED_CLUSTER]"
               :selected="selected"
               @batch-edit="handleClusterBatchEdit" />
             <CurrentCapacityColumn v-model="item.cluster" />
@@ -72,7 +70,6 @@
 </template>
 
 <script setup lang="tsx">
-  import type { ComponentProps } from 'vue-component-type-helpers';
   import { useI18n } from 'vue-i18n';
 
   import MongodbModel from '@services/model/mongodb/mongodb';
@@ -80,7 +77,7 @@
 
   import { useCreateTicket, useTicketDetail } from '@hooks';
 
-  import { ClusterTypes, TicketTypes } from '@common/const';
+  import { TicketTypes } from '@common/const';
 
   import TicketPayload, {
     createTickePayload,
@@ -197,22 +194,6 @@
   const formRef = useTemplateRef('form');
   const editableTableRef = useTemplateRef('editableTable');
 
-  const rules = {
-    'cluster.master_domain': [
-      {
-        message: t('目标集群重复'),
-        trigger: 'change',
-        validator: (value: string) => {
-          if (value) {
-            const nonEmptyIdList = formData.tableData.filter((row) => row.cluster.master_domain === value);
-            return nonEmptyIdList.length === 1;
-          }
-          return true;
-        },
-      },
-    ],
-  };
-
   const formData = reactive(createDefaultFormData());
 
   // 集群列表及详情跳转
@@ -229,35 +210,13 @@
     });
   }
 
-  const selected = computed(() => {
-    const selectedClusters: ComponentProps<typeof ClusterColumn>['selected'] = {
-      [ClusterTypes.MONGO_REPLICA_SET]: [],
-      [ClusterTypes.MONGO_SHARED_CLUSTER]: [],
-    };
-    formData.tableData.forEach((tableRow) => {
-      const { cluster_type: clusterType, id, master_domain: masterDomain } = tableRow.cluster;
-      if (id) {
-        selectedClusters[clusterType as keyof typeof selectedClusters].push({
-          id,
-          master_domain: masterDomain,
-        });
-      }
-    });
-    return selectedClusters;
-  });
-
-  const clusterMemo = computed(() =>
-    Object.fromEntries(
-      Object.values(selected.value).flatMap((clusters) =>
-        clusters.filter((cluster) => cluster.master_domain).map((cluster) => [cluster.master_domain, true]),
-      ),
-    ),
-  );
+  const selected = computed(() => formData.tableData.filter((item) => item.cluster.id).map((item) => item.cluster));
+  const selectedMap = computed(() => Object.fromEntries(selected.value.map((cur) => [cur.master_domain, true])));
 
   const handleClusterBatchEdit = (clusterList: MongodbModel[]) => {
     const newList: IDataRow[] = [];
     clusterList.forEach((item) => {
-      if (!clusterMemo.value[item.master_domain]) {
+      if (!selectedMap.value[item.master_domain]) {
         newList.push(
           createRowData({
             cluster: {

@@ -9,33 +9,12 @@ cd $DIR
 nowtime=$(date "+%Y-%m-%d %H:%M:%S")
 confFile="dbmon-config.yaml"
 
-add_to_cron() {
-    P=$(pwd)
-    CMD="cd $P && sh start.sh >> ./logs/start.log 2>&1"
-    TMPF=./crontab.old
-
-    # Maybe 'crontab -l' will output 'no crontab for xxx',so we output to 2>/dev/null
-    if crontab -l 2>/dev/null | grep "$CMD" 1>/dev/null; then
-        :
-    else
-        crontab -l 2>/dev/null >$TMPF
-        cat >>$TMPF <<EOF
-# bk-dbmon start.sh , check and start every 1 min #`date "+%F %T"`
-* *  * * * $CMD
-EOF
-        crontab $TMPF
-        echo "[$nowtime] add to cron"
-    fi
-}
-
-add_to_cron
-
 httpAddr=$(grep 'http_address' dbmon-config.yaml | awk '{print $2}' | sed -e "s/^'//" -e "s/'$//" -e 's/^"//' -e 's/$"//')
 httpAddr="http://$httpAddr/health"
 
 if curl $httpAddr >/dev/null 2>&1; then
-    echo "[$nowtime] bk-dbmon is running, try restart. "
-    ps aux | grep 'bk-dbmon --config' | grep -v grep | awk '{print $2}' | xargs kill
+    echo "[$nowtime] bk-dbmon is running"
+    exit 0
 fi
 
 if [[ ! -e $confFile ]]; then
@@ -58,5 +37,23 @@ else
     exit -1
 fi
 
-sleep 2
-ps -ef|grep dbmon|grep -v grep ;crontab -l|grep dbmon
+add_to_cron() {
+    P=$(pwd)
+    CMD="cd $P && sh start.sh >> ./logs/start.log 2>&1"
+    TMPF=./crontab.old
+
+    # Maybe 'crontab -l' will output 'no crontab for xxx',so we output to 2>/dev/null
+    if crontab -l 2>/dev/null | grep "$CMD" 1>/dev/null; then
+        :
+    else
+        crontab -l 2>/dev/null >$TMPF
+        cat >>$TMPF <<EOF
+# bk-dbmon start.sh , check and start every 1 min
+* *  * * * $CMD
+EOF
+        crontab $TMPF
+        echo "[$nowtime] add to cron"
+    fi
+}
+
+add_to_cron

@@ -8,35 +8,43 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+import re
+
 from django.db.models import CharField, F, Q, Value
 from django.db.models.functions import Concat
-from django.forms import model_to_dict
 
 from backend.configuration.models import DBAdministrator
+from backend.constants import DOMAIN_PATTERN
+from backend.db_dirty.models import DirtyMachine
+from backend.db_dirty.serializers import ListMachinePoolSerializer
 from backend.db_meta.enums import ClusterType
-from backend.db_meta.models import Cluster, ClusterEntry, Machine, ProxyInstance, StorageInstance
-from backend.db_services.dbresource.handlers import ResourceHandler
+from backend.db_meta.models import AppCache, Cluster, ClusterEntry, ProxyInstance, StorageInstance
+from backend.db_services.ipchooser.query.resource import ResourceQueryHelper
 from backend.db_services.quick_search import constants
 from backend.db_services.quick_search.constants import FilterType, ResourceType
 from backend.flow.models import FlowTree
+from backend.iam_app.dataclass.actions import ActionEnum
+from backend.iam_app.handlers.permission import Permission
 from backend.ticket.constants import TicketType
 from backend.ticket.models import Ticket
 from backend.utils.string import split_str_to_list
 
 
 class QSearchHandler(object):
-    def __init__(self, bk_biz_ids=None, db_types=None, resource_types=None, filter_type=None, limit=None):
-        self.bk_biz_ids = bk_biz_ids
+    def __init__(self, bk_biz_ids=None, db_types=None, resource_types=None, filter_type=None, limit=None, user=None):
         self.db_types = db_types
         self.resource_types = resource_types
         self.filter_type = filter_type
         self.limit = limit or constants.DEFAULT_LIMIT
+        self.user = user
 
         # db_type -> cluster_type
         self.cluster_types = []
         if self.db_types:
             for db_type in self.db_types:
                 self.cluster_types.extend(ClusterType.db_type_to_cluster_types(db_type))
+
+        self.bk_biz_ids, self.permission = self.get_permission_biz_ids(bk_biz_ids)
 
     def search(self, keyword: str):
         result = {}
@@ -48,10 +56,25 @@ class QSearchHandler(object):
 
         for target_resource_type in target_resource_types:
             filter_func = getattr(self, f"filter_{target_resource_type}", None)
-            if callable(filter_func):
+            if not self.permission and target_resource_type != ResourceType.MACHINE.value:
+                result[target_resource_type] = []
+            elif callable(filter_func):
                 result[target_resource_type] = filter_func(keyword_list)
 
         return result
+
+    def get_permission_biz_ids(self, bk_biz_ids):
+        """获取有权限的业务id"""
+        bk_biz_ids = bk_biz_ids or []
+        all_bk_biz_ids = AppCache.objects.all().values_list("bk_biz_id", flat=True)
+        permission = Permission(username=self.user, request={}).policy_query(
+            action=ActionEnum.DB_MANAGE, obj_list=all_bk_biz_ids
+        )
+        if len(permission) != len(all_bk_biz_ids):
+            bk_biz_ids = (
+                list(set(bk_biz_ids) & set(permission)) if bk_biz_ids and permission else bk_biz_ids or permission
+            )
+        return bk_biz_ids, permission
 
     def generate_filter_for_str(self, filter_key, keyword_list):
         """
@@ -77,6 +100,10 @@ class QSearchHandler(object):
             except ValueError:
                 domain, _ = keyword, None
 
+            # 如果不是有效的域名，则直接将整个字符串作为域名
+            if not re.compile(DOMAIN_PATTERN).match(domain):
+                domain = keyword
+
             if self.filter_type == FilterType.EXACT.value:
                 domains.append(domain)
             else:
@@ -86,7 +113,7 @@ class QSearchHandler(object):
             qs = Q(**{f"{filter_key}__in": domains})
         return qs
 
-    def generate_filter_for_ip_port(self, filter_key, keyword_list):
+    def generate_filter_for_ip_port(self, filter_key, keyword_list, not_port=False):
         """
         为ip:port实例生成过滤函数
         """
@@ -104,11 +131,13 @@ class QSearchHandler(object):
             ip_filter_key = filter_key
             port_filter_key = "port"
             if port:
-                qs |= Q(**{ip_filter_key: ip, port_filter_key: port})
-                if self.filter_type == FilterType.CONTAINS.value:
+                query_filter = {ip_filter_key: ip}
+                if not not_port:
+                    query_filter[port_filter_key] = port
+                qs |= Q(**query_filter)
+                if self.filter_type == FilterType.CONTAINS.value and not not_port:
                     qs |= Q(**{"ip_port__contains": keyword})
-                else:
-                    qs |= Q(**{ip_filter_key: ip, port_filter_key: port})
+
             else:
                 if self.filter_type == FilterType.CONTAINS.value:
                     qs |= Q(**{f"{filter_key}__contains": ip})
@@ -159,7 +188,7 @@ class QSearchHandler(object):
         qs = self.generate_filter_for_domain("entry", keyword_list)
 
         if self.bk_biz_ids:
-            qs = Q(bk_biz_id__in=self.bk_biz_ids) & qs
+            qs = Q(cluster__bk_biz_id__in=self.bk_biz_ids) & qs
 
         if self.db_types:
             qs = Q(cluster_type__in=self.cluster_types) & qs
@@ -262,50 +291,13 @@ class QSearchHandler(object):
 
     def filter_machine(self, keyword_list: list):
         """过滤主机"""
-        bk_host_ids = [int(keyword) for keyword in keyword_list if isinstance(keyword, int) or keyword.isdigit()]
-        if self.filter_type == FilterType.EXACT.value:
-            qs = Q(ip__in=keyword_list)
-            if bk_host_ids:
-                qs = qs | Q(bk_host_id__in=bk_host_ids)
-        else:
-            qs = Q()
-            for keyword in keyword_list:
-                qs |= Q(ip__contains=keyword)
+        qs = self.generate_filter_for_ip_port("ip", keyword_list, not_port=True)
+        objs = DirtyMachine.objects.filter(qs)[: self.limit]
+        machine_data = ListMachinePoolSerializer(objs, many=True).data
+        # 补充主机agent状态
+        ResourceQueryHelper.fill_agent_status(machine_data, fill_key="agent_status")
 
-        if self.bk_biz_ids:
-            qs = qs & Q(bk_biz_id__in=self.bk_biz_ids)
-
-        if self.db_types:
-            qs = qs & Q(cluster_type__in=self.cluster_types)
-
-        objs = Machine.objects.filter(qs).prefetch_related(
-            "storageinstance_set", "storageinstance_set__cluster", "proxyinstance_set", "proxyinstance_set__cluster"
-        )
-
-        # 解析cluster
-        machines = []
-        for obj in objs[: self.limit]:
-            machine = model_to_dict(
-                obj, ["bk_biz_id", "bk_host_id", "ip", "cluster_type", "spec_id", "bk_cloud_id", "bk_city"]
-            )
-
-            # 兼容实例未绑定集群的情况
-            cluster_info = None
-            for instances in [obj.storageinstance_set.all(), obj.proxyinstance_set.all()]:
-                if cluster_info:
-                    break
-                for inst in instances:
-                    if cluster_info:
-                        break
-                    for cluster in inst.cluster.all():
-                        cluster_info = {"cluster_id": cluster.id, "cluster_domain": cluster.immute_domain}
-
-            if cluster_info is None:
-                cluster_info = {"cluster_id": None, "cluster_domain": None}
-            machine.update(cluster_info)
-            machines.append(machine)
-
-        return machines
+        return machine_data
 
     def filter_ticket(self, keyword_list: list):
         """过滤单据，单号为递增数字，采用startswith过滤"""
@@ -332,6 +324,3 @@ class QSearchHandler(object):
         for ticket in results:
             ticket["ticket_type_display"] = TicketType.get_choice_label(ticket["ticket_type"])
         return results
-
-    def filter_resource_pool(self, keyword_list: list):
-        return ResourceHandler().resource_list({"hosts": keyword_list, "limit": self.limit, "offset": 0})["results"]

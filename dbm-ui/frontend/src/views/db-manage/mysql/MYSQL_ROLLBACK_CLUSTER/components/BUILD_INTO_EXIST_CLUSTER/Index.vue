@@ -21,17 +21,19 @@
       :key="index">
       <ClusterColumn
         v-model="item.cluster"
+        allows-duplicates
         :selected="selected"
         @batch-edit="handleBatchEditCluster" />
       <TargetClusterColumn
         v-model="item.target_cluster"
-        :cluster="item.cluster" />
+        :cluster="item.cluster"
+        :selected="selectedTargetClusters" />
       <BackupSourceColumn
         v-model="item.backup_source"
         @batch-edit="handleBatchEdit" />
       <BackupModeColumn
         v-model="item.rollback"
-        :cluster="item.cluster"
+        :row-data="item"
         @batch-edit="handleBatchEdit" />
       <TagDbNameColumn
         v-model="item.databases"
@@ -70,6 +72,7 @@
   </EditableTable>
 </template>
 <script lang="ts" setup>
+  import _ from 'lodash';
   import { useTemplateRef } from 'vue';
   import { useI18n } from 'vue-i18n';
 
@@ -165,6 +168,9 @@
 
   const selected = computed(() => tableData.value.filter((item) => item.cluster.id).map((item) => item.cluster));
   const selectedMap = computed(() => Object.fromEntries(selected.value.map((cur) => [cur.master_domain, true])));
+  const selectedTargetClusters = computed(() =>
+    tableData.value.filter((item) => item.target_cluster.id).map((item) => item.target_cluster),
+  );
 
   watch(
     () => props.ticketDetails,
@@ -225,7 +231,7 @@
   const handleBatchEdit = (value: any, field: string) => {
     tableData.value.forEach((item) => {
       Object.assign(item, {
-        [field as keyof RowData]: value,
+        [field as keyof RowData]: _.cloneDeep(value),
       });
     });
   };

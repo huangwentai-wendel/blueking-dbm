@@ -30,6 +30,7 @@ export function getSystemEnviron() {
     BK_COMPONENT_API_URL: string;
     BK_DBM_URL: string;
     BK_DOMAIN: string;
+    BK_HCM_URL: string;
     BK_HELPER_URL: string;
     BK_NODEMAN_URL: string;
     BK_SCR_URL: string;
@@ -64,11 +65,16 @@ export const getMachineProperty = function () {
 };
 
 // 查询平台常用SQL语句
-export function getCommonSqls(params: { db_type: string }) {
+export function getCommonSqls(params: { db_type: string; is_proxy?: boolean }) {
   return http.get<
     {
       name: string;
       sql: string;
     }[]
   >(`${path}/common_sqls/`, params);
+}
+
+// 查询内置标签
+export function getBuiltinLabels() {
+  return http.get<string[]>(`${path}/builtin_labels/`);
 }

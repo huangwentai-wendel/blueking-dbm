@@ -13,7 +13,6 @@ package manage
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -150,7 +149,8 @@ func Doimport(param ImportMachParam, requestId string) (resp *ImportHostResp, er
 	var ccHostsInfo []*cc.Host
 	var derr error
 	var diskResp bk.GetDiskResp
-	var notFoundHosts, gseAgentIds []string
+	var notFoundHosts []string
+	var bkHostIds []int
 	var elems []model.TbRpDetail
 	resp = &ImportHostResp{}
 	targetHosts := lo.Uniq(param.getIps())
@@ -188,7 +188,7 @@ func Doimport(param ImportMachParam, requestId string) (resp *ImportHostResp, er
 	if config.AppConfig.Yunti.IsNotEmpty() {
 		logger.Info("try to get machine info from yunti")
 		var verr error
-		cvmInfoMap, verr = getCvmMachDetailInfo(getCvmMachList(ccHostsInfo))
+		cvmInfoMap, verr = getCvmMachDetailInfo(buildCvmMachList(ccHostsInfo))
 		if verr != nil {
 			logger.Warn("query cvm info failed %s", verr.Error())
 		}
@@ -196,24 +196,23 @@ func Doimport(param ImportMachParam, requestId string) (resp *ImportHostResp, er
 	for _, h := range ccHostsInfo {
 		delete(hostsMap, h.InnerIP)
 		el := param.transHostInfoToDbModule(h, h.BkCloudId, lableJson)
-		el.SetMore(h.InnerIP, diskResp.IpLogContentMap)
-		// gse agent 1.0的 agent 是用 cloudid:ip
-		gseAgentId := h.BkAgentId
-		if lo.IsEmpty(gseAgentId) {
-			gseAgentId = fmt.Sprintf("%d:%s", h.BkCloudId, h.InnerIP)
-		}
-		gseAgentIds = append(gseAgentIds, gseAgentId)
-		el.BkAgentId = gseAgentId
+		bkHostIds = append(bkHostIds, h.BKHostId)
+		diskDetails := []yunti.CvmDataDisk{}
 		if v, ok := cvmInfoMap[h.InnerIP]; ok {
 			el.DramCap = v.Memory * 1000
+			for _, disk := range v.DatadiskList {
+				logger.Info("get disk info from yunti %v", disk.DiskId)
+			}
+			diskDetails = v.DatadiskList
 		}
+		el.SetMore(h.InnerIP, diskResp.IpLogContentMap, diskDetails)
 		elems = append(elems, el)
 	}
 	if err = model.DB.Self.Table(model.TbRpDetailName()).Create(elems).Error; err != nil {
 		logger.Error("failed to save resource: %s", err.Error())
 		return resp, err
 	}
-	task.SyncRsGseAgentStatusChan <- gseAgentIds
+	task.SyncRsGseAgentStatusChan <- bkHostIds
 	return resp, err
 }
 
@@ -234,23 +233,11 @@ func getCvmMachDetailInfo(ipList []string) (cvmInfoMap map[string]yunti.Instance
 	}), nil
 }
 
-func regularExpressionMatching(regular, s string) bool {
-	m, err := regexp.MatchString(regular, s)
-	if err != nil {
-		logger.Error("matching error: %s", err.Error())
-		return false
-	}
-	return m
-}
-
-// getCvmMachList 判断主机是否是cvm
-func getCvmMachList(hosts []*cc.Host) []string {
+// buildCvmMachList 判断主机是否是cvm
+func buildCvmMachList(hosts []*cc.Host) []string {
 	var machIpList []string
 	for _, host := range hosts {
-		if regularExpressionMatching(`^TC(\d*)\d$`, host.AssetID) || strings.Contains(strings.ToUpper(host.SvrTypeName),
-			"QC_CVM") {
-			machIpList = append(machIpList, host.InnerIP)
-		}
+		machIpList = append(machIpList, host.InnerIP)
 	}
 	return machIpList
 }
@@ -267,36 +254,37 @@ func buildTbRpItem(h *cc.Host, forBizId, bkbizId, bkCloudId int, rsType string, 
 		osType = bk.OsLinux
 	}
 	return model.TbRpDetail{
-		DedicatedBiz:    forBizId,
-		RsType:          dealEmptyRs(rsType),
-		BkCloudID:       bkCloudId,
-		BkBizId:         bkbizId,
-		AssetID:         h.AssetID,
-		BkHostID:        h.BKHostId,
-		IP:              h.InnerIP,
-		Labels:          label,
-		DeviceClass:     h.DeviceClass,
-		DramCap:         h.BkMem,
-		CPUNum:          h.BkCpu,
-		City:            h.IdcCityName,
-		CityID:          h.IdcCityId,
-		SubZone:         h.SZone,
-		SubZoneID:       h.SZoneID,
-		RackID:          cleanStr(h.Equipment),
-		SvrTypeName:     h.SvrTypeName,
-		Status:          model.Unused,
-		NetDeviceID:     util.TransInnerSwitchIpAsNetDeviceId(h.InnerSwitchIp),
-		StorageDevice:   []byte("{}"),
-		TotalStorageCap: h.BkDisk,
-		BkAgentId:       h.BkAgentId,
-		AgentStatusCode: 2,
-		OsType:          model.ConvertOsTypeToHuman(osType),
-		OsBit:           h.BkOsBit,
-		OsVerion:        h.BkOsVersion,
-		OsName:          util.CleanOsName(h.OSName),
-		Operator:        operator,
-		UpdateTime:      time.Now(),
-		CreateTime:      time.Now(),
+		DedicatedBiz:          forBizId,
+		RsType:                dealEmptyRs(rsType),
+		BkCloudID:             bkCloudId,
+		BkBizId:               bkbizId,
+		AssetID:               h.AssetID,
+		BkHostID:              h.BKHostId,
+		IP:                    h.InnerIP,
+		Labels:                label,
+		DeviceClass:           h.DeviceClass,
+		DramCap:               h.BkMem,
+		CPUNum:                h.BkCpu,
+		City:                  h.IdcCityName,
+		CityID:                h.IdcCityId,
+		SubZone:               h.SZone,
+		SubZoneID:             h.SZoneID,
+		RackID:                cleanStr(h.Equipment),
+		SvrTypeName:           h.SvrTypeName,
+		Status:                model.Unused,
+		NetDeviceID:           util.TransInnerSwitchIpAsNetDeviceId(h.InnerSwitchIp),
+		StorageDevice:         []byte("{}"),
+		TotalStorageCap:       h.BkDisk,
+		BkAgentId:             h.BkAgentId,
+		AgentStatusCode:       bk.GseAlive,
+		AgentStatusUpdateTime: time.Now(),
+		OsType:                model.ConvertOsTypeToHuman(osType),
+		OsBit:                 h.BkOsBit,
+		OsVerion:              h.BkOsVersion,
+		OsName:                util.CleanOsName(h.OSName),
+		Operator:              operator,
+		UpdateTime:            time.Now(),
+		CreateTime:            time.Now(),
 	}
 }
 
@@ -345,7 +333,7 @@ func (c *MachineResourceHandler) ImportMachineWithDiffInfo(r *rf.Context) {
 		hostsGroupbyBkBizId[v.BkBizId] = append(hostsGroupbyBkBizId[v.BkBizId], v)
 	}
 	var elems []model.TbRpDetail
-	var gseAgentIds []string
+	var bkHostIds []int
 	for bkBizId, hostList := range hostsGroupbyBkBizId {
 		var ccHostsInfo []*cc.Host
 		var diskResp bk.GetDiskResp
@@ -376,7 +364,7 @@ func (c *MachineResourceHandler) ImportMachineWithDiffInfo(r *rf.Context) {
 		if config.AppConfig.Yunti.IsNotEmpty() {
 			logger.Info("try to get machine info from yunti")
 			var verr error
-			cvmInfoMap, verr = getCvmMachDetailInfo(getCvmMachList(ccHostsInfo))
+			cvmInfoMap, verr = getCvmMachDetailInfo(buildCvmMachList(ccHostsInfo))
 			if verr != nil {
 				logger.Warn("query cvm info failed %s", verr.Error())
 			}
@@ -396,24 +384,20 @@ func (c *MachineResourceHandler) ImportMachineWithDiffInfo(r *rf.Context) {
 			}
 			el := buildTbRpItem(h, hostInfo.ForBiz, hostInfo.BkBizId, hostInfo.BkCloudId, hostInfo.RsType, jsonRaw,
 				input.Operator)
-			el.SetMore(h.InnerIP, diskResp.IpLogContentMap)
-			// gse agent 1.0的 agent 是用 cloudid:ip
-			gseAgentId := h.BkAgentId
-			if lo.IsEmpty(gseAgentId) {
-				gseAgentId = fmt.Sprintf("%d:%s", h.BkCloudId, h.InnerIP)
-			}
-			gseAgentIds = append(gseAgentIds, gseAgentId)
-			el.BkAgentId = gseAgentId
+			bkHostIds = append(bkHostIds, h.BKHostId)
+			diskDetailInfo := []yunti.CvmDataDisk{}
 			if v, ok := cvmInfoMap[h.InnerIP]; ok {
 				el.DramCap = v.Memory * 1000
+				diskDetailInfo = v.DatadiskList
 			}
+			el.SetMore(h.InnerIP, diskResp.IpLogContentMap, diskDetailInfo)
 			elems = append(elems, el)
 		}
 	}
 	if err := model.DB.Self.Table(model.TbRpDetailName()).Create(elems).Error; err != nil {
 		c.SendResponse(r, err, err)
 	}
-	task.SyncRsGseAgentStatusChan <- gseAgentIds
+	task.SyncRsGseAgentStatusChan <- bkHostIds
 	c.SendResponse(r, nil, "success")
 }
 

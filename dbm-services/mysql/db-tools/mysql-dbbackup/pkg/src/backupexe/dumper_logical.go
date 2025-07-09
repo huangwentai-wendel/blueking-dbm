@@ -41,7 +41,7 @@ type LogicalDumper struct {
 	backupEndTime   time.Time
 }
 
-func (l *LogicalDumper) initConfig(mysqlVerStr string) error {
+func (l *LogicalDumper) initConfig(mysqlVerStr string, logBinDisabled bool) error {
 	if l.cnf == nil {
 		return errors.New("logical dumper params is nil")
 	}
@@ -74,7 +74,7 @@ func (l *LogicalDumper) Execute(ctx context.Context) error {
 		fmt.Sprintf("--threads=%d", l.cnf.LogicalBackup.Threads),
 		// "--disk-limits=1GB:5GB",
 	}
-	if *l.cnf.LogicalBackup.TrxConsistencyOnly {
+	if l.cnf.LogicalBackup.TrxConsistencyOnly != nil && *l.cnf.LogicalBackup.TrxConsistencyOnly {
 		args = append(args, "--trx-consistency-only")
 	}
 	if l.cnf.Public.KillLongQueryTime > 0 {
@@ -213,21 +213,20 @@ func (l *LogicalDumper) Execute(ctx context.Context) error {
 
 // PrepareBackupMetaInfo prepare the backup result of Logical Backup
 // mydumper 备份完成后，解析 metadata 文件
-func (l *LogicalDumper) PrepareBackupMetaInfo(cnf *config.BackupConfig) (*dbareport.IndexContent, error) {
-	var metaInfo = dbareport.IndexContent{BinlogInfo: dbareport.BinlogStatusInfo{}}
+func (l *LogicalDumper) PrepareBackupMetaInfo(cnf *config.BackupConfig, metaInfo *dbareport.IndexContent) error {
 	metaFileName := filepath.Join(cnf.Public.BackupDir, cnf.Public.TargetName(), "metadata")
 	metadata, err := parseMydumperMetadata(metaFileName)
 	if err != nil {
-		return nil, errors.WithMessage(err, "parse mydumper metadata")
+		return errors.WithMessage(err, "parse mydumper metadata")
 	}
 	logger.Log.Infof("metadata file:%+v", metadata)
 	metaInfo.BackupBeginTime, err = time.ParseInLocation(cst.MydumperTimeLayout, metadata.DumpStarted, time.Local)
 	if err != nil {
-		return nil, errors.Wrapf(err, "parse BackupBeginTime %s", metadata.DumpStarted)
+		return errors.Wrapf(err, "parse BackupBeginTime %s", metadata.DumpStarted)
 	}
 	metaInfo.BackupEndTime, err = time.ParseInLocation(cst.MydumperTimeLayout, metadata.DumpFinished, time.Local)
 	if err != nil {
-		return nil, errors.Wrapf(err, "parse BackupEndTime %s", metadata.DumpFinished)
+		return errors.Wrapf(err, "parse BackupEndTime %s", metadata.DumpFinished)
 	}
 	metaInfo.BackupConsistentTime = metaInfo.BackupBeginTime // 逻辑备份开始时间认为是一致性位点时间
 	metaInfo.BinlogInfo.ShowMasterStatus = &dbareport.StatusInfo{
@@ -248,7 +247,7 @@ func (l *LogicalDumper) PrepareBackupMetaInfo(cnf *config.BackupConfig) (*dbarep
 	}
 	metaInfo.JudgeIsFullBackup(&cnf.Public)
 
-	return &metaInfo, nil
+	return nil
 }
 
 // MydumperHasOption check mydumper has --xxx or not

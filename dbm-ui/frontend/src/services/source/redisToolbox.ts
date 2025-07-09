@@ -12,9 +12,9 @@
  */
 import http from '@services/http';
 import RedisModel from '@services/model/redis/redis';
-import type { ListBase } from '@services/types';
+import type { ListBase, MachineSpecConfig } from '@services/types';
 
-const getRootPath = () => `/apis/redis/bizs/${window.PROJECT_CONFIG.BIZ_ID}/toolbox`;
+const getRootPath = (bizId = window.PROJECT_CONFIG.BIZ_ID) => `/apis/redis/bizs/${bizId}/toolbox`;
 
 interface MachineInstancePairItem {
   bk_biz_id: number;
@@ -23,16 +23,18 @@ interface MachineInstancePairItem {
   bk_instance_id: number;
   instance: string;
   ip: string;
+  is_stand_by: boolean;
   name: string;
   phase: string;
   port: number;
+  spec_config: MachineSpecConfig;
   status: string;
 }
 
 /**
  * 根据cluster_id查询主从关系对
  */
-export function queryMasterSlavePairs(params: { cluster_id: number }) {
+export function queryMasterSlavePairs(params: { bk_biz_id?: number; cluster_id: number; }) {
   return http.post<
     {
       master_ip: string;
@@ -40,7 +42,7 @@ export function queryMasterSlavePairs(params: { cluster_id: number }) {
       slave_ip: string;
       slaves: MachineInstancePairItem;
     }[]
-  >(`${getRootPath()}/query_master_slave_pairs/`, params);
+  >(`${getRootPath(params.bk_biz_id)}/query_master_slave_pairs/`, params);
 }
 
 // 获取集群列表(重建从库)
@@ -63,6 +65,13 @@ export function getClusterVersions(params: {
   type: string;
 }) {
   return http.get<string[]>(`${getRootPath()}/get_cluster_versions/`, params);
+}
+
+/**
+ * 查询集群可更新大版本
+ */
+export function listClusterBigVersion(params: { bk_biz_id: number; cluster_id: number }) {
+  return http.get<string[]>(`${getRootPath()}/list_cluster_big_version/`, params);
 }
 
 /**
@@ -138,4 +147,38 @@ export function getRedisClusterModuleInfo(params: { cluster_id: number; version:
   return http.get<{
     results: Record<string, boolean>;
   }>(`${getRootPath()}/get_cluster_module_info/`, params);
+}
+
+/**
+ * 执行集群来源指令
+ */
+export function executeClusterTcpCmd(params: { cluster_ids: number[] }) {
+  return http.post<{
+    job_instance_id: number;
+    job_instance_name: string;
+    step_instance_id: number;
+  }>(`${getRootPath()}/execute_cluster_tcp_cmd/`, params);
+}
+
+/**
+ * 查询集群来源结果
+ */
+export function getClusterNetTcpResult(params: { job_instance_id: number }) {
+  return http.post<{
+    data: {
+      cluster_domain: string;
+      error: string[];
+      report: {
+        all_connections: number;
+        bak_operator: string;
+        cluster_domain: string;
+        establish: number;
+        operator: string;
+        remote_ip: string;
+        topo?: string[];
+      }[];
+      success: string[];
+    }[];
+    finished: boolean;
+  }>(`${getRootPath()}/get_cluster_net_tcp_result/`, params);
 }

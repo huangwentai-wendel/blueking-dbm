@@ -23,13 +23,11 @@
       </AuthButton>
       <ClusterBatchOperation
         v-db-console="'mysql.haClusterList.batchOperation'"
-        class="ml-8"
         :cluster-type="ClusterTypes.TENDBHA"
         :selected="selected"
-        @success="handleBatchOperationSuccess" />
+        @success="fetchData" />
       <BkButton
         v-db-console="'mysql.haClusterList.importAuthorize'"
-        class="ml-8"
         @click="handleShowExcelAuthorize">
         {{ t('导入授权') }}
       </BkButton>
@@ -40,6 +38,7 @@
       <ClusterIpCopy
         v-db-console="'mysql.haClusterList.batchCopy'"
         :selected="selected" />
+      <TagSearch @search="handleTagSearch" />
       <DbSearchSelect
         :data="searchSelectData"
         :get-menu-list="getMenuList"
@@ -90,6 +89,9 @@
           :get-table-instance="getTableInstance"
           :is-filter="isFilter"
           :selected-list="selected" />
+        <ClusterTagColumn
+          :cluster-type="ClusterTypes.TENDBHA"
+          @success="fetchData" />
         <StatusColumn :cluster-type="ClusterTypes.TENDBHA" />
         <ClusterStatsColumn :cluster-type="ClusterTypes.TENDBHA" />
         <RoleColumn
@@ -126,7 +128,9 @@
           </template>
         </RoleColumn>
         <ModuleNameColumn :cluster-type="ClusterTypes.TENDBHA" />
-        <CommonColumn :cluster-type="ClusterTypes.TENDBHA" />
+        <CommonColumn
+          :cluster-type="ClusterTypes.TENDBHA"
+          @refresh="fetchData" />
         <BkTableColumn
           :fixed="isStretchLayoutOpen ? false : 'right'"
           :label="t('操作')"
@@ -258,7 +262,6 @@
     :data="currentData"
     :ticket-type="TicketTypes.MYSQL_DUMP_DATA" />
 </template>
-
 <script setup lang="tsx">
   import type { ISearchItem } from 'bkui-vue/lib/search-select/utils';
   import { useI18n } from 'vue-i18n';
@@ -276,20 +279,22 @@
 
   import DbTable from '@components/db-table/index.vue';
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
+  import TagSearch from '@components/tag-search/index.vue';
 
   import ClusterAuthorize from '@views/db-manage/common/cluster-authorize/Index.vue';
   import ClusterBatchOperation from '@views/db-manage/common/cluster-batch-opration/Index.vue';
   import ClusterExportData from '@views/db-manage/common/cluster-export-data/Index.vue';
   import ClusterIpCopy from '@views/db-manage/common/cluster-ip-copy/Index.vue';
-  import ClusterNameColumn from '@views/db-manage/common/cluster-table-column/ClusterNameColumn.vue';
-  import ClusterStatsColumn from '@views/db-manage/common/cluster-table-column/ClusterStatsColumn.vue';
-  import CommonColumn from '@views/db-manage/common/cluster-table-column/CommonColumn.vue';
-  import IdColumn from '@views/db-manage/common/cluster-table-column/IdColumn.vue';
-  import MasterDomainColumn from '@views/db-manage/common/cluster-table-column/MasterDomainColumn.vue';
-  import ModuleNameColumn from '@views/db-manage/common/cluster-table-column/ModuleNameColumn.vue';
-  import RoleColumn from '@views/db-manage/common/cluster-table-column/RoleColumn.vue';
-  import SlaveDomainColumn from '@views/db-manage/common/cluster-table-column/SlaveDomainColumn.vue';
-  import StatusColumn from '@views/db-manage/common/cluster-table-column/StatusColumn.vue';
+  import ClusterNameColumn from '@views/db-manage/common/cluster-table/ClusterNameColumn.vue';
+  import ClusterStatsColumn from '@views/db-manage/common/cluster-table/ClusterStatsColumn.vue';
+  import ClusterTagColumn from '@views/db-manage/common/cluster-table/ClusterTagColumn.vue';
+  import CommonColumn from '@views/db-manage/common/cluster-table/CommonColumn.vue';
+  import IdColumn from '@views/db-manage/common/cluster-table/IdColumn.vue';
+  import MasterDomainColumn from '@views/db-manage/common/cluster-table/MasterDomainColumn.vue';
+  import ModuleNameColumn from '@views/db-manage/common/cluster-table/ModuleNameColumn.vue';
+  import RoleColumn from '@views/db-manage/common/cluster-table/RoleColumn.vue';
+  import SlaveDomainColumn from '@views/db-manage/common/cluster-table/SlaveDomainColumn.vue';
+  import StatusColumn from '@views/db-manage/common/cluster-table/StatusColumn.vue';
   import DropdownExportExcel from '@views/db-manage/common/dropdown-export-excel/index.vue';
   import ExcelAuthorize from '@views/db-manage/common/ExcelAuthorize.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
@@ -297,6 +302,10 @@
   import CreateSubscribeRuleSlider from '@views/db-manage/mysql/dumper/components/create-rule/Index.vue';
 
   import { getMenuListSearch, getSearchSelectorParams } from '@utils';
+
+  interface Exposes {
+    refresh: () => void;
+  }
 
   interface ColumnData {
     cell: string;
@@ -352,13 +361,13 @@
 
   const tableRef = ref<InstanceType<typeof DbTable>>();
   const isShowExcelAuthorize = ref(false);
-  const isInit = ref(false);
   const showCreateSubscribeRuleSlider = ref(false);
   const showDataExportSlider = ref(false);
   const selectedClusterList = ref<ColumnData['data'][]>([]);
   const currentData = ref<ColumnData['data']>();
-
   const selected = ref<TendbhaModel[]>([]);
+  const tagSearchValue = ref<Record<string, any>>({});
+
   /** 集群授权 */
   const authorizeState = reactive({
     isShow: false,
@@ -461,6 +470,7 @@
       'disaster_tolerance_level',
       'region',
       'bk_cloud_id',
+      'tag',
     ],
     disabled: ['master_domain'],
   });
@@ -500,10 +510,17 @@
     return searchSelectData.value.find((set) => set.id === item.id)?.children || [];
   };
 
-  const fetchData = (loading?: boolean) => {
-    const params = getSearchSelectorParams(searchValue.value);
-    tableRef.value!.fetchData(params, { ...sortValue }, loading);
-    isInit.value = false;
+  const handleTagSearch = (params: Record<string, any>) => {
+    tagSearchValue.value = params;
+    fetchData();
+  };
+
+  const fetchData = () => {
+    tableRef.value!.fetchData({
+      ...getSearchSelectorParams(searchValue.value),
+      ...tagSearchValue.value,
+      ...sortValue,
+    });
   };
 
   const handleSelection = (data: any, list: TendbhaModel[]) => {
@@ -560,18 +577,16 @@
     });
   };
 
-  const handleBatchOperationSuccess = () => {
-    tableRef.value!.clearSelected();
-    fetchData();
-  };
-
   onMounted(() => {
     if (route.query.id && !clusterId.value) {
       handleToDetails(Number(route.query.id));
     }
   });
-</script>
 
+  defineExpose<Exposes>({
+    refresh: fetchData,
+  });
+</script>
 <style lang="less">
   @import '@styles/mixins.less';
 
@@ -585,12 +600,15 @@
       display: flex;
       flex-wrap: wrap;
       margin-bottom: 16px;
+      gap: 8px;
+
+      .tag-search-main {
+        margin-left: auto;
+      }
 
       .bk-search-select {
         flex: 1;
         max-width: 500px;
-        min-width: 320px;
-        margin-left: auto;
       }
     }
 

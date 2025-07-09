@@ -14,6 +14,7 @@ from dataclasses import asdict
 from typing import Dict, List
 
 from bamboo_engine.builder import SubProcess
+from deprecated import deprecated
 from django.utils.translation import ugettext as _
 
 from backend.configuration.constants import DBType
@@ -27,16 +28,18 @@ from backend.flow.engine.bamboo.scene.mysql.deploy_peripheraltools.clusters_deta
 )
 from backend.flow.engine.bamboo.scene.mysql.deploy_peripheraltools.departs import (
     DeployPeripheralToolsDepart,
-    remove_depart,
+    remove_departs,
 )
 from backend.flow.plugins.components.collections.mysql.exec_actuator_script import ExecuteDBActuatorScriptComponent
 from backend.flow.plugins.components.collections.mysql.trans_flies import TransFileComponent
+from backend.flow.utils.mysql.act_payload.mysql.peripheraltools import PeripheralToolsPayload
 from backend.flow.utils.mysql.mysql_act_dataclass import DownloadMediaKwargs, ExecActuatorKwargs
 from backend.flow.utils.mysql.mysql_act_playload import MysqlActPayload
 
 logger = logging.getLogger("flow")
 
 
+@deprecated
 def prepare_departs_binary(
     root_id: str,
     data: Dict,
@@ -84,21 +87,34 @@ def prepare_departs_binary(
             )
         )
 
-    if cluster_type != ClusterType.TenDBSingle and proxy_ips:
-        departs_on_proxy = deepcopy(departs)
-        remove_depart(DeployPeripheralToolsDepart.MySQLTableChecksum, departs_on_proxy)
-        remove_depart(DeployPeripheralToolsDepart.MySQLRotateBinlog, departs_on_proxy)
-        remove_depart(DeployPeripheralToolsDepart.MySQLDBBackup, departs_on_proxy)
+    if proxy_ips:
+        departs_on_proxy = None
 
-        logger.info("{} proxy push departs binary {}".format(cluster_type, departs_on_proxy))
-        acts.append(
-            make_prepare_departs_binary_act(
-                machine_type=ClusterMachineAccessTypeDefine[cluster_type][AccessLayer.PROXY],
-                departs=departs_on_proxy,
-                bk_cloud_id=bk_cloud_id,
-                ip_list=proxy_ips,
+        if cluster_type == ClusterType.TenDBHA:
+            departs_on_proxy = remove_departs(
+                deepcopy(departs),
+                DeployPeripheralToolsDepart.MySQLTableChecksum,
+                DeployPeripheralToolsDepart.MySQLRotateBinlog,
+                DeployPeripheralToolsDepart.MySQLDBBackup,
             )
-        )
+        elif cluster_type == ClusterType.TenDBCluster:
+            departs_on_proxy = remove_departs(
+                deepcopy(departs),
+                DeployPeripheralToolsDepart.MySQLTableChecksum,
+                # DeployPeripheralToolsDepart.MySQLRotateBinlog,
+                # DeployPeripheralToolsDepart.MySQLDBBackup,
+            )
+
+        if departs_on_proxy:
+            logger.info("{} proxy push departs binary {}".format(cluster_type, departs_on_proxy))
+            acts.append(
+                make_prepare_departs_binary_act(
+                    machine_type=ClusterMachineAccessTypeDefine[cluster_type][AccessLayer.PROXY],
+                    departs=departs_on_proxy,
+                    bk_cloud_id=bk_cloud_id,
+                    ip_list=proxy_ips,
+                )
+            )
 
     if acts:
         sp.add_parallel_acts(acts_list=acts)
@@ -106,6 +122,7 @@ def prepare_departs_binary(
     return sp.build_sub_process(sub_name=_("准备周边组件二进制"))
 
 
+@deprecated
 def make_prepare_departs_binary_act(
     machine_type: MachineType, departs: List[DeployPeripheralToolsDepart], bk_cloud_id: int, ip_list: List[str]
 ) -> Dict:
@@ -122,3 +139,52 @@ def make_prepare_departs_binary_act(
             )
         ),
     }
+
+
+def deploy_binary(
+    root_id: str,
+    data: Dict,
+    bk_cloud_id: int,
+    ips: List[str],
+    departs: List[DeployPeripheralToolsDepart],
+) -> SubProcess:
+    """
+    把一个 ip 要部署哪些包放到了 payload 中决定
+    所以每个 ip 的参数可能不一样
+    只能按 ip 单个执行
+    这不是执行效率最高的, 但是编码非常简单
+    """
+    sp = SubBuilder(root_id=root_id, data=data)
+    sp.add_act(
+        act_name=_("下发二进制包"),
+        act_component_code=TransFileComponent.code,
+        kwargs=asdict(
+            DownloadMediaKwargs(
+                bk_cloud_id=bk_cloud_id,
+                exec_ip=ips,
+                file_list=GetFileList(db_type=DBType.MySQL).get_mysql_surrounding_apps_package(),
+            )
+        ),
+    )
+
+    acts = []
+    for ip in ips:
+        acts.append(
+            {
+                "act_name": _("部署二进制 {}".format(ip)),
+                "act_component_code": ExecuteDBActuatorScriptComponent.code,
+                "kwargs": asdict(
+                    ExecActuatorKwargs(
+                        exec_ip=[ip],
+                        run_as_system_user=DBA_ROOT_USER,
+                        payload_class=PeripheralToolsPayload.payload_class_path(),
+                        get_mysql_payload_func=PeripheralToolsPayload.deploy_binary.__name__,
+                        bk_cloud_id=bk_cloud_id,
+                        cluster={"departs": departs},
+                    )
+                ),
+            }
+        )
+
+    sp.add_parallel_acts(acts)
+    return sp.build_sub_process(sub_name=_("准备周边二进制"))

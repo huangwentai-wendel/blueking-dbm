@@ -33,7 +33,7 @@ export default [
       },
       {
         dbConsoleValue: 'tendbCluster.toolbox.dbRename',
-        id: 'spiderDbRename',
+        id: TicketTypes.TENDBCLUSTER_RENAME_DATABASE,
         name: t('DB 重命名'),
         parentId: 'spider_sql',
       },
@@ -72,6 +72,12 @@ export default [
         dbConsoleValue: 'tendbCluster.toolbox.proxyScaleDown',
         id: TicketTypes.TENDBCLUSTER_SPIDER_REDUCE_NODES,
         name: t('缩容接入层'),
+        parentId: 'spider_cluster_maintain',
+      },
+      {
+        dbConsoleValue: 'tendbCluster.toolbox.switchNodes',
+        id: TicketTypes.TENDBCLUSTER_SPIDER_SWITCH_NODES,
+        name: t('替换接入层'),
         parentId: 'spider_cluster_maintain',
       },
       {

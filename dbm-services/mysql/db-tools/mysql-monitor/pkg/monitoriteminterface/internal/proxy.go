@@ -1,7 +1,10 @@
 package internal
 
 import (
-	mrapi "dbm-services/common/reverse-api/apis/mysql"
+	"dbm-services/common/reverseapi"
+	reversemysqlapi "dbm-services/common/reverseapi/apis/mysql"
+	reversemysqldef "dbm-services/common/reverseapi/define/mysql"
+
 	"dbm-services/mysql/db-tools/dbactuator/pkg/core/cst"
 	"dbm-services/mysql/db-tools/dbactuator/pkg/util"
 	"dbm-services/mysql/db-tools/dbactuator/pkg/util/proxyutil"
@@ -216,7 +219,13 @@ func addExLock() (fl *flock.Flock, err error) {
 }
 
 func confirmSelfIsRunning() (bool, error) {
-	info, layer, err := mrapi.ListInstanceInfo(*config.MonitorConfig.BkCloudID, config.MonitorConfig.Port)
+	apiCore, err := reverseapi.NewCore(int64(*config.MonitorConfig.BkCloudID))
+	if err != nil {
+		slog.Error("new core api error", slog.String("err", err.Error()))
+		return false, err
+	}
+
+	info, layer, err := reversemysqlapi.ListInstanceInfo(apiCore)
 	if err != nil {
 		slog.Info("query instance info", slog.String("error", err.Error()))
 		return false, err
@@ -226,14 +235,15 @@ func confirmSelfIsRunning() (bool, error) {
 		slog.Any("instances raw info", info),
 		slog.Any("layer", layer),
 	)
-	var pinfos []mrapi.ProxyInstanceInfo
+
+	var pinfos []reversemysqldef.ProxyInstanceInfo
 	err = json.Unmarshal(info, &pinfos)
 	if err != nil {
 		slog.Info("query instance info unmarshal failed", slog.String("error", err.Error()))
 		return false, err
 	}
 
-	idx := slices.IndexFunc(pinfos, func(item mrapi.ProxyInstanceInfo) bool {
+	idx := slices.IndexFunc(pinfos, func(item reversemysqldef.ProxyInstanceInfo) bool {
 		return item.Port == config.MonitorConfig.Port
 	})
 	if idx < 0 {

@@ -202,7 +202,7 @@ DEFAULT_INSTANCE = {"ip": "0.0.0.0", "port": 0, "bk_cloud_id": 0}
 
 
 class OperateCollectorActionEnum(str, StructuredEnum):
-    INSTALL = EnumField("install", _("安装"))
+    INSTALL = EnumField("INSTALL", _("安装"))
     UNINSTALL = EnumField("UNINSTALL", _("卸载"))
 
 
@@ -312,6 +312,7 @@ class MediumEnum(str, StructuredEnum):
     MongoMonitor = EnumField("mongo-monitor", _("Mongo 监控"))
     Doris = EnumField("doris", _("doris"))
     Vm = EnumField("vm", _("vm"))
+    Oracle = EnumField("oracle", _("oracle"))
 
 
 class CloudServiceName(str, StructuredEnum):
@@ -341,11 +342,11 @@ CLOUD_NGINX_MANAGE_DEFAULT_HOST = 8080
 
 
 class CloudServiceModuleName(str, StructuredEnum):
-    Nginx = EnumField("nginx.service.module", _("nginx服务模块"))
+    NGINX = EnumField("nginx.service.module", _("nginx服务模块"))
     DNS = EnumField("dns.service.module", _("dns服务模块"))
     DRS = EnumField("drs.service.module", _("drs服务模块"))
     DBHA = EnumField("dbha.service.module", _("dbha服务模块"))
-    RedisDTS = EnumField("redis_dts.service.module", _("redis_dts服务模块"))
+    REDIS_DTS = EnumField("redis_dts.service.module", _("redis_dts服务模块"))
 
 
 class MediumFileTypeEnum(int, StructuredEnum):
@@ -403,6 +404,7 @@ class DBActuatorActionEnum(str, StructuredEnum):
 
     SenmanticDumpSchema = EnumField("semantic-dumpschema", _("semantic-dumpschema"))
     ImportSQLFile = EnumField("import-sqlfile", _("import-sqlfile"))
+    CheckPlsExecSQLFile = EnumField("check-pls-exec-sqlfile", _("check-pls-exec-sqlfile"))
     DoOnlineDDL = EnumField("do-online-ddl", _("do-online-ddl"))
     CloneClientGrant = EnumField("clone-client-grant", _("clone-client-grant"))
     CloneProxyUser = EnumField("clone-proxy-user", _("clone-proxy-user"))
@@ -473,6 +475,11 @@ class DBActuatorActionEnum(str, StructuredEnum):
     PushMySQLRotatebinlogConfig = EnumField("push-mysql-rotatebinlog-config", _("推送rotatebinlog配置"))
     PushExporterCnf = EnumField("push-exporter-cnf", _("push-exporter-cnf"))
     ProxyInplaceAutofix = EnumField("proxy-inplace-autofix", _("原地启动 proxy"))
+    # use reverse api
+    GenPeripheralToolsConfig = EnumField("gen-peripheraltools-config", _("生成周边配置"))
+    ReloadPeripheralToolsConfig = EnumField("reload-peripheraltools-config", _("重载周边配置"))
+    DeployPeripheralToolsBinary = EnumField("prepare-peripheraltools-binary", _("prepare-peripheraltools-binary"))
+    InitCommonConfig = EnumField("init-common-config", _("初始化公共配置"))
 
 
 class RedisActuatorActionEnum(str, StructuredEnum):
@@ -522,6 +529,7 @@ class RedisActuatorActionEnum(str, StructuredEnum):
     CLUSTER_RESET_FLUSH_MEET = EnumField("cluster_reset_flush_meet", _("cluster_reset_flush_meet"))
     REPLICAS_FORCE_RESYNC = EnumField("replicas_force_resync", _("replicas_force_resync"))
     RESTART_EXPORTER = EnumField("restart_exporter", _("restart_exporter"))
+    HOTKEY_ANALYSIS = EnumField("hotkey_analysis", _("hotkey_analysis"))
 
 
 class MongoDBActuatorActionEnum(str, StructuredEnum):
@@ -590,6 +598,8 @@ class KafkaActuatorActionEnum(str, StructuredEnum):
     RestartBroker = EnumField("restart_broker", _("restart_broker"))
     ReconfigRemove = EnumField("reconfig_remove", _("reconfig_remove"))
     ReplaceBroker = EnumField("replace_broker", _("replace_broker"))
+    GenerateReassignment = EnumField("generate_reassignment", _("generate_reassignment"))
+    ExecuteReassignment = EnumField("execute_reassignment", _("execute_reassignment"))
 
 
 class InfluxdbActuatorActionEnum(str, StructuredEnum):
@@ -666,6 +676,8 @@ class SqlserverActuatorActionEnum(str, StructuredEnum):
     CloneLoginUsers = EnumField("CloneLoginUsers", _("实例间克隆用户"))
     CloneJobs = EnumField("CloneJobs", _("实例间克隆定时作业"))
     CloneLinkservers = EnumField("CloneLinkservers", _("实例间克隆linkservers"))
+    CloneBackupFilter = EnumField("CloneBackupFilter", _("实例间克隆backup忽略配置"))
+    CloneMirroringFilter = EnumField("CloneMirroringFilter", _("实例间克隆同步忽略配置"))
     BuildDBMirroring = EnumField("BuildDBMirroring", _("建立数据库的镜像库关系"))
     InitForAlwaysOn = EnumField("InitForAlwaysOn", _("为Always-on做别名初始化"))
     BuildAlwaysOn = EnumField("BuildAlwaysOn", _("建立Always-on通信"))
@@ -973,6 +985,7 @@ MysqlVersionToDBBackupForMap = {
     "MySQL-8.0-Community": MediumEnum.DbBackup,
     "Spider-1": MediumEnum.DbBackup,
     "Spider-3": MediumEnum.DbBackup,
+    "Spider-4": MediumEnum.DbBackup,
 }
 
 
@@ -1529,15 +1542,6 @@ class MongoDBDropType(str, StructuredEnum):
     RENAME_COLLECTION = EnumField("rename_collection", _("将表暂时重命名"))
 
 
-class MongoShardedClusterBackupType(str, StructuredEnum):
-    """
-    定义mongodb分片集群备份方式
-    """
-
-    MONGOS = EnumField("mongos", _("mongos"))
-    SHARD = EnumField("shard", _("shard"))
-
-
 class MongoOplogSizePercent(float, StructuredEnum):
     """
     oplog默认占机器磁盘的百分比
@@ -1603,3 +1607,9 @@ class ExecuteShellScriptUser(str, StructuredEnum):
     Root = EnumField("root", _("root"))
     Mysql = EnumField("mysql", _("mysql"))
     Mongodb = EnumField("mongodb", _("mongodb"))
+    Oracle = EnumField("oracle", _("oracle"))
+
+
+class OracleDBActuatorActionEnum(str, StructuredEnum):
+    OsInit = EnumField("os_oracle_init", _("os_oracle_init"))
+    OracleExecuteScript = EnumField("execute_script", _("execute_script"))

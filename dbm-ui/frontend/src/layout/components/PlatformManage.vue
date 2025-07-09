@@ -22,7 +22,7 @@
       v-db-console="'platformManage.dbaManage'"
       :name="t('DBA 工具箱')">
       <BkMenuItem
-        key="DbaManageMysqlWebQuery"
+        key="DbaManageMysql"
         v-db-console="'platformManage.dbaManage.mysql'">
         <template #icon>
           <DbIcon type="mysql" />
@@ -30,19 +30,27 @@
         MySQL
       </BkMenuItem>
       <BkMenuItem
-        key="DbaManageTendbClusterWebQuery"
+        key="DbaManageTendbCluster"
         v-db-console="'platformManage.dbaManage.tendbCluster'">
         <template #icon>
           <DbIcon type="mysql" />
         </template>
         Tendb Cluster
       </BkMenuItem>
-      <!-- <BkMenuItem key="DbaManageSQLServerWebQuery">
+      <BkMenuItem
+        key="DbaManageRedis"
+        v-db-console="'platformManage.dbaManage.redis'">
+        <template #icon>
+          <DbIcon type="redis" />
+        </template>
+        Redis
+      </BkMenuItem>
+      <BkMenuItem key="DbaManageSQLServerWebQuery">
         <template #icon>
           <DbIcon type="sqlserver" />
         </template>
         SQLServer
-      </BkMenuItem> -->
+      </BkMenuItem>
     </BkMenuGroup>
     <BkMenuGroup
       v-db-console="'platformManage.healthReport'"
@@ -70,6 +78,14 @@
           class="text-overflow">
           {{ t('告警事件') }}
         </span>
+      </BkMenuItem>
+    </BkMenuGroup>
+    <BkMenuGroup :name="t('平台观测')">
+      <BkMenuItem key="ServiceStatus">
+        <template #icon>
+          <DbIcon type="ticket" />
+        </template>
+        {{ t('服务状态') }}
       </BkMenuItem>
     </BkMenuGroup>
   </BkMenu>

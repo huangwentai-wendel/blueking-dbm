@@ -54,7 +54,7 @@ export default class Es extends ClusterBase {
 
   access_url: string;
   bk_biz_id: number;
-  bk_biz_name: number;
+  bk_biz_name: string;
   bk_cloud_id: number;
   bk_cloud_name: string;
   cluster_access_port: number;
@@ -85,6 +85,7 @@ export default class Es extends ClusterBase {
     access_entry_edit: boolean;
     es_access_entry_view: boolean;
     es_destroy: boolean;
+    es_edit: boolean;
     es_enable_disable: boolean;
     es_reboot: boolean;
     es_replace: boolean;

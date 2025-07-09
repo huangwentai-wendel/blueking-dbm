@@ -1,0 +1,67 @@
+# 引用的addon版本
+addonVersion: 1.0.0
+
+# 元数据
+clusterName: victoriametrics-cluster
+namespace: demo
+labels:
+annotations:
+
+# 集群规格
+terminationPolicy: Delete
+topoName: cluster
+componentList:
+  - componentName: vminsert
+    serviceVersion: "1.93.10"
+    instanceUpdateStrategy:
+      maxUnavailable: 25%
+    env:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 1
+        memory: 1Gi
+      limits:
+        cpu: 1
+        memory: 1Gi
+
+  - componentName: vmselect
+    serviceVersion: "1.93.10"
+    instanceUpdateStrategy:
+      maxUnavailable: 25%
+    env:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 1
+        memory: 1Gi
+      limits:
+        cpu: 1
+        memory: 1Gi
+
+  - componentName: vmstorage
+    serviceVersion: "1.93.10"
+    env:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 1
+        memory: 1Gi
+      limits:
+        cpu: 1
+        memory: 1Gi
+    volumeClaimTemplates:
+      accessModes: ["ReadWriteOnce"]
+      storage: "20Gi"
+      storageClassName: "cbs"
+      volumeMode: "Filesystem"
+
+observeConfig:
+  bkLogConfig:
+    enabled: false
+    labels: {}
+    dataId:
+  svcMonitor:
+    enabled: false
+    labels: {}
+    interval: "15s"

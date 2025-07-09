@@ -33,14 +33,7 @@ export const mysqlToolboxChildrenRouters: RouteRecordRaw[] = [
     },
     component: () => import('@views/db-manage/mysql/sql-execute/index.vue'),
   },
-  {
-    path: 'db-rename/:page?',
-    name: 'MySQLDBRename',
-    meta: {
-      navName: t('DB重命名'),
-    },
-    component: () => import('@views/db-manage/mysql/db-rename/Index.vue'),
-  },
+  createRouteItem(TicketTypes.MYSQL_RENAME_DATABASE, t('DB重命名')),
   {
     path: 'privilege-clone-client/:page?',
     name: 'MySQLPrivilegeCloneClient',
@@ -61,14 +54,7 @@ export const mysqlToolboxChildrenRouters: RouteRecordRaw[] = [
   createRouteItem(TicketTypes.MYSQL_ADD_SLAVE, t('添加从库')),
   createRouteItem(TicketTypes.MYSQL_MIGRATE_CLUSTER, t('迁移主从')),
   createRouteItem(TicketTypes.MYSQL_PROXY_ADD, t('添加Proxy')),
-  {
-    path: 'master-slave-swap/:page?',
-    name: 'MySQLMasterSlaveSwap',
-    meta: {
-      navName: t('主从互切'),
-    },
-    component: () => import('@views/db-manage/mysql/master-slave-swap/index.vue'),
-  },
+  createRouteItem(TicketTypes.MYSQL_MASTER_SLAVE_SWITCH, t('主从互切')),
   createRouteItem(TicketTypes.MYSQL_PROXY_SWITCH, t('替换Proxy')),
   createRouteItem(TicketTypes.MYSQL_MASTER_FAIL_OVER, t('主库故障切换')),
   {
@@ -145,37 +131,84 @@ export const mysqlToolboxChildrenRouters: RouteRecordRaw[] = [
 
 const singleRoutes: RouteRecordRaw[] = [
   {
-    path: 'single-cluster-list',
-    name: 'DatabaseTendbsingle',
+    path: 'tendbsingle',
+    name: 'tendbsingle',
     meta: {
       fullscreen: true,
       navName: t('MySQL单节点_集群管理'),
       skeleton: 'clusterList',
     },
-    component: () => import('@views/db-manage/mysql/single-cluster-list/Index.vue'),
+    redirect: {
+      name: 'DatabaseTendbsingle',
+    },
+    component: () => import('@views/db-manage/mysql/Index.vue'),
+    children: [
+      {
+        path: 'list/:clusterId?',
+        name: 'DatabaseTendbsingle',
+        meta: {
+          fullscreen: true,
+          navName: t('MySQL单节点_集群管理'),
+          skeleton: 'clusterList',
+        },
+        component: () => import('@/views/db-manage/mysql/single-cluster-list/Index.vue'),
+      },
+      {
+        path: 'detail/:clusterId',
+        name: 'tendbsingleDetail',
+        meta: {
+          fullscreen: true,
+          navName: t('MySQL单节点_集群详情'),
+        },
+        component: () => import('@views/db-manage/mysql/single-cluster-detail/Index.vue'),
+      },
+    ],
   },
 ];
 
 const haRoutes: RouteRecordRaw[] = [
   {
-    path: 'ha-cluster-list',
-    name: 'DatabaseTendbha',
+    path: 'tendbha',
+    name: 'tendbha',
     meta: {
       fullscreen: true,
       navName: t('MySQL主从集群_集群管理'),
       skeleton: 'clusterList',
     },
-    component: () => import('@views/db-manage/mysql/ha-cluster-list/Index.vue'),
-  },
-  {
-    path: 'ha-instance-list',
-    name: 'DatabaseTendbhaInstance',
-    meta: {
-      fullscreen: true,
-      navName: t('MySQL主从集群_实例视图'),
-      skeleton: 'clusterList',
+    redirect: {
+      name: 'DatabaseTendbha',
     },
-    component: () => import('@views/db-manage/mysql/ha-instance-list/Index.vue'),
+    component: () => import('@views/db-manage/mysql/Index.vue'),
+    children: [
+      {
+        path: 'list/:clusterId?',
+        name: 'DatabaseTendbha',
+        meta: {
+          fullscreen: true,
+          navName: t('MySQL主从集群_集群管理'),
+          skeleton: 'clusterList',
+        },
+        component: () => import('@views/db-manage/mysql/ha-cluster-list/Index.vue'),
+      },
+      {
+        path: 'detail/:clusterId',
+        name: 'tendbHaDetail',
+        meta: {
+          fullscreen: true,
+          navName: t('MySQL主从集群_集群详情'),
+        },
+        component: () => import('@views/db-manage/mysql/ha-cluster-detail/Index.vue'),
+      },
+      {
+        path: 'instance-list',
+        name: 'DatabaseTendbhaInstance',
+        meta: {
+          fullscreen: true,
+          navName: t('MySQL主从集群_实例视图'),
+        },
+        component: () => import('@views/db-manage/mysql/ha-instance-list/Index.vue'),
+      },
+    ],
   },
 ];
 
@@ -308,6 +341,7 @@ export default function getRoutes(funControllerData: FunctionControllModel) {
   if (controller.tendbha) {
     renderRoutes.children?.push(...haRoutes);
   }
+
   if (controller.toolbox) {
     renderRoutes.children?.push(...mysqlToolboxRouters);
   }

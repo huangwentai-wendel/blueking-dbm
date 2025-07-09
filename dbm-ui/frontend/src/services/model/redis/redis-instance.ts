@@ -13,7 +13,6 @@
 
 import type { HostInfo, InstanceListSpecConfig, InstanceRelatedCluster } from '@services/types';
 
-import { ClusterTypes } from '@common/const';
 import { type ClusterInstStatus, clusterInstStatus } from '@common/const';
 
 import { isRecentDays, utcDisplayTime } from '@utils';
@@ -21,7 +20,11 @@ import { isRecentDays, utcDisplayTime } from '@utils';
 export default class RedisInstance {
   bk_cloud_id: number;
   bk_cloud_name: string;
+  bk_cpu: number;
+  bk_disk: number;
   bk_host_id: number;
+  bk_idc_city_name: string;
+  bk_mem: number;
   bk_os_name: string;
   bk_rack_id: number;
   bk_sub_zone: string;
@@ -29,7 +32,7 @@ export default class RedisInstance {
   bk_svr_device_cls_name: string;
   cluster_id: number;
   cluster_name: string;
-  cluster_type: ClusterTypes;
+  cluster_type: string;
   cluster_type_name: string;
   create_at: string;
   db_module_id: number;
@@ -38,6 +41,7 @@ export default class RedisInstance {
   host_info: HostInfo;
   id: number;
   instance_address: string;
+  instance_name: string;
   ip: string;
   machine_type: string;
   master_domain: string;
@@ -62,6 +66,10 @@ export default class RedisInstance {
     this.bk_sub_zone_id = payload.bk_sub_zone_id;
     this.bk_svr_device_cls_name = payload.bk_svr_device_cls_name;
     this.bk_sub_zone = payload.bk_sub_zone || '';
+    this.bk_idc_city_name = payload.bk_idc_city_name || '';
+    this.bk_cpu = payload.bk_cpu || 0;
+    this.bk_mem = payload.bk_mem || 0;
+    this.bk_disk = payload.bk_disk || 0;
     this.cluster_id = payload.cluster_id || 0;
     this.cluster_name = payload.cluster_name || '';
     this.cluster_type = payload.cluster_type || '';
@@ -73,6 +81,7 @@ export default class RedisInstance {
     this.host_info = payload.host_info || {};
     this.id = payload.id || 0;
     this.instance_address = payload.instance_address || '';
+    this.instance_name = payload.instance_name || '';
     this.ip = payload.ip || '';
     this.machine_type = payload.machine_type;
     this.master_domain = payload.master_domain || '';

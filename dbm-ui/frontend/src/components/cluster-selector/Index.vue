@@ -250,6 +250,7 @@
       multiple: true,
       name: t('副本集'),
       resultContent: ResultPreview,
+      showPreviewResultTitle: true,
       tableContent: MongoTable,
     },
     [ClusterTypes.MONGO_SHARED_CLUSTER]: {
@@ -264,6 +265,7 @@
       multiple: true,
       name: t('分片集群'),
       resultContent: ResultPreview,
+      showPreviewResultTitle: true,
       tableContent: MongoTable,
     },
     [ClusterTypes.REDIS]: {
@@ -275,6 +277,7 @@
       ],
       getResourceList: getRedisList,
       id: ClusterTypes.REDIS,
+      multiple: true,
       name: t('集群选择'),
       resultContent: ResultPreview,
       tableContent: RedisTable,
@@ -335,6 +338,7 @@
       multiple: true,
       name: t('主从集群'),
       resultContent: ResultPreview,
+      showPreviewResultTitle: true,
       tableContent: TendbhaTable,
     },
     [ClusterTypes.TENDBSINGLE]: {
@@ -349,6 +353,7 @@
       multiple: true,
       name: t('单节点集群'),
       resultContent: ResultPreview,
+      showPreviewResultTitle: true,
       tableContent: TendbSingleTable,
     },
     tendbclusterSlave: {

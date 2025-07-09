@@ -18,18 +18,23 @@
     :data="data" />
 </template>
 
-<script setup lang="ts">
+<script setup lang="tsx">
   import { useI18n } from 'vue-i18n';
 
   import type TendbClusterModel from '@services/model/tendbcluster/tendbcluster';
 
+  import ClusterTag from '@components/cluster-tag/index.vue';
   import EditInfo, { type InfoColumn } from '@components/editable-info/index.vue';
 
   interface Props {
     data: TendbClusterModel;
   }
 
+  type Emits = (e: 'refresh') => void;
+
   const props = defineProps<Props>();
+
+  const emits = defineEmits<Emits>();
 
   const { t } = useI18n();
 
@@ -68,6 +73,16 @@
         key: 'spec_name',
         label: t('规格'),
         render: () => props.data.cluster_spec.spec_name || '--',
+      },
+      {
+        key: 'availableTags',
+        label: t('标签'),
+        render: () => (
+          <ClusterTag
+            data={props.data}
+            onSuccess={() => emits('refresh')}
+          />
+        ),
       },
     ],
     [
