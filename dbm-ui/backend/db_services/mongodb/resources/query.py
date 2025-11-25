@@ -372,7 +372,7 @@ class MongoDBListRetrieveResource(query.ListRetrieveResource, MongoDBExportQuery
             .filter(query_filters & Q(bind_entry__cluster_entry_type=ClusterEntryType.DNS.value))  # 过滤实例域名
             .values(*fields)
         )
-        return storage_instance.union(proxy_instance)
+        return storage_instance.union(proxy_instance).order_by(query_params.get("ordering", "-create_at"))
 
     @classmethod
     def _filter_instance_hook(cls, bk_biz_id, query_params, instances, **kwargs):
