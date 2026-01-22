@@ -231,6 +231,16 @@ class _BKMonitorV3Api(BaseApi):
             url="get_shield/",
             description=_("获取告警屏蔽详情"),
         )
+        self.start_render_image_task = self.generate_data_api(
+            method="POST",
+            url="app/render_image/start_render_image_task/",
+            description=_("查询策略订阅列表"),
+        )
+        self.get_render_image_result = self.generate_data_api(
+            method="GET",
+            url="app/render_image/get_render_image_task_result/",
+            description=_("查询策略订阅列表"),
+        )
 
 
 class _BKMonitorV3EventApi(BaseApi):
