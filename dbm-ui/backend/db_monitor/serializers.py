@@ -329,6 +329,21 @@ class ListAlertSerializer(serializers.Serializer):
         }
 
 
+class ListCalendarSerializer(serializers.Serializer):
+    page = serializers.IntegerField(help_text=_("当前页"), default=1)
+    page_size = serializers.IntegerField(help_text=_("页面大小"), default=100)
+
+
+class MetricListSerializer(serializers.Serializer):
+    bk_biz_id = serializers.IntegerField(help_text=_("业务id"))
+    conditions = serializers.JSONField(help_text=_("查询条件"))
+
+
+class AlarmStrategySerializer(serializers.Serializer):
+    bk_biz_id = serializers.IntegerField(help_text=_("业务id"), default=env.DBA_APP_BK_BIZ_ID)
+    monitor_policy_id = serializers.IntegerField(help_text=_("监控策略id"))
+
+
 class CreateAlarmShieldSerializer(serializers.Serializer):
     category = serializers.CharField(help_text=_("屏蔽类型"))
     dimension_config = serializers.DictField(help_text=_("屏蔽维度配置"))

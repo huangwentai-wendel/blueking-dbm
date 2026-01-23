@@ -26,7 +26,7 @@ from backend.iam_app.handlers.permission import Permission
 
 
 class AlertView(SystemViewSet):
-    action_permission_map = {("search",): [ListAlertEventPermission()]}
+    action_permission_map = {("search",): [ListAlertEventPermission()], ("list_calendar",): []}
 
     @common_swagger_auto_schema(
         operation_summary=_("告警事件列表"),
@@ -122,3 +122,25 @@ class AlertView(SystemViewSet):
             alert.update(dbm_event=("appid" in tags))
 
         return Response(data)
+
+    @common_swagger_auto_schema(
+        operation_summary=_("获取日历列表"),
+        query_serializer=serializers.ListCalendarSerializer(),
+        tags=[SWAGGER_TAG],
+    )
+    @action(detail=False, methods=["GET"], serializer_class=serializers.ListCalendarSerializer)
+    def list_calendar(self, request):
+        params = self.validated_data
+        resp = BKMonitorV3Api.list_calendar(params)
+        return Response(resp)
+
+    @common_swagger_auto_schema(
+        operation_summary=_("获取维度信息"),
+        request_body=serializers.MetricListSerializer(),
+        tags=[SWAGGER_TAG],
+    )
+    @action(detail=False, methods=["POST"], serializer_class=serializers.MetricListSerializer)
+    def metric_list(self, request, *args, **kwargs):
+        params = self.validated_data
+        resp = BKMonitorV3Api.metric_list(params)
+        return Response(resp)

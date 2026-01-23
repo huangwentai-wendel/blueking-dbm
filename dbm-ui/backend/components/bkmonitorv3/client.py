@@ -241,6 +241,15 @@ class _BKMonitorV3Api(BaseApi):
             url="app/render_image/get_render_image_task_result/",
             description=_("查询策略订阅列表"),
         )
+        self.list_calendar = self.generate_data_api(method="GET", url="app/calendar/list/", description=_("获取日历列表"))
+        self.metric_list = self.generate_data_api(
+            method="POST", url="app/metric/get_metric_list/", description=_("获取维度信息")
+        )
+        self.search_alarm_strategy = self.generate_data_api(
+            method="POST",
+            url="app/alarm_strategy/search/v3/",
+            description=_("查询告警策略"),
+        )
 
 
 class _BKMonitorV3EventApi(BaseApi):
