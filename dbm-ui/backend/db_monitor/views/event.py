@@ -20,6 +20,7 @@ from backend.components import BKMonitorV3Api
 from backend.configuration.models import DBAdministrator
 from backend.db_monitor import serializers
 from backend.db_monitor.constants import SWAGGER_TAG
+from backend.db_monitor.models import MonitorPolicy
 from backend.iam_app.dataclass import ActionEnum, ResourceEnum
 from backend.iam_app.handlers.drf_perm.monitor import ListAlertEventPermission
 from backend.iam_app.handlers.permission import Permission
@@ -116,10 +117,17 @@ class AlertView(SystemViewSet):
         params["query_string"] = " AND ".join(conditions)
 
         data = BKMonitorV3Api.search_alert(params)
+        strategy_ids = [alert["strategy_id"] for alert in data["alerts"] if alert.get("strategy_id")]
+        monitor_policies = MonitorPolicy.objects.filter(monitor_policy_id__in=strategy_ids)
+        strategy_info_map = {
+            policy.monitor_policy_id: {"name": policy.name, "id": policy.id, "parent_id": policy.parent_id}
+            for policy in monitor_policies
+        }
         # 对于维度不包含appid的，暂时标记，无法做到鉴权和屏蔽
         for alert in data["alerts"]:
             tags = [tag["key"] for tag in alert["tags"]]
-            alert.update(dbm_event=("appid" in tags))
+            policy_info = strategy_info_map.get(alert.get("strategy_id", 0), {})
+            alert.update(dbm_event=("appid" in tags), dbm_policy=policy_info)
 
         return Response(data)
 

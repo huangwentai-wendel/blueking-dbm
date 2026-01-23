@@ -425,6 +425,7 @@ class MonitorPolicyViewSet(AuditedModelViewSet):
         )
 
         if res:
+            metric_ids = []
             agg_dimension = []
             data["data_source_list"] = []
             strategy_config_list = res.get("strategy_config_list", [])
@@ -438,7 +439,14 @@ class MonitorPolicyViewSet(AuditedModelViewSet):
                             }
                         )
                         agg_dimension.extend(query_config.get("agg_dimension", []))
+                        metric_ids.append(query_config["metric_id"])
 
             data["agg_dimension"] = list(set(agg_dimension))
+
+            if metric_ids:
+                metric_info = BKMonitorV3Api.metric_list(
+                    params={"bk_biz_id": bk_biz_id, "conditions": [{"key": "metric_id", "value": metric_ids}]}
+                )
+                data["metric_list"] = metric_info.get("metric_list", [])
 
         return Response(data)
