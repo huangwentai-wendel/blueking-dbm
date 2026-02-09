@@ -8,17 +8,22 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+import json
 import logging
+import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Union
 
 from celery import shared_task
 from celery.result import AsyncResult
+from django.core.cache import cache
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
+from backend.bk_dataview.grafana.constants import DASHBOARD_APP_ID, DASHBOARD_JSON_PATH
+from backend.components import BKMonitorV3Api
 from backend.components.bklog.handler import BKLogHandler
 from backend.configuration.constants import PLAT_BIZ_ID, DBType
 from backend.configuration.models import DBAdministrator
@@ -26,6 +31,7 @@ from backend.constants import DEFAULT_SYSTEM_USER
 from backend.core import notify
 from backend.db_meta.enums import ClusterType
 from backend.db_meta.models import Cluster, StorageInstance
+from backend.exceptions import ApiResultError
 from backend.ticket.builders.common.constants import MYSQL_CHECKSUM_TABLE, MySQLDataRepairTriggerMode
 from backend.ticket.constants import (
     FLOW_TASK_TYPES,
@@ -347,3 +353,41 @@ def apply_ticket_task(
 def create_recycle_ticket(revoke_ticket_id: int, recycle_old_hosts: list, recycle_type: TicketType):
     """创建主机回收单据"""
     Ticket.create_recycle_ticket(revoke_ticket_id, recycle_old_hosts, recycle_type)
+
+
+def create_monitor_grafana(bk_biz_id, cluster_type):
+    json_file_list = os.listdir(DASHBOARD_JSON_PATH)
+    target_files = {}
+
+    for file_name in json_file_list:
+        # 先从缓存读取， 如果没有数据则读文件
+        data = cache.get(file_name)
+        if not data:
+            with open(os.path.join(DASHBOARD_JSON_PATH, file_name), "r", encoding="utf-8") as f:
+                data = json.load(f)
+                # 存入缓存，时效7天
+                cache.set(file_name, data, 60 * 60 * 24 * 7)
+
+        tags = data.get("tags", [])
+        if cluster_type in tags:
+            target_files[file_name] = data
+
+    db_type = ClusterType.cluster_type_to_db_type(cluster_type).upper()
+    for target_file in target_files:
+        configs = {}
+        yaml_name = target_file.replace(".json", ".yaml")
+        configs[f"grafana/DBM内置仪表盘-{db_type}/{yaml_name}"] = json.dumps(target_files[target_file])
+
+        if not configs:
+            logger.info(_("没有匹配到对应的yaml数据"))
+            continue
+
+        try:
+            res = BKMonitorV3Api.as_code_import_config(
+                {"app": DASHBOARD_APP_ID, "bk_biz_id": bk_biz_id, "overwrite": True, "configs": configs},
+                use_admin=True,
+            )
+            logger.info(res)
+
+        except ApiResultError as e:
+            logger.error(_("grafana import error, file name is {}, {}").format(yaml_name, e))
