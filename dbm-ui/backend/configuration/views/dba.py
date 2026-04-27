@@ -39,7 +39,7 @@ class DBAdminViewSet(viewsets.SystemViewSet):
     def list_admins(self, request, *args, **kwargs):
         validated_data = self.params_validate(self.get_serializer_class())
         bk_biz_id = validated_data["bk_biz_id"]
-        return Response(DBAdministrator.list_biz_admins(bk_biz_id=bk_biz_id))
+        return Response(DBAdministrator.list_biz_admins({"bk_biz_id": bk_biz_id}))
 
     @common_swagger_auto_schema(operation_summary=_("更新DBA人员"), tags=[SWAGGER_TAG])
     @action(methods=["POST"], detail=False, serializer_class=UpsertDBAdminSerializer)
