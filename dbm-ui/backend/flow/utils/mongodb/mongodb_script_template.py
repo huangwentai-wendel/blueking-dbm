@@ -110,7 +110,7 @@ function safe_remove_dbactuator_dir() {
         echo "Error install_dir $install_dir not exist"
         return
     fi
-    for old_dir in `find $install_dir -maxdepth 1  -type d -name "dbactuator-*"  -mtime +3  -print`
+    for old_dir in `find $install_dir -maxdepth 1  -type d -name "dbactuator-*"  -mtime +15  -print`
     do
         if [  "${old_dir/dbactuator//}" = "$old_dir" ];then
             echo "Error bad dir $old_dir"
@@ -179,6 +179,11 @@ exe_path=$workdir/$exe
 lock_file="$workdir/$exe.cp.lock"
 mkdir -p $workdir/logs
 
+# update workdir to avoid find and remove old dbactuator dir
+if [ -d "$workdir" ];then
+    touch $workdir
+fi
+
 safe_remove_dbactuator_dir $install_dir
 safe_cpfile $install_dir/$exe $exe_path $lock_file
 
@@ -242,17 +247,20 @@ db.getSisterDB('config').settings.save({ _id:'chunksize', value: 512 });
 # 禁用bk-dbmon 监控
 mongodb_dbmon_shield_port = """
 cd /home/mysql/bk-dbmon
-/home/mysql/bk-dbmon/bk-dbmon alarm shield --port {{port}}
+flock -w 30 /tmp/dbmon_shield.{{exec_account}}.lock -c \
+"/home/mysql/bk-dbmon/bk-dbmon alarm shield --port {{port}}" || { echo "Error shield dbmon failed"; exit 1; }
 """
 
 # 解禁bk-dbmon 监控
 mongodb_dbmon_unblock_port = """
 cd /home/mysql/bk-dbmon
-/home/mysql/bk-dbmon/bk-dbmon alarm unblock --port {{port}}
+flock -w 30 /tmp/dbmon_shield.{{exec_account}}.lock -c \
+"/home/mysql/bk-dbmon/bk-dbmon alarm unblock --port {{port}}" || { echo "Error unblock dbmon failed"; exit 1; }
 """
 
 # 删除bk-dbmon 监控
 mongodb_dbmon_delete_port = """
 cd /home/mysql/bk-dbmon
-/home/mysql/bk-dbmon/bk-dbmon meta delete --port  {{port}}
+flock -w 30 /tmp/dbmon_shield.{{exec_account}}.lock -c \
+"/home/mysql/bk-dbmon/bk-dbmon meta delete --port {{port}}" || { echo "Error delete dbmon failed"; exit 1; }
 """

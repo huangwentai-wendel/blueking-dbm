@@ -54,6 +54,7 @@
         </div>
         <div class="editor-layout-right">
           <RenderFileContent
+            :grammar-check-info="currentFileGrammarCheckInfo"
             :model-value="currentFileContent"
             readonly
             :title="localSelectFileName" />
@@ -67,16 +68,17 @@
   import { useI18n } from 'vue-i18n';
   import { useRequest } from 'vue-request';
 
-  import { type Sqlserver } from '@services/model/ticket/ticket';
+  import TicketModel, { type Mysql } from '@services/model/ticket/ticket';
   import { batchFetchFile } from '@services/source/storage';
 
   import RenderFileContent from '@views/ticket-center/common/ticket-detail/components/common/SqlFileContent.vue';
   import RenderFileList from '@views/ticket-center/common/ticket-detail/components/common/SqlFileList.vue';
 
   interface Props {
-    executeObject: Sqlserver.ImportSqlFile['execute_objects'][number];
+    executeObject: Mysql.ImportSqlFile['execute_objects'][number];
     path: string;
     selectFileName: string;
+    ticketDetail: TicketModel<Mysql.ImportSqlFile>;
     wholeFileList: string[];
   }
   const props = defineProps<Props>();
@@ -90,6 +92,16 @@
   const fileContentMap = shallowRef<Record<string, string>>({});
 
   const currentFileContent = computed(() => fileContentMap.value[localSelectFileName.value] || '');
+
+  // 当前选中文件的语法检查结果（从 ticketDetail 中提取）
+  const currentFileGrammarCheckInfo = computed(
+    () =>
+      props.ticketDetail.details.grammar_check_info?.[localSelectFileName.value] || {
+        bancommand_warnings: [],
+        highrisk_warnings: [],
+        syntax_fails: [],
+      },
+  );
 
   const { loading: isContentLoading, run: runBatchFetchFile } = useRequest(
     () => {

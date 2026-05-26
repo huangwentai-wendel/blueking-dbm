@@ -1,6 +1,8 @@
 <template>
   <FunController module-id="mysql">
-    <BkMenuGroup name="MySQL">
+    <MenuGroup
+      :db-type="DBTypes.MYSQL"
+      :is-error="isError">
       <FunController
         controller-id="tendbha"
         module-id="mysql">
@@ -115,15 +117,15 @@
         </BkMenuItem>
       </FunController>
       <div
-        v-if="Object.keys(favorMeunMap).length > 0"
+        v-if="Object.keys(toolboxFavorMap).length > 0"
         class="split-line" />
       <ToolboxMenu
         v-for="toolboxGroupId in toolboxMenuSortList"
         :id="toolboxGroupId"
         :key="toolboxGroupId"
         v-db-console="'mysql.toolbox'"
-        :favor-map="favorMeunMap"
-        :toolbox-menu-config="toolboxMenuConfig" />
+        :favor-map="toolboxFavorMap"
+        :toolbox-menu-config="toolboxMenuList" />
       <FunController
         controller-id="toolbox"
         module-id="mysql">
@@ -140,48 +142,32 @@
           </span>
         </BkMenuItem>
       </FunController>
-    </BkMenuGroup>
+    </MenuGroup>
   </FunController>
 </template>
 <script setup lang="ts">
-  import { onBeforeUnmount, shallowRef } from 'vue';
   import { useI18n } from 'vue-i18n';
 
   import type { FunctionKeys } from '@services/model/function-controller/functionController';
 
-  import { useEventBus } from '@hooks';
+  import { ClusterTypes, DBTypes } from '@common/const';
 
-  import { useUserProfile } from '@stores';
-
-  import { ClusterTypes, UserPersonalSettings } from '@common/const';
-
-  import toolboxMenuConfig from '@views/db-manage/mysql/toolbox-menu';
-
-  import { makeMap } from '@utils';
+  import { toolboxMenuList } from '@views/db-manage/mysql/toolbox/toolboxMenuList';
 
   import CountTag from './components/CountTag.vue';
+  import MenuGroup from './components/MenuGroup.vue';
   import ToolboxMenu from './components/ToolboxMenu.vue';
+  import { useToolboxFavor } from './hooks/useToolboxFavor';
 
-  const userProfile = useUserProfile();
+  interface Props {
+    isError: boolean;
+  }
+
+  defineProps<Props>();
+
   const { t } = useI18n();
-  const eventBus = useEventBus();
-
-  const toolboxMenuSortList = shallowRef<string[]>([]);
-  const favorMeunMap = shallowRef<Record<string, boolean>>({});
 
   const dumperControlId = `dumper_biz_${window.PROJECT_CONFIG.BIZ_ID}` as FunctionKeys;
 
-  const renderToolboxMenu = () => {
-    toolboxMenuSortList.value =
-      userProfile.profile[UserPersonalSettings.MYSQL_TOOLBOX_MENUS] || toolboxMenuConfig.map((item) => item.id);
-    favorMeunMap.value = makeMap(userProfile.profile[UserPersonalSettings.MYSQL_TOOLBOX_FAVOR]);
-  };
-
-  renderToolboxMenu();
-
-  eventBus.on('MYSQL_TOOLBOX_CHANGE', renderToolboxMenu);
-
-  onBeforeUnmount(() => {
-    eventBus.off('MYSQL_TOOLBOX_CHANGE', renderToolboxMenu);
-  });
+  const { toolboxFavorMap, toolboxMenuSortList } = useToolboxFavor(DBTypes.MYSQL, toolboxMenuList);
 </script>

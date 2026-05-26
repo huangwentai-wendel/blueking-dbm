@@ -24,6 +24,10 @@
 
   type Emits = (e: 'show') => void;
 
+  interface Exposes {
+    hide: () => void;
+  }
+
   const emits = defineEmits<Emits>();
   defineSlots<Slots>();
 
@@ -66,7 +70,7 @@
       },
       theme: 'light cluster-list-column-operation-panel',
       trigger: 'click',
-      zIndex: 999,
+      zIndex: 9999,
     });
   });
 
@@ -76,6 +80,12 @@
       tippyIns.unmount();
       tippyIns.destroy();
     }
+  });
+
+  defineExpose<Exposes>({
+    hide() {
+      tippyIns.hide();
+    },
   });
 </script>
 <style lang="less">
@@ -90,7 +100,7 @@
 
   .cluster-list-column-operation-btn {
     position: relative;
-    display: none;
+    display: flex;
     font-size: 18px;
     cursor: pointer;
     border-radius: 2px;
@@ -102,7 +112,6 @@
     }
 
     &.is-active {
-      display: flex;
       color: #3a84ff;
     }
   }
@@ -117,6 +126,12 @@
       flex-direction: column;
 
       & > * {
+        display: block !important;
+
+        & > * {
+          display: block !important;
+        }
+
         &:hover {
           background-color: #f5f7fa;
 

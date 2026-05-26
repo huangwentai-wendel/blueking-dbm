@@ -14,7 +14,7 @@ from collections import defaultdict
 
 from django.conf import settings
 from django.core.cache import cache
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend import env
 from backend.components import CCApi, JobApi
@@ -69,7 +69,8 @@ def remove_cluster(cluster_id, job_clean=True, cc_clean=True):
 
             JobApi.fast_execute_script(
                 {
-                    "bk_biz_id": env.JOB_BLUEKING_BIZ_ID,
+                    "bk_scope_type": "biz_set",
+                    "bk_scope_id": env.JOB_BLUEKING_BIZ_ID,
                     "script_content": base64_encode(script_content),
                     "task_name": _("清理集群"),
                     "account_alias": "root",
@@ -140,7 +141,8 @@ def remove_cluster_ips(bk_host_ids, job_clean=True, cc_clean=True):
 
                 JobApi.fast_execute_script(
                     {
-                        "bk_biz_id": env.JOB_BLUEKING_BIZ_ID,
+                        "bk_scope_type": "biz_set",
+                        "bk_scope_id": env.JOB_BLUEKING_BIZ_ID,
                         "script_content": base64_encode(script_content),
                         "task_name": _("清理集群"),
                         "account_alias": "root",

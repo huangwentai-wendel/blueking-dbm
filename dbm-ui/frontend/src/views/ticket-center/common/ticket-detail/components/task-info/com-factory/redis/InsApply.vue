@@ -20,18 +20,26 @@
     <InfoItem :label="t('业务英文名')">
       {{ ticketDetails.db_app_abbr || '--' }}
     </InfoItem>
+    <InfoItem :label="t('管控区域')">
+      {{ ticketDetails.details.bk_cloud_name || '--' }}
+    </InfoItem>
   </InfoList>
   <RegionRequirements
-    v-if="!isAppend"
+    v-if="!isAppend && resourceSpec"
     :details="ticketDetails.details" />
   <div class="info-title mt-20">{{ t('数据库部署信息') }}</div>
   <InfoList>
-    <InfoItem :label="t('业务英文名')">
+    <InfoItem :label="t('部署方式')">
       {{ ticketDetails.details.append_apply ? t('已有主从所在主机追加部署') : t('全新主机部署') }}
     </InfoItem>
   </InfoList>
-  <div class="info-title mt-20">{{ t('数据库部署信息') }}</div>
+  <div class="info-title mt-20">{{ t('部署需求') }}</div>
   <InfoList>
+    <InfoItem
+      v-if="!isAppend"
+      :label="t('Redis 版本')">
+      {{ ticketDetails.details.db_version || '--' }}
+    </InfoItem>
     <InfoItem
       v-if="!isAppend"
       :label="t('Redis 起始端口')">
@@ -43,44 +51,59 @@
     <InfoItem
       v-if="!isAppend"
       :label="t('后端存储规格')">
-      <BkPopover
+      <SpecDetailPopover
         v-if="backendSpec"
-        placement="top"
-        theme="light">
+        :data="backendSpec"
+        placement="top">
         <span
           class="pb-2"
           style="cursor: pointer; border-bottom: 1px dashed #979ba5">
           {{ backendSpec.spec_name }}（{{ `${backendSpec.count} ${t('台')}` }}）
         </span>
-        <template #content>
-          <SpecInfos :data="backendSpec" />
-        </template>
-      </BkPopover>
+      </SpecDetailPopover>
       <span v-else>--</span>
+    </InfoItem>
+    <InfoItem
+      v-if="!isAppend"
+      :label="t('资源标签')">
+      <template v-if="backendSpec && backendSpec.label_names?.length">
+        <BkTag
+          v-for="item in backendSpec.label_names"
+          :key="item">
+          {{ item }}
+        </BkTag>
+      </template>
+      <BkTag
+        v-else
+        theme="success">
+        {{ t('通用无标签') }}
+      </BkTag>
     </InfoItem>
     <InfoItem
       :label="t('域名设置')"
       style="flex: 1 0 100%">
-      <BkTable :data="tableData">
-        <BkTableColumn
-          field="mainDomain"
-          :label="t('主域名')">
-        </BkTableColumn>
-        <BkTableColumn
-          field="databases"
-          label="Databases">
-        </BkTableColumn>
+      <TicketInfoTable
+        :data="tableData"
+        row-key="index">
+        <TicketInfoTableColumn
+          col-key="mainDomain"
+          :title="t('主域名')">
+        </TicketInfoTableColumn>
+        <TicketInfoTableColumn
+          col-key="databases"
+          title="Databases">
+        </TicketInfoTableColumn>
         <template v-if="isAppend">
-          <BkTableColumn
-            field="masterIp"
-            :label="t('待部署主库主机')">
-          </BkTableColumn>
-          <BkTableColumn
-            field="slaveIp"
-            :label="t('待部署从库主机')">
-          </BkTableColumn>
+          <TicketInfoTableColumn
+            col-key="masterIp"
+            :title="t('待部署主库主机')">
+          </TicketInfoTableColumn>
+          <TicketInfoTableColumn
+            col-key="slaveIp"
+            :title="t('待部署从库主机')">
+          </TicketInfoTableColumn>
         </template>
-      </BkTable>
+      </TicketInfoTable>
     </InfoItem>
   </InfoList>
 </template>
@@ -93,9 +116,10 @@
 
   import { TicketTypes } from '@common/const';
 
+  import SpecDetailPopover from '@components/spec-detail-popover/Index.vue';
+
   import InfoList, { Item as InfoItem } from '../components/info-list/Index.vue';
   import RegionRequirements from '../components/RegionRequirements.vue';
-  import SpecInfos from '../components/SpecInfos.vue';
 
   interface Props {
     ticketDetails: TicketModel<Redis.InsApply>;
@@ -150,6 +174,7 @@
     const { cluster_name: clusterName } = infoItem;
     return {
       databases: infoItem.databases,
+      index,
       // mainDomain: `ins.${clusterName}.${appAbbr}.db${isAppend ? '' : `#${port + index}`}`,
       mainDomain: getMasterDomain(index, clusterName),
       masterIp: infoItem.backend_group?.master.ip,

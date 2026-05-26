@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from django.core.exceptions import ObjectDoesNotExist
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.constants import IP_PORT_DIVIDER
@@ -306,4 +306,9 @@ class SpiderTruncateDatabaseFlow(object):
 
         pipeline.add_sub_pipeline(sub_flow=truncate_pipeline.build_sub_process(sub_name=_("集群清档")))
         logger.info(_("构造清档流程成功"))
-        pipeline.run_pipeline(init_trans_data_class=MySQLTruncateDataContext(), is_drop_random_user=True)
+        # 启动接入单据值守监听
+        pipeline.run_pipeline_with_sidecar(
+            init_trans_data_class=MySQLTruncateDataContext(),
+            is_drop_random_user=True,
+            check_ai_monitor_cluster_list=list(set(cluster_ids)),
+        )

@@ -8,6 +8,7 @@
         disabled: !actionTips,
       }">
       <BkButton
+        v-test="{ type: 'button', value: 'addSql' }"
         :disabled="Boolean(actionTips)"
         text
         theme="primary"

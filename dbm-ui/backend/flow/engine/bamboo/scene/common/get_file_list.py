@@ -8,6 +8,8 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+from typing import Optional
+
 from backend import env
 from backend.components.constants import SSLEnum
 from backend.configuration.constants import DBType
@@ -31,7 +33,7 @@ class GetFileList(object):
         # repo_version 如果REPO_VERSION_FOR_DEV有值，则使用REPO_VERSION_FOR_DEV，否则使用最新版本
         # 正式环境: REPO_VERSION_FOR_DEV为空 个人测试环境中，REPO_VERSION_FOR_DEV 按需配置
         dev_env = str(env.REPO_VERSION_FOR_DEV)
-        repo_version = dev_env if dev_env != "" else MediumEnum.Latest
+        repo_version = dev_env if dev_env != "" and db_type == DBType.MongoDB.value else MediumEnum.Latest
 
         self.actuator_pkg = Package.get_latest_package(
             version=repo_version, pkg_type=MediumEnum.DBActuator, db_type=db_type
@@ -240,7 +242,7 @@ class GetFileList(object):
             f"{env.BKREPO_PROJECT}/{env.BKREPO_BUCKET}/{riak_monitor_pkg.path}",
         ]
 
-    def redis_cluster_apply_proxy(self, cluster_type) -> list:
+    def redis_cluster_apply_proxy(self, cluster_type, proxy_name_prefix: Optional[str] = None) -> list:
         """
         部署redis,所有节点需要的proxy pkg包
         """
@@ -250,7 +252,9 @@ class GetFileList(object):
             version = PredixyVersion.PredixyLatest
             pkg_type = MediumEnum.Predixy
 
-        proxy_pkg = Package.get_latest_package(version=version, pkg_type=pkg_type, db_type=DBType.Redis)
+        proxy_pkg = Package.get_latest_package(
+            version=version, pkg_type=pkg_type, db_type=DBType.Redis, name_prefix=proxy_name_prefix
+        )
         bkdbmon_pkg = Package.get_latest_package(
             version=MediumEnum.Latest, pkg_type=MediumEnum.DbMon, db_type=DBType.Redis
         )
@@ -518,11 +522,9 @@ class GetFileList(object):
         ]
 
     @classmethod
-    def nginx_apply(cls) -> list:
+    def nginx_apply(cls, version: str = MediumEnum.Latest) -> list:
         # 部署云区域nginx服务的文件列表
-        nginx_pkg = Package.get_latest_package(
-            version=MediumEnum.Latest, pkg_type=MediumEnum.CloudNginx, db_type=DBType.Cloud
-        )
+        nginx_pkg = Package.get_latest_package(version=version, pkg_type=MediumEnum.CloudNginx, db_type=DBType.Cloud)
         return [
             f"{env.BKREPO_PROJECT}/{env.BKREPO_BUCKET}/{nginx_pkg.path}",
             f"{env.BKREPO_PROJECT}/{env.BKREPO_BUCKET}/{CLOUD_SSL_PATH}/{SSLEnum.SERVER_CRT}",
@@ -634,6 +636,16 @@ class GetFileList(object):
             f"{env.BKREPO_PROJECT}/{env.BKREPO_BUCKET}/{tdbctl_pkg.path}",
         ]
 
+    def tdbctl_upgrade_package(self, pkg_id: int) -> list:
+        """
+        tdbctl 升级需要的安装包列表
+        """
+        tdbctl_pkg = Package.objects.get(id=pkg_id, pkg_type=MediumEnum.tdbCtl, db_type=DBType.MySQL)
+        return [
+            f"{env.BKREPO_PROJECT}/{env.BKREPO_BUCKET}/{self.actuator_pkg.path}",
+            f"{env.BKREPO_PROJECT}/{env.BKREPO_BUCKET}/{tdbctl_pkg.path}",
+        ]
+
     @staticmethod
     def get_spider_apps_package():
         """
@@ -736,3 +748,26 @@ class GetFileList(object):
         return [
             f"{env.BKREPO_PROJECT}/{env.BKREPO_BUCKET}/{self.actuator_pkg.path}",
         ]
+
+    def get_tlinux4_dependencies_package(self) -> list:
+        """
+        tlinux4依赖包，可能返回多个rpm依赖包
+        @return: 返回包信息列表，每个元素为 (包名, 下载URL) 元组
+        """
+        tlinux4_dependencies_pkgs = Package.objects.filter(
+            pkg_type=MediumEnum.TLinux4Dependencies, db_type=DBType.MySQL, enable=True
+        ).order_by("-update_at")
+
+        non_perl_pkgs = []
+        perl_pkgs = []
+        for pkg in tlinux4_dependencies_pkgs:
+            pkg_info = (
+                pkg.name,
+                f"{env.BKREPO_ENDPOINT_URL}/generic/{env.BKREPO_PROJECT}/{env.BKREPO_BUCKET}/{pkg.path}",
+            )
+            # perl相关依赖包 依赖其他的包，需要后安装
+            if "perl" in pkg.name.lower():
+                perl_pkgs.append(pkg_info)
+            else:
+                non_perl_pkgs.append(pkg_info)
+        return non_perl_pkgs + perl_pkgs

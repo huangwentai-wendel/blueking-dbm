@@ -21,13 +21,13 @@ package controller
 
 import (
 	"fmt"
+	"k8s-dbs/common/api"
 	commconst "k8s-dbs/common/constant"
-	"k8s-dbs/core/entity"
-	"k8s-dbs/core/errors"
-	"k8s-dbs/metadata/api/vo/req"
-	"k8s-dbs/metadata/api/vo/resp"
+	"k8s-dbs/errors"
+	entitys "k8s-dbs/metadata/entity"
 	"k8s-dbs/metadata/provider"
-	entitys "k8s-dbs/metadata/provider/entity"
+	"k8s-dbs/metadata/vo/request"
+	"k8s-dbs/metadata/vo/response"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -46,109 +46,157 @@ func NewK8sClusterConfigController(configProvider provider.K8sClusterConfigProvi
 
 // GetK8sClusterConfigByID get clusterConfig by its ID.
 func (k *K8sClusterConfigController) GetK8sClusterConfigByID(ctx *gin.Context) {
+	ctx.Set(commconst.APIName, commconst.APIMetaK8sConfigDetail)
 	idParam := ctx.Param("id")
 	id, err := strconv.ParseUint(idParam, 10, 64)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetMetaDataErr, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.GetMetaDataError, err))
 		return
 	}
 	config, err := k.configProvider.FindConfigByID(id)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetMetaDataErr, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.GetMetaDataError, err))
 		return
 	}
-	var respVo resp.K8sClusterConfigRespVo
-	if err := copier.Copy(&respVo, config); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetMetaDataErr, err))
+	var respVo response.K8sClusterConfigResponse
+	if err = copier.Copy(&respVo, config); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.GetMetaDataError, err))
 		return
 	}
-	entity.SuccessResponse(ctx, respVo, commconst.Success)
+	api.SuccessResponse(ctx, respVo, commconst.Success)
+}
+
+// GetRegionsByVisibility 按照k8s集群可见性来获取集群区域列表
+func (k *K8sClusterConfigController) GetRegionsByVisibility(ctx *gin.Context) {
+	// TODO 待优化合并成 search by params
+	ctx.Set(commconst.APIName, commconst.APIMetaK8sConfigDetailByVis)
+	isPublicStr := ctx.Query("isPublic")
+	isPublic, err := strconv.ParseBool(isPublicStr)
+	if err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.GetMetaDataError, err))
+		return
+	}
+	regions, err := k.configProvider.GetRegionsByVisibility(isPublic)
+	if err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.GetMetaDataError, err))
+		return
+	}
+	// 按照区域分组处理返回结构
+	regionMap := make(map[string]*response.RegionResp)
+	for _, region := range regions {
+		if _, exists := regionMap[region.RegionCode]; !exists {
+			regionMap[region.RegionCode] = &response.RegionResp{
+				RegionName:     region.RegionName,
+				RegionCode:     region.RegionCode,
+				Provider:       region.Provider,
+				K8sClusterList: []response.K8sClusterResp{},
+			}
+		}
+		// 添加集群到对应区域的集群列表
+		regionMap[region.RegionCode].K8sClusterList = append(regionMap[region.RegionCode].K8sClusterList,
+			response.K8sClusterResp{
+				ClusterName:  region.ClusterName,
+				ClusterAlias: region.ClusterAlias,
+				VpcID:        region.VpcID,
+			})
+	}
+	// 转换为切片返回
+	respRegions := make([]*response.RegionResp, 0, len(regionMap))
+	for _, regionResp := range regionMap {
+		respRegions = append(respRegions, regionResp)
+	}
+	api.SuccessResponse(ctx, respRegions, commconst.Success)
 }
 
 // GetK8sClusterConfigByName get clusterConfig by its Name.
 func (k *K8sClusterConfigController) GetK8sClusterConfigByName(ctx *gin.Context) {
+	// TODO 待优化合并成 search by params
+	ctx.Set(commconst.APIName, commconst.APIMetaK8sConfigDetailByName)
 	nameParam := ctx.Param("clusterName")
 	if nameParam == "" {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetMetaDataErr, fmt.Errorf("clusterName 参数不能为空")))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.GetMetaDataError, fmt.Errorf("clusterName 参数不能为空")))
 		return
 	}
 	config, err := k.configProvider.FindConfigByName(nameParam)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetMetaDataErr, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.GetMetaDataError, err))
 		return
 	}
-	var respVo resp.K8sClusterConfigRespVo
-	if err := copier.Copy(&respVo, config); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetMetaDataErr, err))
+	var respVo response.K8sClusterConfigResponse
+	if err = copier.Copy(&respVo, config); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.GetMetaDataError, err))
 		return
 	}
-	entity.SuccessResponse(ctx, respVo, commconst.Success)
+	api.SuccessResponse(ctx, respVo, commconst.Success)
 }
 
 // CreateK8sClusterConfig create a new clusterConfig.
 func (k *K8sClusterConfigController) CreateK8sClusterConfig(ctx *gin.Context) {
-	var reqVo req.K8sClusterConfigReqVo
+	ctx.Set(commconst.APIName, commconst.APIMetaK8sConfigCreate)
+	var reqVo request.K8sClusterConfigRequest
 	if err := ctx.ShouldBindJSON(&reqVo); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.CreateMetaDataErr, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.CreateMetaDataError, err))
 		return
 	}
 	var configEntity entitys.K8sClusterConfigEntity
 	if err := copier.Copy(&configEntity, &reqVo); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.CreateMetaDataErr, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.CreateMetaDataError, err))
 		return
 	}
 	addedConfig, err := k.configProvider.CreateConfig(&configEntity)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.CreateMetaDataErr, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.CreateMetaDataError, err))
 		return
 	}
-	var respVo resp.K8sClusterConfigRespVo
-	if err := copier.Copy(&respVo, addedConfig); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.CreateMetaDataErr, err))
+	var respVo response.K8sClusterConfigResponse
+	if err = copier.Copy(&respVo, addedConfig); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.CreateMetaDataError, err))
 		return
 	}
-	entity.SuccessResponse(ctx, respVo, commconst.Success)
+	api.SuccessResponse(ctx, respVo, commconst.Success)
 }
 
 // UpdateK8sClusterConfig update existing clusterConfig.
 func (k *K8sClusterConfigController) UpdateK8sClusterConfig(ctx *gin.Context) {
+	ctx.Set(commconst.APIName, commconst.APIMetaK8sConfigUpdate)
 	idParam := ctx.Param("id")
 	id, err := strconv.ParseUint(idParam, 10, 64)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.UpdateMetaDataErr, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.UpdateMetaDataError, err))
 		return
 	}
-	var reqVo req.K8sClusterConfigReqVo
-	if err := ctx.ShouldBindJSON(&reqVo); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.UpdateMetaDataErr, err))
+	var reqVo request.K8sClusterConfigRequest
+	if err = ctx.ShouldBindJSON(&reqVo); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.UpdateMetaDataError, err))
 		return
 	}
 	var configEntity entitys.K8sClusterConfigEntity
-	if err := copier.Copy(&configEntity, reqVo); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.UpdateMetaDataErr, err))
+	if err = copier.Copy(&configEntity, reqVo); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.UpdateMetaDataError, err))
 		return
 	}
 	configEntity.ID = id
 	rows, err := k.configProvider.UpdateConfig(&configEntity)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.UpdateMetaDataErr, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.UpdateMetaDataError, err))
 		return
 	}
-	entity.SuccessResponse(ctx, map[string]uint64{"rows": rows}, commconst.Success)
+	api.SuccessResponse(ctx, map[string]uint64{"rows": rows}, commconst.Success)
 }
 
 // DeleteK8sClusterConfig delete a clusterConfig by its ID.
 func (k *K8sClusterConfigController) DeleteK8sClusterConfig(ctx *gin.Context) {
+	ctx.Set(commconst.APIName, commconst.APIMetaK8sConfigDelete)
 	idParam := ctx.Param("id")
 	id, err := strconv.ParseUint(idParam, 10, 64)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.DeleteMetaDataErr, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.DeleteMetaDataError, err))
 		return
 	}
 	rows, err := k.configProvider.DeleteConfigByID(id)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.DeleteMetaDataErr, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.DeleteMetaDataError, err))
 		return
 	}
-	entity.SuccessResponse(ctx, map[string]uint64{"rows": rows}, commconst.Success)
+	api.SuccessResponse(ctx, map[string]uint64{"rows": rows}, commconst.Success)
 }

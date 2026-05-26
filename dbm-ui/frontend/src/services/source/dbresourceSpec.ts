@@ -22,13 +22,20 @@ const path = '/apis/dbresource/spec';
 /**
  * 获取资源规格列表
  */
-export function getResourceSpecList(
-  params: {
-    enable?: boolean;
-    spec_cluster_type: string;
-    spec_machine_type?: string;
-  } & Record<string, any>,
-) {
+export function getResourceSpecList(params: {
+  biz_ids?: string;
+  biz_scope?: string; // all | bizs
+  desc?: string;
+  enable?: boolean;
+  limit: number;
+  offset?: number;
+  spec_cluster_type: string;
+  spec_db_type?: string;
+  spec_ids?: string;
+  spec_machine_type?: string;
+  spec_name?: string;
+  update_at?: string;
+}) {
   return http.get<ListBase<ResourceSpecModel[]>>(`${path}/`, params).then((data) => ({
     ...data,
     results: data.results.map(
@@ -145,10 +152,14 @@ export function updateResourceSpec(
 }
 
 /**
- * 更新规格的启用禁用态
+ * 批量更新规格属性
  */
-export function updateResourceSpecEnableStatus(params: { enable: boolean; spec_ids: number[] }) {
-  return http.post<ResourceSpecModel>(`${path}/modify_spec_enable_status/`, params);
+export function batchCommonUpdate(params: {
+  biz_scope?: number[]; // 业务范围，全部业务为[]
+  enable?: boolean; // 启用禁用
+  spec_ids: number[];
+}) {
+  return http.post<ResourceSpecModel>(`${path}/batch_common_update/`, params);
 }
 
 /**
@@ -156,4 +167,28 @@ export function updateResourceSpecEnableStatus(params: { enable: boolean; spec_i
  */
 export function deleteResourceSpec(params: { specId: number }) {
   return http.delete(`${path}/${params.specId}/`);
+}
+
+/**
+ * 修改规格补货定义
+ */
+export function addSpecReplenishTag(params: {
+  need_replenish: boolean; // 是否自动补货
+  spec_ids: number[];
+}) {
+  return http.post(`${path}/add_spec_replenish_tag/`, params);
+}
+
+/**
+ * 设置规格与补货比例映射
+ */
+export function setSpecReplenishRatio(params: { ratio_map: Record<string, number> }) {
+  return http.post(`${path}/set_spec_replenish_ratio/`, params);
+}
+
+/**
+ * 获取规格与补货比例映射
+ */
+export function getSpecReplenishRatio() {
+  return http.get<Record<string, number>>(`${path}/get_spec_replenish_ratio/`);
 }

@@ -10,30 +10,41 @@
 
 package syntax
 
-import "fmt"
+import (
+	"fmt"
+
+	"dbm-services/common/go-pubpkg/logger"
+)
 
 // SpiderChecker syntax checker
 func (c AlterTableResult) SpiderChecker(mysqlVersion string) (r *CheckerResult) {
 	r = &CheckerResult{
 		ObjName: c.TableName,
 	}
-	for _, altercmd := range c.AlterCommands {
+	for _, alterCmd := range c.AlterCommands {
+		logger.Info("alter cmd: %+v", alterCmd)
 		// 如果是增加字段，需要判断增加的字段名称是否是关键字
-		if altercmd.Type == AlterTypeAddColumn {
-			r.ParseBultinRisk(func() (bool, string) {
-				return KeyWordValidator(mysqlVersion, altercmd.ColDef.ColName)
+		if alterCmd.Type == AlterTypeAddColumn {
+			r.ParseBuiltinRisk(func() (bool, string) {
+				return KeyWordValidator(mysqlVersion, alterCmd.ColDef.ColName)
+			})
+		}
+		logger.Info("alter cmd drop primary: %v", alterCmd.DropPrimary)
+		if alterCmd.Type == AlterTypeDropKey && alterCmd.DropPrimary {
+			r.ParseBuiltinBan(func() (bool, string) {
+				return true, "Tendbcluster集群表不允许删除主键"
 			})
 		}
 	}
-	r.ParseBultinBan(c.NotAllowedDefaulValCol)
-	return c.Checker(mysqlVersion)
+	r.ParseBuiltinBan(c.NotAllowedDefaultValCol)
+	return r.Merge(c.Checker(mysqlVersion))
 }
 
-// NotAllowedDefaulValCol 不允许存在默认值的字段
-func (c AlterTableResult) NotAllowedDefaulValCol() (bool, string) {
+// NotAllowedDefaultValCol 不允许存在默认值的字段
+func (c AlterTableResult) NotAllowedDefaultValCol() (bool, string) {
 	for _, alt := range c.AlterCommands {
-		if alt.ColDef.IsNotAllowDefaulValCol() {
-			return true, fmt.Sprintf("col:%s,类型:%s 不允许存在默认值的字段", alt.ColDef.ColName, alt.ColDef.DataType)
+		if alt.ColDef.IsNotAllowDefaultValCol() {
+			return true, fmt.Sprintf("字段 '%s'（类型: %s）不允许设置默认值", alt.ColDef.ColName, alt.ColDef.DataType)
 		}
 	}
 	return false, ""

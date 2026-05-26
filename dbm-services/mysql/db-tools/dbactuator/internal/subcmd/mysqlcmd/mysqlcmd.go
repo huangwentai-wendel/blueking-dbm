@@ -12,11 +12,12 @@
 package mysqlcmd
 
 import (
+	"github.com/spf13/cobra"
+
 	"dbm-services/mysql/db-tools/dbactuator/internal/subcmd"
 	v2 "dbm-services/mysql/db-tools/dbactuator/internal/subcmd/mysqlcmd/v2"
+	"dbm-services/mysql/db-tools/dbactuator/internal/subcmd/mysqlcmd/v2/clone_grants_from_file"
 	"dbm-services/mysql/db-tools/dbactuator/pkg/util/templates"
-
-	"github.com/spf13/cobra"
 )
 
 // NewMysqlCommand mysql子命令
@@ -35,30 +36,21 @@ func NewMysqlCommand() *cobra.Command {
 				NewGrantReplCommand(),
 				NewExecSQLFileCommand(),
 				CloneClientGrantCommand(),
-				// NewBackupTruncateDatabaseCommand(),
 				NewUpgradeMySQLCommand(),
-				// NewBackupDatabaseTableCommand(),
 				MycnfChangeCommand(),
 				FindLocalBackupCommand(),
 				MycnfCloneCommand(),
-				NewCutOverToSlaveCommnad(),
+				NewCutOverToSlaveCommand(),
 				CleanMysqlCommand(),
 				PtTableSyncCommand(),
 				ParseBinlogTimeCommand(),
 				FlashbackBinlogCommand(),
 				NewPtTableChecksumCommand(),
-				NewInstallMySQLChecksumCommand(),
-				NewInstallNewDbBackupCommand(),
-				// NewFullBackupCommand(),
-				NewInstallRotateBinlogCommand(),
-				NewInstallDBAToolkitCommand(),
-				NewDeployMySQLCrondCommand(),
+				NewInstallNewDbBackupCommand(), // 回档备份在用
 				ClearInstanceConfigCommand(),
-				NewInstallMySQLMonitorCommand(),
 				NewExecPartitionSQLCommand(),
 				NewBackupDemandCommand(),
 				NewDropTableCommand(),
-				InstallBackupClientCommand(),
 				NewEnableTokudbPluginCommand(),
 				NewOpenAreaDumpSchemaCommand(),
 				NewOpenAreaImportSchemaCommand(),
@@ -67,7 +59,6 @@ func NewMysqlCommand() *cobra.Command {
 				OSCmdRunCommand(),
 				OSInfoGetCommand(),
 				NewStandardizeMySQLCommand(),
-				NewStandardizeProxyCommand(),
 				NewMysqlDataMigrateDumpCommand(),
 				NewMysqlDataMigrateImportCommand(),
 				NewDbConsoleDumpCommand(),
@@ -77,23 +68,24 @@ func NewMysqlCommand() *cobra.Command {
 				NewTruncateDBsInUsingCommand(),
 				NewRenameDBsInUsingCommand(),
 				NewRenamePreDropToOnRemoteCommand(),
-				// NewPushBackupClientConfigCommand(),
 				NewCheckProcesslistExecSQLFilCommand(),
-				// NewPushMySQLCrondConfigCommand(),
 				ChangeServerIdCommand(),
+				RestartMysqldCommand(),
+				StopMysqldCommand(),
 				GoFlashbackBinlogCommand(),
 				NewFastExecuteSqlActCommand(),
-				// v2
 				v2.NewPreparePeripheralToolsBinaryCommand(),
-				v2.NewPushMySQLCrondConfigCommand(),
-				v2.NewPushMySQLMonitorConfigCommand(),
-				v2.NewPushNewDbBackupConfigCommand(),
-				v2.NewPushMySQLRotateBinlogConfigCommand(),
-				v2.NewPushChecksumConfigCommand(),
-				v2.NewPushExporterCnfCommand(),
 				v2.NewGenPeripheralToolsConfigCommand(),
 				v2.NewReloadPeripheralToolsConfigCommand(),
-				v2.NewInitNginxAddressesCommand(),
+				v2.NewInitCommonConfigCommand(),
+				NewMysqlPartitionExec(),
+				clone_grants_from_file.NewCloneGrantsDumpPrivCommand(),
+				clone_grants_from_file.NewCloneGrantsParsePrivFileCommand(),
+				clone_grants_from_file.NewCloneGrantsPrecheckCreateCommand(),
+				clone_grants_from_file.NewCloneGrantsImportCreateCommand(),
+				clone_grants_from_file.NewCloneGrantsImportGrantCommand(),
+				clone_grants_from_file.NewCloneGrantsVerifyCreateCommand(),
+				clone_grants_from_file.NewCloneGrantsVerifyGrantCommand(),
 			},
 		},
 		{
@@ -107,7 +99,20 @@ func NewMysqlCommand() *cobra.Command {
 			Commands: []*cobra.Command{
 				NewBuildMsRelatioCommand(),
 				RestoreDRCommand(),
+				RestoreDRAfterCommand(),
 				RecoverBinlogCommand(),
+			},
+		},
+		{
+			Message: "mysql upgrade operation sets",
+			Commands: []*cobra.Command{
+				NewUpgradeRelinkMySQLCommand(),
+				NewUpgradePrepareMySQLCommand(),
+				NewUpgradeRestartMySQLCommand(),
+				NewUpgradeStartMySQLCommand(),
+				NewUpgradeCheckMySQLCommand(),
+				NewUpgradeExecMySQLCommand(),
+				NewUpgradeRelinkTdbctlCommand(),
 			},
 		},
 	}

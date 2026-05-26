@@ -1,0 +1,52 @@
+// TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-DB管理系统(BlueKing-BK-DBM) available.
+// Copyright (C) 2017-2023 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at https://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package model
+
+import "dbm-services/common/db-event-consumer/pkg/base"
+
+type FakeModelForNoStrictSchema struct {
+	base.BaseModel
+	tableName  string
+	omitFields []string
+}
+
+// TableName Tabler
+func (m *FakeModelForNoStrictSchema) TableName() string {
+	return m.tableName
+}
+
+func (m *FakeModelForNoStrictSchema) SetTableName(tableName string) {
+	m.tableName = tableName
+}
+
+func (m *FakeModelForNoStrictSchema) StrictSchema() bool {
+	return false
+}
+
+func (m *FakeModelForNoStrictSchema) OmitFields() []string {
+	if len(m.omitFields) > 0 {
+		return m.omitFields
+	}
+	// 默认忽略 dbm saas 注入的字段
+	return []string{
+		"event_type",
+		"event_cluster_type",
+		"event_receive_timestamp",
+		"event_source_ip",
+		"event_bk_cloud_id",
+	}
+}
+
+func (m *FakeModelForNoStrictSchema) SetOmitFields(omitFields *[]string) {
+	if omitFields == nil {
+		// use default OmitFields()
+		return
+	}
+	m.omitFields = *omitFields
+}

@@ -13,6 +13,8 @@
 
 import type { HostInfo } from '@services/types';
 
+import type { ClusterTypes } from '@common/const';
+
 /**
  * 实例详细信息（包含主机、集群）
  */
@@ -22,7 +24,7 @@ export interface InstanceInfos {
   bk_host_id: number;
   cluster_id: number;
   cluster_name: string;
-  cluster_type: string;
+  cluster_type: ClusterTypes;
   create_at: string;
   db_module_id: number;
   host_info: HostInfo;
@@ -47,6 +49,8 @@ export interface InstanceInfos {
     status: string;
     time_zone: string;
     updater: string;
+    zone_list: string[];
+    zone_names: string[];
   }[];
   role: string;
   spec_config: {
@@ -55,7 +59,7 @@ export interface InstanceInfos {
       max: number;
       min: number;
     };
-    device_class: string;
+    device_class: string[];
     id: number;
     mem: {
       max: number;
@@ -67,11 +71,12 @@ export interface InstanceInfos {
       min: number;
     };
     storage_spec: {
+      max: number;
+      min: number;
       mount_point: string;
-      size: number;
       type: string;
     }[];
   };
-  spec_id: number;
+  // spec_id: number;
   status: string;
 }

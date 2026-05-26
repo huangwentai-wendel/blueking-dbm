@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/juju/ratelimit"
 
@@ -39,9 +40,33 @@ func mysqlConnLogRotate(db *sqlx.DB) (string, error) {
 		_ = conn.Close()
 	}()
 
-	err = report(conn)
+	//isEnable, err := isEnableConnLog(conn)
+	//if err != nil {
+	//	return "", err
+	//}
+	//if !isEnable {
+	//	return "", nil
+	//}
+
+	isTooMuch, err := isTooMuchConnLog(conn)
 	if err != nil {
 		return "", err
+	}
+
+	if !isTooMuch {
+		err = report(conn)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	if isTooMuch {
+		slog.Info("too many conn_log, disable init_connect")
+		_, err = conn.ExecContext(context.Background(), `SET GLOBAL init_connect=""`)
+		if err != nil {
+			return "", err
+		}
+		slog.Info("set init_connect success")
 	}
 
 	err = clean(conn)
@@ -59,10 +84,12 @@ func prepareRotate(db *sqlx.DB) (conn *sqlx.Conn, err error) {
 	}
 
 	var _r interface{}
-	err = conn.GetContext(context.Background(), &_r,
+	err = conn.GetContext(
+		context.Background(), &_r,
 		`SELECT 1 FROM INFORMATION_SCHEMA.TABLES 
 					WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE='BASE TABLE'`,
-		cst.DBASchema, "conn_log")
+		cst.DBASchema, "conn_log",
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			err = errors.Errorf("conn_log table not found")
@@ -159,14 +186,13 @@ func clean(conn *sqlx.Conn) error {
 			return err
 		}
 
-		slog.Info("clean 3days ago conn_log limit 500")
-
 		if rowsDeleted == 0 {
 			break
 		}
 	}
 
 	slog.Info("clean 3days ago conn_log")
+
 	return nil
 }
 
@@ -174,7 +200,7 @@ func cleanOneRound(conn *sqlx.Conn) (affectedRows int64, err error) {
 	r, err := conn.ExecContext(
 		context.Background(),
 		fmt.Sprintf(
-			`DELETE FROM %s.conn_log WHERE conn_time < DATE_SUB(NOW(), INTERVAL 3 DAY) LIMIT 500`,
+			`DELETE FROM %s.conn_log WHERE conn_time < DATE_SUB(NOW(), INTERVAL 2 DAY) LIMIT 500`,
 			cst.DBASchema,
 		),
 	)
@@ -190,4 +216,32 @@ func cleanOneRound(conn *sqlx.Conn) (affectedRows int64, err error) {
 	}
 
 	return rowsDeleted, nil
+}
+
+func isTooMuchConnLog(conn *sqlx.Conn) (bool, error) {
+	var cnt int64
+	err := conn.QueryRowxContext(
+		context.Background(),
+		fmt.Sprintf(
+			`SELECT COUNT(*) FROM %s.conn_log WHERE conn_time >= DATE_SUB(NOW(), INTERVAL 2 DAY)`,
+			cst.DBASchema,
+		),
+	).Scan(&cnt)
+	if err != nil {
+		return false, err
+	}
+
+	return cnt >= 100000, nil
+}
+
+func isEnableConnLog(conn *sqlx.Conn) (bool, error) {
+	var initConn string
+	err := conn.QueryRowxContext(
+		context.Background(),
+		"SELECT @@init_connect",
+	).Scan(&initConn)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(initConn) != "", nil
 }

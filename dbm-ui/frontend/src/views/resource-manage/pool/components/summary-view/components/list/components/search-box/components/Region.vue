@@ -22,9 +22,9 @@
       @change="handleChangeSubzone">
       <BkOption
         v-for="item in renderSubzoneList"
-        :key="item.bk_sub_zone_id"
-        :label="item.bk_sub_zone"
-        :value="`${item.bk_sub_zone_id}`" />
+        :key="item.value"
+        :label="item.label"
+        :value="item.value" />
     </BkSelect>
   </BkComposeFormItem>
 </template>
@@ -32,9 +32,11 @@
 <script setup lang="ts">
   import { useRequest } from 'vue-request';
 
-  import { getInfrasCities, getInfrasSubzonesByCity } from '@services/source/infras';
+  import { getCommonCities, getInfrasSubzonesByCity } from '@services/source/infras';
 
-  type CityItem = ServiceReturnType<typeof getInfrasCities>[number];
+  import { specialOptionLabelMap, SpecialOptions } from '@common/const';
+
+  type CityItem = ServiceReturnType<typeof getCommonCities>['common'][number];
 
   interface Props {
     model: Record<string, string>;
@@ -56,13 +58,36 @@
   const cityCode = ref('');
   const subzoneIds = ref<string[]>([]);
 
-  const renderSubzoneList = computed(() =>
-    (subzoneList.value || []).filter((item) => item.bk_city_code === cityCode.value),
-  );
+  const renderSubzoneList = computed(() => {
+    const emptyItem = {
+      label: specialOptionLabelMap[SpecialOptions.EMPTY],
+      value: SpecialOptions.EMPTY,
+    };
 
-  useRequest(getInfrasCities, {
+    if (cityCode.value === SpecialOptions.EMPTY) {
+      return [emptyItem];
+    }
+
+    return (subzoneList.value || [])
+      .filter((item) => item.bk_city_code === cityCode.value)
+      .map((item) => ({
+        label: item.bk_sub_zone,
+        value: `${item.bk_sub_zone_id}`,
+      }))
+      .concat(emptyItem);
+  });
+
+  useRequest(getCommonCities, {
     onSuccess(data) {
-      citiyList.value = data.filter((item) => item.city_code !== 'default');
+      citiyList.value = data.common
+        .concat(data.internal)
+        .filter((item) => item.city_code !== 'default')
+        .concat({
+          city_code: SpecialOptions.EMPTY,
+          city_name: specialOptionLabelMap[SpecialOptions.EMPTY],
+          inventory: 0,
+          inventory_tag: '',
+        });
     },
   });
   const { data: subzoneList } = useRequest(getInfrasSubzonesByCity);

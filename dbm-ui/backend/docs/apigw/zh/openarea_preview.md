@@ -38,7 +38,7 @@
         "config_data": [
             {
                 "cluster_id": 133,
-                "target_cluster_domain": "spider.tengfei-test01.dbaplatdb.db",
+                "target_cluster_domain": "xxxx.db",
                 "execute_objects": [
                     {
                         "source_db": "db_worldsvr_example",
@@ -62,18 +62,18 @@
         "rules_set": [
             {
                 "bk_biz_id": 100465,
-                "operator": "admin",
+                "operator": "xxxxxx",
                 "user": "test",
                 "source_ips": [
                     "127.0.0.1"
                 ],
                 "target_instances": [
-                    "spider.tengfei-test01.dbaplatdb.db"
+                    "xxxx"
                 ],
                 "account_rules": [
                     {
                         "bk_biz_id": 100465,
-                        "dbname": "db_worldsvr_%"
+                        "dbname": "xxxx"
                     }
                 ],
                 "cluster_type": "tendbcluster"

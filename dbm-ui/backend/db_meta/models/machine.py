@@ -17,12 +17,12 @@ from dataclasses import asdict
 from django.db import models
 from django.db.models import Q
 from django.forms import model_to_dict
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.bk_web.models import AuditedModel
 from backend.components import CCApi
 from backend.components.hcm.client import HCMApi
-from backend.constants import CommonHostDBMeta, MongoDBHostDBMeta
+from backend.constants import INT_MAX, CommonHostDBMeta, MongoDBHostDBMeta
 from backend.db_meta.enums import AccessLayer, ClusterType, MachineType
 from backend.db_meta.exceptions import HostDoseNotExistInCmdbException
 from backend.db_meta.models import AppCache, BKCity
@@ -109,6 +109,7 @@ class Machine(AuditedModel):
                             cluster_domain=cluster.immute_domain,
                             db_type=ClusterType.cluster_type_to_db_type(cluster.cluster_type),
                             # tendbcluster中扩展了proxy的类型，需要特殊处理
+                            instance_host=self.ip,
                             instance_role=tendb_cluster_spider_ext.spider_role
                             if tendb_cluster_spider_ext
                             else "proxy",
@@ -128,6 +129,7 @@ class Machine(AuditedModel):
                             cluster_domain=storage.machine.ip,
                             cluster_type=storage.cluster_type,
                             db_type=ClusterType.cluster_type_to_db_type(storage.cluster_type),
+                            instance_host=self.ip,
                             instance_role=storage.instance_role,
                             instance_port=str(storage.port),
                         )
@@ -143,6 +145,7 @@ class Machine(AuditedModel):
                         cluster_domain=cluster.immute_domain,
                         cluster_type=cluster.cluster_type,
                         db_type=ClusterType.cluster_type_to_db_type(cluster.cluster_type),
+                        instance_host=self.ip,
                         instance_role=storage.instance_role,
                         instance_port=str(storage.port),
                     )
@@ -211,8 +214,9 @@ class Machine(AuditedModel):
 class DeviceClass(models.Model):
     device_type = models.CharField(max_length=128, help_text=_("机型类型"))
     cpu = models.IntegerField(default=0, help_text=_("机型cpu"))
-    mem = models.IntegerField(default=0, help_text=_("机型内存"))
-    disk = models.IntegerField(default=0, help_text=_("机型磁盘"))
+    mem = models.IntegerField(default=0, help_text=_("机型内存(单位GB)"))
+    disk = models.IntegerField(default=0, help_text=_("机型磁盘(单位GB)"))
+    bandwidth = models.IntegerField(default=INT_MAX, help_text=_("机型带宽(单位Mbps)"))
 
     class Meta:
         verbose_name = verbose_name_plural = _("机型(DeviceClass)")

@@ -12,7 +12,7 @@ import logging.config
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.flow.consts import ES_DEFAULT_INSTANCE_NUM, ManagerDefaultPort, ManagerOpType, ManagerServiceType
@@ -161,6 +161,10 @@ class EsApplyFlow(EsFlow):
                 act_kwargs.exec_ip = ip
                 act_kwargs.es_role = role
                 act_kwargs.instance_num = instance_num
+                # 写入亲合度相关信息，目前为园区、机房、机架三个维度
+                act_kwargs.sub_zone_id = node.get("sub_zone_id") or ""
+                act_kwargs.idc_id = node.get("idc_id") or ""
+                act_kwargs.rack_id = node.get("rack_id") or ""
                 sub_pipeline.add_act(
                     act_name=_("安装ES {}-{}节点").format(role, ip),
                     act_component_code=ExecuteEsActuatorScriptComponent.code,

@@ -17,9 +17,11 @@ from typing import Dict, List
 from django.db.models import QuerySet
 
 from backend.components import DRSApi
+from backend.constants import IP_PORT_DIVIDER
 from backend.db_meta.enums import ClusterType, InstanceRole, InstanceStatus
 from backend.db_meta.models import Cluster, StorageInstance
 from backend.db_meta.models.storage_set_dtl import SqlserverClusterSyncMode
+from backend.db_report.enums import ReportStateType
 from backend.flow.consts import (
     SQLSERVER_CUSTOM_SYS_DB,
     SQLSERVER_CUSTOM_SYS_USER,
@@ -29,6 +31,8 @@ from backend.flow.consts import (
 )
 from backend.flow.utils.mysql.db_table_filter import DbTableFilter
 from backend.flow.utils.mysql.get_mysql_sys_user import generate_mysql_tmp_user
+from backend.flow.utils.sqlserver.sqlserver_act_dataclass import NginxInfo
+from backend.flow.utils.sqlserver.sqlserver_host import Host
 
 logger = logging.getLogger("flow")
 
@@ -171,8 +175,15 @@ def get_no_sync_dbs(cluster_id: int) -> list:
 
     cluster = Cluster.objects.get(id=cluster_id)
     # 获取当前cluster的主节点,每个集群有且只有一个master/orphan 实例
-    master_instance = cluster.storageinstance_set.get(instance_role=InstanceRole.BACKEND_MASTER)
-    sync_mode = SqlserverClusterSyncMode.objects.get(cluster_id=cluster.id).sync_mode
+    master_instance = cluster.storageinstance_set.get(
+        instance_role__in=[InstanceRole.ORPHAN, InstanceRole.BACKEND_MASTER]
+    )
+    sync_mode = (
+        SqlserverClusterSyncMode.objects.get(cluster_id=cluster.id).sync_mode
+        if cluster.cluster_type == ClusterType.SqlserverHA
+        else SqlserverSyncMode.MIRRORING
+    )
+
     if sync_mode == SqlserverSyncMode.MIRRORING:
         # mirroring 模式
         check_sql = f"""select name from  master.sys.databases
@@ -237,6 +248,36 @@ name not in (select name from {SQLSERVER_CUSTOM_SYS_DB}.dbo.BACKUP_FILTER (NOLOC
     routine_backup_dbs = [i["name"] for i in ret[0]["cmd_results"][0]["table_data"]]
 
     return routine_backup_dbs
+
+
+def get_backup_filter_dbs(cluster_id: int) -> list:
+    """
+    获取集群的主实例中，获取它的备份忽略的数据库列表
+    @param cluster_id 集群id
+    """
+
+    cluster = Cluster.objects.get(id=cluster_id)
+    # 获取当前cluster的主节点,每个集群有且只有一个master/orphan 实例
+    master_instance = cluster.storageinstance_set.get(
+        instance_role__in=[InstanceRole.ORPHAN, InstanceRole.BACKEND_MASTER]
+    )
+
+    check_sql = f"""select name from {SQLSERVER_CUSTOM_SYS_DB}.dbo.BACKUP_FILTER (NOLOCK)"""
+
+    ret = DRSApi.sqlserver_rpc(
+        {
+            "bk_cloud_id": cluster.bk_cloud_id,
+            "addresses": [master_instance.ip_port],
+            "cmds": [check_sql],
+            "force": False,
+        }
+    )
+    if ret[0]["error_msg"]:
+        raise Exception(f"[{master_instance.ip_port}] get_backup_filter_dbs failed: {ret[0]['error_msg']}")
+    # 获取所有忽略db名称
+    filter_backup_dbs = [i["name"] for i in ret[0]["cmd_results"][0]["table_data"]]
+
+    return filter_backup_dbs
 
 
 def get_restoring_dbs(instance: StorageInstance, bk_cloud_id: int) -> List[str]:
@@ -679,7 +720,7 @@ def insert_sqlserver_config(
     if cluster.cluster_type == ClusterType.SqlserverHA:
         sync_mode = SqlserverClusterSyncMode.objects.get(cluster_id=cluster.id).sync_mode
     else:
-        sync_mode = ""
+        sync_mode = SqlserverSyncMode.MIRRORING.value
     drop_sql = "use Monitor truncate table [Monitor].[dbo].[APP_SETTING]"
     for storage in storages:
         if is_get_old_backup_config:
@@ -839,6 +880,120 @@ def get_app_setting_data(instance: StorageInstance, bk_cloud_id: int):
     return ret[0]["cmd_results"][0]["table_data"][0], ""
 
 
+def copy_app_setting_data(
+    source_instance: StorageInstance,
+    target_host: Host,
+    target_port: int,
+    target_role,
+):
+    """
+    根据源实例， 克隆一份到目标实例， 但保留角色和实例信息
+    @param source_instance:
+    @param target_host:
+    @param target_port:
+    @param target_role:
+    """
+    data, err = get_app_setting_data(instance=source_instance, bk_cloud_id=source_instance.machine.bk_cloud_id)
+    if not data:
+        raise Exception(f"[{source_instance.ip_port}] get app_setting failed: {err}")
+
+    target_instance = f"{target_host.ip}{IP_PORT_DIVIDER}{target_port}"
+    drop_sql = "use Monitor truncate table [Monitor].[dbo].[APP_SETTING]"
+    insert_app_setting_sql = f"""INSERT INTO [{SQLSERVER_CUSTOM_SYS_DB}].[dbo].[APP_SETTING](
+[APP],
+[FULL_BACKUP_PATH],
+[LOG_BACKUP_PATH],
+[KEEP_FULL_BACKUP_DAYS],
+[KEEP_LOG_BACKUP_DAYS],
+[FULL_BACKUP_MIN_SIZE_MB],
+[LOG_BACKUP_MIN_SIZE_MB],
+[UPLOAD],
+[MD5],
+[CLUSTER_ID],
+[CLUSTER_DOMAIN],
+[IP],
+[PORT],
+[ROLE],
+[MASTER_IP],
+[MASTER_PORT],
+[SYNCHRONOUS_MODE],
+[BK_BIZ_ID],
+[BK_CLOUD_ID],
+[VERSION],
+[BACKUP_TYPE],
+[DATA_SCHEMA_GRANT],
+[TIME_ZONE],
+[CHARSET],
+[BACKUP_CLIENT_PATH],
+[BACKUP_STORAGE_TYPE],
+[FULL_BACKUP_REPORT_PATH],
+[LOG_BACKUP_REPORT_PATH],
+[FULL_BACKUP_FILETAG],
+[LOG_BACKUP_FILETAG],
+[SHRINK_SIZE],
+[RESTORE_PATH],
+[LOG_SEND_QUEUE],
+[TRACEON],
+[SLOW_DURATION],
+[SLOW_SAVEDAY],
+[UPDATESTATS],
+[COMMIT_MODEL],
+[DATA_PATH],
+[LOG_PATH])
+values(
+'{data["APP"]}',
+'{data["FULL_BACKUP_PATH"]}',
+'{data["LOG_BACKUP_PATH"]}',
+'{data["KEEP_FULL_BACKUP_DAYS"]}',
+'{data["KEEP_LOG_BACKUP_DAYS"]}',
+'{data["FULL_BACKUP_MIN_SIZE_MB"]}',
+'{data["LOG_BACKUP_MIN_SIZE_MB"]}',
+'{data["UPLOAD"]}',
+'{data["MD5"]}',
+'{data["CLUSTER_ID"]}',
+'{data["CLUSTER_DOMAIN"]}',
+'{target_host.ip}',
+'{target_port}',
+'{target_role}',
+'{data["MASTER_IP"]}',
+'{data["MASTER_PORT"]}',
+'{data["SYNCHRONOUS_MODE"]}',
+'{data["BK_BIZ_ID"]}',
+'{data["BK_CLOUD_ID"]}',
+'{data["VERSION"]}',
+'{data["BACKUP_TYPE"]}',
+'grant',
+'{data["TIME_ZONE"]}',
+'{data["CHARSET"]}',
+'{data["BACKUP_CLIENT_PATH"]}',
+'{data["BACKUP_STORAGE_TYPE"]}',
+'{data["FULL_BACKUP_REPORT_PATH"]}',
+'{data["LOG_BACKUP_REPORT_PATH"]}',
+'{data["FULL_BACKUP_FILETAG"]}',
+'{data["LOG_BACKUP_FILETAG"]}',
+'{data["SHRINK_SIZE"]}',
+'{data["RESTORE_PATH"]}',
+'{data["LOG_SEND_QUEUE"]}',
+'{data["TRACEON"]}',
+'{data["SLOW_DURATION"]}',
+'{data["SLOW_SAVEDAY"]}',
+'{data["UPDATESTATS"]}',
+'{data["COMMIT_MODEL"]}',
+'{data["DATA_PATH"]}',
+'{data["LOG_PATH"]}'
+)
+"""
+
+    ret = base_sqlserver_drs(
+        bk_cloud_id=target_host.bk_cloud_id, instances=[target_instance], sqls=[drop_sql, insert_app_setting_sql]
+    )
+
+    if ret[0]["error_msg"]:
+        raise Exception(f"[{target_instance}] copy app_setting failed: {ret[0]['error_msg']}")
+
+    return True
+
+
 def fix_app_setting_data(cluster: Cluster, instance: StorageInstance, sync_mode: str, master: StorageInstance):
     """
     以dbm数据为准，更新实例的app_setting数据
@@ -858,9 +1013,9 @@ def fix_app_setting_data(cluster: Cluster, instance: StorageInstance, sync_mode:
 """
     ret = base_sqlserver_drs(bk_cloud_id=cluster.bk_cloud_id, instances=[instance.ip_port], sqls=[sql])
     if ret[0]["error_msg"]:
-        return False, f"fix app_setting failed: {ret[0]['error_msg']}"
+        return ReportStateType.ABNORMAL.value, f"fix app_setting failed: {ret[0]['error_msg']}"
 
-    return True, "fix successfully"
+    return ReportStateType.NORMAL.value, "fix successfully"
 
 
 def check_sys_job_status(cluster: Cluster, instance: StorageInstance):
@@ -994,3 +1149,77 @@ FROM [Monitor].[dbo].[BACKUP_TRACE](NOLOCK) where
         backup_infos.extend(info["cmd_results"][0]["table_data"])
 
     return backup_infos, err_msg
+
+
+def remove_mirroring_config(target_instances: List[str], bk_cloud_id: int):
+    """
+    移除mirroring配置
+    """
+    ret = DRSApi.sqlserver_rpc(
+        {
+            "bk_cloud_id": bk_cloud_id,
+            "addresses": target_instances,
+            "cmds": [f"use {SQLSERVER_CUSTOM_SYS_DB}; exec dbo.Sys_AutoSwitch_Remove null"],
+            "force": False,
+        }
+    )
+
+    if ret[0]["error_msg"]:
+        raise Exception(f"remove_mirroring_config failed: {ret[0]['error_msg']}")
+
+
+def init_dbm_nginx_proxy_config(nginx_list: List[NginxInfo], bk_cloud_id: int, target_instances: List[str]):
+    # 检查表是否存在的SQL
+    check_table_sql = (
+        f"SELECT COUNT(*) AS cnt FROM [{SQLSERVER_CUSTOM_SYS_DB}].INFORMATION_SCHEMA.TABLES "
+        f"WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'DBM_NGINX_PROXY'"
+    )
+    drop_sql = f"use {SQLSERVER_CUSTOM_SYS_DB}; truncate table [{SQLSERVER_CUSTOM_SYS_DB}].[dbo].[DBM_NGINX_PROXY]"
+    insert_sqls = [
+        f"""INSERT INTO [{SQLSERVER_CUSTOM_SYS_DB}].[dbo].[DBM_NGINX_PROXY](
+[IP],
+[PORT],
+[BK_CLOUD_ID]
+) values(
+'{i.nginx_proxy_ip}',
+{i.nginx_proxy_port},
+{i.bk_cloud_id})
+"""
+        for i in nginx_list
+    ]
+
+    if not target_instances:
+        raise Exception("init_dbm_nginx_proxy_config: target_instances is empty")
+
+    for instance in target_instances:
+        # 先检查目标实例是否存在 DBM_NGINX_PROXY 表
+        check_ret = DRSApi.sqlserver_rpc(
+            {
+                "bk_cloud_id": bk_cloud_id,
+                "addresses": [instance],
+                "cmds": [check_table_sql],
+                "force": False,
+            }
+        )
+        if check_ret[0]["error_msg"]:
+            raise Exception(f"[{instance}] check DBM_NGINX_PROXY table failed: {check_ret[0]['error_msg']}")
+
+        table_count = int(check_ret[0]["cmd_results"][0]["table_data"][0]["cnt"])
+        if table_count == 0:
+            logger.warning(f"[{instance}] DBM_NGINX_PROXY table does not exist, skip init_dbm_nginx_proxy_config")
+            continue
+
+        # 表存在，执行 truncate + insert
+        exec_sqls = [drop_sql] + insert_sqls
+        ret = DRSApi.sqlserver_rpc(
+            {
+                "bk_cloud_id": bk_cloud_id,
+                "addresses": [instance],
+                "cmds": exec_sqls,
+                "force": False,
+            }
+        )
+        if ret[0]["error_msg"]:
+            raise Exception(f"[{instance}] init_dbm_nginx_proxy_config failed: {ret[0]['error_msg']}")
+
+        logger.info(f"[{instance}] init_dbm_nginx_proxy_config successfully")

@@ -1,35 +1,60 @@
 <template>
   <div class="inspection-manage-page">
-    <BkLoading :loading="overviewLoading">
-      <DbTab
-        v-model="tabType"
-        :exclude="excludeDbs"
-        :label-config="labelConfig" />
-    </BkLoading>
-    <div class="content-wrapper">
-      <div class="operation-main">
-        <BkButton
-          :loading="exportLoading"
-          style="width: 64px"
-          theme="primary"
-          @click="handleExport">
-          {{ t('导出') }}
-        </BkButton>
-        <SearchBox
-          :is-assist="isTodoAssist"
-          :is-show-all="isInspectionReportGlobal"
-          :is-todos="!isInspectionReport"
-          style="margin-bottom: 16px"
-          @change="handleSearchChange" />
+    <div
+      v-show="!isEmptyShow"
+      class="page-content">
+      <BkLoading :loading="overviewLoading">
+        <DbaDbTab
+          v-if="isTodoPage"
+          v-model="tabType"
+          :count-config="dbCountConfig"
+          :include="availableDbs" />
+        <DbTab
+          v-else-if="isPlatform"
+          v-model="tabType"
+          :exclude="excludeDbs"
+          :label-config="labelConfig" />
+        <DbTabForBiz
+          v-else
+          v-model="tabType"
+          v-model:is-show="isTabShow"
+          :exclude="excludeDbs"
+          :label-config="labelConfig" />
+      </BkLoading>
+      <div class="content-wrapper">
+        <div class="operation-main">
+          <BkButton
+            :loading="exportLoading"
+            style="width: 64px"
+            theme="primary"
+            @click="handleExport">
+            {{ t('导出') }}
+          </BkButton>
+          <SearchBox
+            :is-assist="isTodoAssist"
+            :is-show-all="isPlatform"
+            :is-todos="!isInspectionReport"
+            :show-only-abnormal="!isTodoPage"
+            style="margin-bottom: 16px"
+            @change="handleSearchChange" />
+        </div>
+        <RenderDynamicTable
+          v-for="url in serviceList"
+          :key="url"
+          ref="dynamicTablesRef"
+          :is-only-abnormal="isOnlyAbnormal"
+          :is-platform="isPlatform"
+          :is-show-state-count="!isTodoPage"
+          :search-params="searchParams"
+          :service-url="url" />
       </div>
-      <RenderDynamicTable
-        v-for="url in serviceList"
-        :key="url"
-        ref="dynamicTablesRef"
-        :is-platform="isPlatform"
-        :search-params="searchParams"
-        :service-url="url" />
     </div>
+    <BkException
+      v-show="isEmptyShow"
+      class="empty-exception"
+      :description="t('暂无巡检待办')"
+      scene="page"
+      type="empty" />
   </div>
 </template>
 <script setup lang="ts">
@@ -46,6 +71,8 @@
   import { DBTypeInfos, DBTypes } from '@common/const';
 
   import DbTab from '@components/db-tab/Index.vue';
+  import DbTabForBiz from '@components/db-tab-for-biz/Index.vue';
+  import DbaDbTab from '@components/dba-db-tab/Index.vue';
 
   import RenderDynamicTable from './components/render-dynamic-table/Index.vue';
   import SearchBox from './components/SearchBox.vue';
@@ -59,24 +86,50 @@
   const tabType = ref((route.query.tabType as DBTypes) || DBTypes.MYSQL);
   const searchParams = ref<Record<string, any>>({});
   const excludeDbs = ref<DBTypes[]>([]);
+  const availableDbs = ref<DBTypes[]>([]);
   const dynamicTablesRef = ref<InstanceType<typeof RenderDynamicTable>[]>([]);
+  const isTabShow = ref(true);
+  const isOnlyAbnormal = ref(false);
 
   const isTodoAssist = computed(() => route.query.manage === 'assist');
   const isPlatform = computed(() => route.name === 'inspectionReportGlobal');
+  const isInspectionReport = computed(() => route.name === 'inspectionReport');
+  const isTodoPage = computed(() => route.name === 'inspectionTodosGlobal');
+  const isEmptyShow = computed(() => {
+    if (!isTodoPage.value) return false;
+    if (!dbCountConfig.value) return false;
+    const totalCount = Object.values(dbCountConfig.value).reduce((sum, val) => sum + (val || 0), 0);
+    return totalCount === 0;
+  });
+
+  // 为 DbaDbTab 提供计数配置，内部自动选中第一个计数 > 0 的 Tab
+  // 待我处理取 manageCount，待我协助取 assistCount
+  const dbCountConfig = computed(() => {
+    if (!dbReportCountMap.value || !Object.keys(dbReportCountMap.value).length) {
+      return undefined;
+    }
+    return Object.entries(dbReportCountMap.value).reduce(
+      (result, [key, val]) => {
+        Object.assign(result, { [key]: isTodoAssist.value ? val.assistCount || 0 : val.manageCount || 0 });
+        return result;
+      },
+      {} as Record<string, number>,
+    );
+  });
 
   const serviceList = computed(() => {
     if (!dbOverviewConfig.value?.[tabType.value]) {
       return [];
     }
 
-    const pathList = dbOverviewConfig.value[tabType.value];
+    const pathList = dbOverviewConfig.value[tabType.value]!;
     return pathList.map((path) => `/db_report/${tabType.value}/${path}/`);
   });
 
   const labelConfig = computed(() => {
     if (
-      isInspectionReport ||
-      isInspectionReportGlobal ||
+      isInspectionReport.value ||
+      isPlatform.value ||
       !dbOverviewConfig.value ||
       !Object.keys(dbReportCountMap.value).length
     ) {
@@ -96,18 +149,20 @@
 
   const { data: dbOverviewConfig, loading: overviewLoading } = useRequest(getReportOverview, {
     onSuccess: (data) => {
-      const availableDbs = Object.keys(data);
+      const dbs = Object.keys(data) as DBTypes[];
       const totalDbs = Object.keys(DBTypeInfos);
-      excludeDbs.value = _.difference(totalDbs, availableDbs) as DBTypes[];
+      availableDbs.value = dbs;
+      excludeDbs.value = _.difference(totalDbs, dbs) as DBTypes[];
     },
   });
-
-  const isInspectionReport = route.name === 'inspectionReport';
-  const isInspectionReportGlobal = route.name === 'inspectionReportGlobal';
 
   watch(
     () => route.query,
     () => {
+      if (!Object.keys(route.query).length) {
+        return;
+      }
+
       const queryObj = _.cloneDeep(route.query);
       delete queryObj.tabType;
       searchParams.value = queryObj;
@@ -134,13 +189,11 @@
     if (route.query.manage) {
       Object.assign(query, { manage: route.query.manage });
     }
-    if (isInspectionReport) {
+    if (isInspectionReport.value) {
       Object.assign(query, { bk_biz_id: window.PROJECT_CONFIG.BIZ_ID });
     }
 
-    if (!isInspectionReport && !isInspectionReportGlobal) {
-      Object.assign(query, { status: 0 });
-
+    if (!isInspectionReport.value && !isPlatform.value) {
       if (!route.query.manage) {
         Object.assign(query, { manage: 'todo' });
       }
@@ -151,7 +204,8 @@
     });
   };
 
-  const handleSearchChange = (payload: Record<string, string>) => {
+  const handleSearchChange = (payload: Record<string, any>) => {
+    isOnlyAbnormal.value = payload.isOnlyAbnormal;
     updateRouteQuery(payload);
   };
 
@@ -174,10 +228,14 @@
 </script>
 <style lang="less">
   .inspection-manage-page {
-    display: flex;
     height: 100%;
-    overflow: hidden;
-    flex-direction: column;
+
+    .page-content {
+      display: flex;
+      height: 100%;
+      overflow: hidden;
+      flex-direction: column;
+    }
 
     .bk-tab-header {
       width: 100%;
@@ -209,6 +267,18 @@
       .operation-main {
         display: flex;
         justify-content: space-between;
+      }
+    }
+
+    .empty-exception {
+      display: flex;
+      height: 100%;
+      background-color: #fff;
+      align-items: center;
+      justify-content: center;
+
+      .bk-exception-description {
+        font-size: 24px;
       }
     }
   }

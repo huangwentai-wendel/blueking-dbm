@@ -22,9 +22,11 @@ package provider
 import (
 	"k8s-dbs/common/entity"
 	"k8s-dbs/metadata/dbaccess"
-	models "k8s-dbs/metadata/dbaccess/model"
-	entitys "k8s-dbs/metadata/provider/entity"
-	"log/slog"
+	entitys "k8s-dbs/metadata/entity"
+	models "k8s-dbs/metadata/model"
+	"sync"
+
+	"github.com/pkg/errors"
 
 	"github.com/jinzhu/copier"
 )
@@ -40,25 +42,39 @@ type OperationDefinitionProviderImpl struct {
 	dbAccess dbaccess.OperationDefinitionDbAccess
 }
 
+var (
+	operationDefinitionInstance OperationDefinitionProvider
+	operationDefinitionOnce     sync.Once
+)
+
+// GetOperationDefinitionProvider 获取 OperationDefinitionProvider 单例实例
+func GetOperationDefinitionProvider(dbAccess dbaccess.OperationDefinitionDbAccess) OperationDefinitionProvider {
+	operationDefinitionOnce.Do(func() {
+		operationDefinitionInstance = &OperationDefinitionProviderImpl{dbAccess: dbAccess}
+	})
+	if operationDefinitionInstance == nil {
+		panic("OperationDefinitionProvider instance is nil after initialization")
+	}
+	return operationDefinitionInstance
+}
+
 // CreateOperationDefinition 创建 operation definition
 func (o *OperationDefinitionProviderImpl) CreateOperationDefinition(entity *entitys.OperationDefinitionEntity) (
-	*entitys.OperationDefinitionEntity, error,
+	*entitys.OperationDefinitionEntity,
+	error,
 ) {
 	definitionModel := models.OperationDefinitionModel{}
-	err := copier.Copy(&definitionModel, entity)
-	if err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return nil, err
+	if err := copier.Copy(&definitionModel, entity); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
 	}
+
 	addedModel, err := o.dbAccess.Create(&definitionModel)
 	if err != nil {
-		slog.Error("Failed to create model", "error", err)
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to create operation definition with entity %+v", entity)
 	}
 	addedEntity := entitys.OperationDefinitionEntity{}
-	if err := copier.Copy(&addedEntity, addedModel); err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return nil, err
+	if err = copier.Copy(&addedEntity, addedModel); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
 	}
 	return &addedEntity, nil
 }
@@ -70,18 +86,11 @@ func (o *OperationDefinitionProviderImpl) ListOperationDefinitions(pagination en
 ) {
 	definitionModels, _, err := o.dbAccess.ListByPage(pagination)
 	if err != nil {
-		slog.Error("Failed to find entity")
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to list operation definitions for pagination %+v", pagination)
 	}
 	var definitionEntities []*entitys.OperationDefinitionEntity
-	if err := copier.Copy(&definitionEntities, definitionModels); err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return nil, err
+	if err = copier.Copy(&definitionEntities, definitionModels); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
 	}
 	return definitionEntities, nil
-}
-
-// NewOperationDefinitionProvider 创建 K8sCrdStorageAddonDbAccess 接口实现实例
-func NewOperationDefinitionProvider(dbAccess dbaccess.OperationDefinitionDbAccess) OperationDefinitionProvider {
-	return &OperationDefinitionProviderImpl{dbAccess: dbAccess}
 }

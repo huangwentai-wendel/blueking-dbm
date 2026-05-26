@@ -9,11 +9,11 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.flow.engine.controller.spider import SpiderController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import CommonValidate, HostRecycleSerializer
+from backend.ticket.builders.common.base import CommonValidate
 from backend.ticket.builders.tendbcluster.base import (
     BaseTendbTicketFlowBuilder,
     TendbClustersTakeDownDetailsSerializer,
@@ -23,8 +23,6 @@ from backend.ticket.models import Flow
 
 
 class TendbTemporaryDestroyDetailSerializer(TendbClustersTakeDownDetailsSerializer):
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.DEFAULT)
-
     def validate_cluster_ids(self, value):
         CommonValidate.validate_destroy_temporary_cluster_ids(value)
         return value

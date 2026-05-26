@@ -26,7 +26,13 @@
       v-for="item in dropdownList"
       :id="item.value"
       :key="item.value"
-      :name="item.label" />
+      v-bk-tooltips="{
+        placement: 'right',
+        content: item.tooltips || '',
+        disabled: !item.tooltips,
+      }"
+      :name="item.label"
+      @click.stop />
   </BkSelect>
 </template>
 
@@ -39,7 +45,7 @@
 <script setup lang="ts">
   import { useI18n } from 'vue-i18n';
 
-  interface Props {
+  export interface Props {
     iconType: string;
     titleColor: string;
     triggerClassName: string;
@@ -60,6 +66,7 @@
     },
     {
       label: t('模糊搜索'),
+      tooltips: t('仅支持搜索有权限业务'),
       value: FilterType.CONTAINS,
     },
   ];

@@ -11,7 +11,7 @@ specific language governing permissions and limitations under the License.
 import logging
 
 from django.db import models, transaction
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend import env
 from backend.bk_web.constants import LEN_X_LONG
@@ -116,21 +116,119 @@ INSTANCE_MONITOR_PLUGINS[DBType.TenDBCluster] = INSTANCE_MONITOR_PLUGINS[DBType.
 
 INSTANCE_BKLOG_PLUGINS = {
     DBType.Redis: {
-        MachineType.PREDIXY: {"name": "predixy", "plugin_id": "redis_slowlog"},
-        MachineType.TWEMPROXY: {"name": "twemproxy", "plugin_id": "redis_slowlog"},
-        MachineType.REDIS: {"name": "redis", "plugin_id": "redis_slowlog"},
-        MachineType.TENDISCACHE: {"name": "tendiscache", "plugin_id": "redis_slowlog"},
-        MachineType.TENDISSSD: {"name": "tendisssd", "plugin_id": "redis_slowlog"},
-        MachineType.TENDISPLUS: {"name": "tendisplus", "plugin_id": "redis_slowlog"},
+        MachineType.PREDIXY: {"name": "predixy", "plugin_ids": ["redis_slowlog", "redis_server_log"]},
+        MachineType.TWEMPROXY: {"name": "twemproxy", "plugin_ids": ["redis_slowlog", "redis_server_log"]},
+        MachineType.REDIS: {
+            "name": "redis",
+            "plugin_ids": [
+                "redis_slowlog",
+                "redis_server_log",
+                "redis_binlog_backup_result",
+                "redis_cluster_nodes_result",
+                "redis_fullbackup_result",
+                "redis_hotkey",
+                "redis_keymod",
+                "redis_bigkey",
+            ],
+        },
+        MachineType.TENDISCACHE: {
+            "name": "tendiscache",
+            "plugin_ids": [
+                "redis_slowlog",
+                "redis_server_log",
+                "redis_binlog_backup_result",
+                "redis_cluster_nodes_result",
+                "redis_fullbackup_result",
+                "redis_hotkey",
+                "redis_keymod",
+                "redis_bigkey",
+            ],
+        },
+        MachineType.TENDISSSD: {
+            "name": "tendisssd",
+            "plugin_ids": [
+                "redis_slowlog",
+                "redis_server_log",
+                "redis_binlog_backup_result",
+                "redis_cluster_nodes_result",
+                "redis_fullbackup_result",
+                "redis_hotkey",
+                "redis_keymod",
+                "redis_bigkey",
+            ],
+        },
+        MachineType.TENDISPLUS: {
+            "name": "tendisplus",
+            "plugin_ids": [
+                "redis_slowlog",
+                "redis_server_log",
+                "redis_binlog_backup_result",
+                "redis_cluster_nodes_result",
+                "redis_fullbackup_result",
+                "redis_hotkey",
+                "redis_keymod",
+                "redis_bigkey",
+            ],
+        },
     },
+    # mysql和tendbcluster归为一类
     DBType.MySQL: {
-        MachineType.BACKEND: {"name": "mysql", "plugin_id": "mysql_slowlog"},
-    },
-    DBType.TenDBCluster: {
-        MachineType.SPIDER: {"name": "spider", "plugin_id": "mysql_slowlog"},
-        MachineType.REMOTE: {"name": "mysql", "plugin_id": "mysql_slowlog"},
+        MachineType.BACKEND: {
+            "name": "mysql",
+            "plugin_ids": [
+                "mysql_slowlog",
+                "mysql_binlog_result",
+                "mysql_checksum_result",
+                "mysql_db_table_size",
+                "mysql_dbbackup_result",
+                "mysql_grants_report",
+                "mixed_report",
+                "backup_stm_log",
+            ],
+        },
+        MachineType.SINGLE: {
+            "name": "single",
+            "plugin_ids": [
+                "mysql_slowlog",
+                "mysql_binlog_result",
+                "mysql_checksum_result",
+                "mysql_db_table_size",
+                "mysql_dbbackup_result",
+                "mysql_grants_report",
+                "mixed_report",
+                "backup_stm_log",
+            ],
+        },
+        MachineType.PROXY: {"name": "proxy", "plugin_ids": ["mixed_report", "backup_stm_log"]},
+        MachineType.SPIDER: {
+            "name": "spider",
+            "plugin_ids": [
+                "mysql_slowlog",
+                "mysql_binlog_result",
+                "mysql_checksum_result",
+                "mysql_db_table_size",
+                "mysql_dbbackup_result",
+                "mysql_grants_report",
+                "mixed_report",
+                "backup_stm_log",
+            ],
+        },
+        MachineType.REMOTE: {
+            "name": "remote",
+            "plugin_ids": [
+                "mysql_slowlog",
+                "mysql_binlog_result",
+                "mysql_checksum_result",
+                "mysql_db_table_size",
+                "mysql_dbbackup_result",
+                "mysql_grants_report",
+                "mixed_report",
+                "backup_stm_log",
+            ],
+        },
     },
 }
+SERVICE_INSTANCE_BKLOG_PLUGINS = ["redis_slowlog", "mysql_slowlog"]
 
 SET_NAME_TEMPLATE = "db.{db_type}.{monitor_plugin_name}"
 

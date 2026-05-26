@@ -13,7 +13,7 @@ import logging
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.components.mysql_priv_manager.client import DBPrivManagerApi
 from backend.configuration.constants import DBType
@@ -132,22 +132,25 @@ class KafkaShrinkFlow(object):
         # 执行搬迁数据调度，只在一台机器上执行
         act_kwargs.exec_ip = [{"ip": exec_ip}]
         act_payload = KafkaActPayload(ticket_data=self.data, zookeeper_ip=self.data["zookeeper_ip"])
+
         act_kwargs.template = act_payload.get_shrink_payload(
-            action=KafkaActuatorActionEnum.ReduceBroker.value, host=exclude_brokers
+            action=KafkaActuatorActionEnum.GenerateReassignment.value,
+            host=exclude_brokers,
         )
         kafka_pipeline.add_act(
-            act_name=_("Kafka搬迁数据"),
+            act_name=_("生成替换计划"),
             act_component_code=ExecuteDBActuatorScriptComponent.code,
             kwargs=asdict(act_kwargs),
         )
 
-        # 检查搬迁进度，只在一台机器上执行
+        # 检查搬迁进度
         act_kwargs.exec_ip = [{"ip": exec_ip}]
         act_kwargs.template = act_payload.get_shrink_payload(
-            action=KafkaActuatorActionEnum.CheckReassign.value, host=exclude_brokers
+            action=KafkaActuatorActionEnum.ExecuteReassignment.value,
+            host=exclude_brokers,
         )
         kafka_pipeline.add_act(
-            act_name=_("Kafka检查搬迁进度"),
+            act_name=_("执行替换计划"),
             act_component_code=ExecuteDBActuatorScriptComponent.code,
             kwargs=asdict(act_kwargs),
         )
@@ -165,8 +168,25 @@ class KafkaShrinkFlow(object):
             kwargs={**asdict(act_kwargs), **asdict(dns_kwargs)},
         )
 
-        # 停进程
+        # 检查broker是否可以安全移除
         all_ips = self.__get_all_node_ips()
+        logger.debug(_("检查broker是否为空"), all_ips)
+        sub_pipelines = []
+        for ip in all_ips:
+            sub_pipeline = SubBuilder(root_id=self.root_id, data=self.data)
+            # 检查broker是否为空
+            act_kwargs.template = get_base_payload(action=KafkaActuatorActionEnum.BrokerIsEmpty.value, host=ip)
+            act_kwargs.exec_ip = [{"ip": ip}]
+            sub_pipeline.add_act(
+                act_name=_("检查broker是否为空-{}").format(ip),
+                act_component_code=ExecuteDBActuatorScriptComponent.code,
+                kwargs=asdict(act_kwargs),
+            )
+            sub_pipelines.append(sub_pipeline.build_sub_process(sub_name=_("检查broker {}子流程").format(ip)))
+        # 并发执行所有子流程
+        kafka_pipeline.add_parallel_sub_pipeline(sub_flow_list=sub_pipelines)
+
+        # 停进程
         logger.debug(_("停止进程"), all_ips)
         sub_pipelines = []
         for ip in all_ips:
@@ -244,4 +264,4 @@ class KafkaShrinkFlow(object):
             act_name=_("更新DBMeta元信息"), act_component_code=KafkaDBMetaComponent.code, kwargs=asdict(act_kwargs)
         )
 
-        kafka_pipeline.run_pipeline()
+        kafka_pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=[self.data["cluster_id"]])

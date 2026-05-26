@@ -15,7 +15,7 @@ from rest_framework import serializers
 from backend.db_services.dbbase.constants import IpSource
 from backend.flow.engine.controller.spider import SpiderController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import HostInfoSerializer, HostRecycleSerializer
+from backend.ticket.builders.common.base import HostInfoSerializer
 from backend.ticket.builders.common.constants import MySQLBackupSource
 from backend.ticket.builders.mysql.mysql_migrate_cluster import (
     MysqlMigrateClusterParamBuilder,
@@ -40,7 +40,6 @@ class TendbClusterMigrateClusterDetailSerializer(TendbBaseOperateDetailSerialize
     ip_source = serializers.ChoiceField(
         help_text=_("机器来源"), choices=IpSource.get_choices(), required=False, default=IpSource.MANUAL_INPUT
     )
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.DEFAULT)
     infos = serializers.ListSerializer(help_text=_("克隆主从信息"), child=MigrateClusterInfoSerializer())
     backup_source = serializers.ChoiceField(
         help_text=_("备份源"), choices=MySQLBackupSource.get_choices(), default=MySQLBackupSource.REMOTE
@@ -49,8 +48,7 @@ class TendbClusterMigrateClusterDetailSerializer(TendbBaseOperateDetailSerialize
     need_checksum = serializers.BooleanField(help_text=_("执行前是否需要数据校验"), default=True)
 
     def validate(self, attrs):
-        # 校验集群是否可用，集群类型为高可用
-        super().validate_cluster_can_access(attrs)
+        attrs = super().validate(attrs)
         # TODO: 校验old_master/old_slave是一对主从
         return attrs
 
@@ -63,7 +61,8 @@ class TendbClusterMigrateClusterParamBuilder(MysqlMigrateClusterParamBuilder):
 
 
 class TendbClusterMigrateClusterResourceParamBuilder(MysqlMigrateClusterResourceParamBuilder):
-    pass
+    def format(self):
+        self.patch_info_common_affinity(role="backend_group")
 
 
 @builders.BuilderFactory.register(TicketType.TENDBCLUSTER_MIGRATE_CLUSTER, is_apply=True, is_recycle=True)

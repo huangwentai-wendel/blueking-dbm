@@ -11,16 +11,18 @@ specific language governing permissions and limitations under the License.
 import logging
 
 from django.utils import timezone
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
+from backend import env
+from backend.dbm_aiagent.agent.constants import FLOW_LOG_AI_ANALYSIS_KEY
 from backend.flow.consts import StateType
 from backend.flow.engine.bamboo.engine import BambooEngine
 from backend.flow.models import FlowNode, FlowTree
 from backend.flow.signal.callback_map import call_ticket_handler
-from backend.ticket.constants import FlowCallbackType, FlowType, TicketFlowStatus
-from backend.ticket.flow_manager.inner import InnerFlow
+from backend.ticket.constants import FLOW_FINISHED_STATUS, FlowCallbackType, FlowType, TicketFlowStatus
 from backend.ticket.flow_manager.manager import TicketFlowManager
 from backend.ticket.models import Ticket
+from backend.utils.redis import RedisConn
 
 logger = logging.getLogger("flow")
 
@@ -34,6 +36,10 @@ def post_set_state_signal_handler(sender, node_id, to_state, version, root_id, *
     if to_state == StateType.RUNNING:
         # 记录开始时间
         FlowNode.objects.filter(root_id=root_id, node_id=node_id).update(started_at=now)
+
+    if to_state == StateType.FAILED and env.ENABLE_DBM_AI:
+        # 任务失败加入失败队列，进行AI日志分析
+        RedisConn.sadd(FLOW_LOG_AI_ANALYSIS_KEY, root_id)
 
     FlowNode.objects.filter(root_id=root_id, node_id=node_id).update(
         version_id=version, status=to_state, updated_at=now
@@ -75,12 +81,8 @@ def post_set_state_signal_handler(sender, node_id, to_state, version, root_id, *
     # 针对不同类型单据，调用个性化方法
     # 所有不同类型传入的参数这里是一致的
     logger.info("call_ticket_handler execute")
-    try:
-        ticket = Ticket.objects.get(id=tree.uid)
-    except (Ticket.DoesNotExist, ValueError):
-        return
     call_ticket_handler(
-        ticket_type=ticket.ticket_type, node_id=node_id, root_id=root_id, ticket_id=tree.uid, status=to_state
+        ticket_type=tree.ticket_type, node_id=node_id, root_id=root_id, ticket_id=tree.uid, status=to_state
     )
 
 
@@ -88,27 +90,28 @@ def callback_ticket(ticket_id, root_id):
     """回调单据以进行后续的步骤"""
     try:
         ticket = Ticket.objects.get(id=ticket_id)
+        manager = TicketFlowManager(ticket=ticket)
     except (Ticket.DoesNotExist, ValueError):
         return
 
     # 初始化结束后，流转为当前流程
     current_flow = ticket.current_flow()
-    inner_flow_obj = InnerFlow(flow_obj=current_flow)
+    inner_flow_obj = manager.get_ticket_flow_cls(current_flow.flow_type)(flow_obj=current_flow)
+    inner_flow_status = inner_flow_obj.status
 
     # 在inner flow执行成功的情况下，获取flow的缓存数据
-    if inner_flow_obj.status == TicketFlowStatus.SUCCEEDED:
+    if inner_flow_status == TicketFlowStatus.SUCCEEDED:
         from backend.flow.plugins.components.collections.common.base_service import BaseService
 
         BaseService.get_flow_output(flow=current_flow)
 
     # 在认为inner flow执行结束情况下，执行inner flow的后继动作
-    if inner_flow_obj.status not in [TicketFlowStatus.PENDING, TicketFlowStatus.RUNNING]:
+    if inner_flow_status not in [TicketFlowStatus.PENDING, TicketFlowStatus.RUNNING]:
         inner_flow_obj.callback(callback_type=FlowCallbackType.POST_CALLBACK.value)
 
     # 如果flow type的类型为快速任务，则跳过callback
     if current_flow.flow_type == FlowType.QUICK_INNER_FLOW:
         return
 
-    if current_flow and current_flow.flow_obj_id == root_id:
-        manager = TicketFlowManager(ticket=ticket)
+    if current_flow.flow_obj_id == root_id and inner_flow_status in FLOW_FINISHED_STATUS:
         manager.run_next_flow()

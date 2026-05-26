@@ -1081,11 +1081,11 @@ func (incr *TredisRocksDBIncrBack) ImportOneBinlogToTredis(tplusIP string, tplus
 	//You can force human readable output when writing to a file or in pipe to other commands by using --no-raw.
 	// NOCC:tosa/linelength(设计如此)
 	importCmd := fmt.Sprintf("%s --no-raw --no-auth-warning -h %s -p %d -a %s < %s > %s", consts.RedisCliBin, tplusIP, tplusPort,
-		tplusPasswd, cmdfile, outfile)
+		util.ShellQuote(tplusPasswd), cmdfile, outfile)
 	importFmtCmd := fmt.Sprintf("%s --no-raw --no-auth-warning -h %s -p %d -a xxxx < %s > %s", consts.RedisCliBin, tplusIP, tplusPort,
 		cmdfile, outfile)
 	mylog.Logger.Info("binlog 写入命令:%v", importFmtCmd)
-	_, err = util.RunLocalCmd("bash", []string{"-c", importCmd}, "", nil, 1*time.Hour)
+	_, err = util.RunLocalCmdReplacePkey("bash", []string{"-c", importCmd}, tplusPasswd, "", nil, 1*time.Hour)
 	if err != nil {
 		mylog.Logger.Error(fmt.Sprintf("导入binlog 命令失败,详情:%v", err))
 		incr.Err = err

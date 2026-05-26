@@ -68,7 +68,7 @@ func (i *NodeOperationService) CleanData() (err error) {
 	}
 
 	// 强杀进程
-	extraCmd := `ps -ef | egrep 'supervisord|telegraf|consul'|grep -v grep |awk {'print "kill -9 " $2'}|sh`
+	extraCmd := `ps -ef | grep -E 'supervisord|telegraf|consul'|grep -v grep |awk {'print "kill -9 " $2'}|sh`
 	logger.Info("强杀进程, [%s]", extraCmd)
 	if _, err = osutil.ExecShellCommand(false, extraCmd); err != nil {
 		logger.Error("[%s] execute failed, %v", extraCmd, err)
@@ -105,6 +105,12 @@ func (i *NodeOperationService) CleanData() (err error) {
 	if _, err = osutil.ExecShellCommand(false, extraCmd); err != nil {
 		logger.Error("[%s] execute failed, %v", extraCmd, err)
 		return err
+	}
+	// 删除用户
+	extraCmd = `userdel -f hadoop; rm -rf /home/hadoop; rm -f /var/spool/mail/hadoop`
+	if _, err = osutil.ExecShellCommand(false, extraCmd); err != nil {
+		// 只打印错误日志 不返回失败
+		logger.Error("[%s] execute failed, %v", extraCmd, err)
 	}
 	return nil
 }

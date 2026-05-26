@@ -20,6 +20,7 @@ type BaseJob struct { // NOCC:golint/naming(其他:设计如此)
 	rootWgStatus int             // Wg.Done()是否已经调用
 	rootWgLock   sync.Mutex
 	LoopTimes    uint64 // 循环次数
+	WorkDir      string // 工作目录
 }
 
 // UpdateConf 更新配置文件
@@ -51,7 +52,6 @@ func (basejob *BaseJob) RootWgInit() {
 	basejob.Logger.Info("debug: RootWgInit")
 	basejob.rootWgStatus = WgStatusRunning
 	basejob.RootWg.Add(1)
-
 }
 
 // WatchOsCtx  等待结束信号

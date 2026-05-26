@@ -11,7 +11,7 @@ specific language governing permissions and limitations under the License.
 
 import collections
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.db_meta.enums import ClusterType, InstanceInnerRole, InstanceStatus
@@ -79,6 +79,7 @@ class MySQLDBTableBackupDetailSerializer(MySQLBaseOperateDetailSerializer):
                     Cluster.objects.filter(pk__in=dup_cluster_ids).values_list("immute_domain", flat=True)
                 )
             )
+        return None
 
     @staticmethod
     def __validate_cluster_type(cluster_ids) -> str:
@@ -98,6 +99,7 @@ class MySQLDBTableBackupDetailSerializer(MySQLBaseOperateDetailSerializer):
 
         if bad:
             return ", ".join(bad)
+        return None
 
     @staticmethod
     def __validate_cluster_exists(cluster_ids) -> str:
@@ -112,6 +114,7 @@ class MySQLDBTableBackupDetailSerializer(MySQLBaseOperateDetailSerializer):
         not_exists_cluster_ids = list(set(cluster_ids) - set(exists_cluster_ids))
         if not_exists_cluster_ids:
             return _("cluster id: {} 不存在".format(cluster_ids))
+        return None
 
     @staticmethod
     def __validate_cluster_status(cluster_ids) -> str:
@@ -133,6 +136,7 @@ class MySQLDBTableBackupDetailSerializer(MySQLBaseOperateDetailSerializer):
 
         if bad:
             return _("{} 缺少状态正常的 standby slave".format(bad))
+        return None
 
 
 class MySQLDBTableBackupFlowParamBuilder(builders.FlowParamBuilder):

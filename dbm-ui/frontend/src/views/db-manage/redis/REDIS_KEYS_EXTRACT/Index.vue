@@ -1,7 +1,7 @@
 <template>
   <div class="sqlserver-db-backup-page">
     <SmartAction>
-      <KeyOpreationAlert />
+      <KeyOperationAlert />
       <DbForm
         ref="form"
         class="mt-16 mb-24 toolbox-form"
@@ -25,9 +25,13 @@
             </BkRadioButton>
           </BkRadioGroup>
         </BkFormItem>
+        <BatchInput
+          :config="batchInputConfig"
+          @change="handleBatchInput" />
         <EditableTable
+          :key="tableKey"
           ref="editableTable"
-          class="mb-24"
+          class="mt-16 mb-24"
           :model="formData.tableData">
           <EditableRow
             v-for="(rowData, index) in formData.tableData"
@@ -38,25 +42,26 @@
               @batch-edit="handleClusterBatchEdit" />
             <EditableColumn
               :label="t('架构版本')"
+              readonly
               :width="300">
               <EditableBlock
                 v-model="rowData.cluster.cluster_type_name"
                 :placeholder="t('自动生成')">
               </EditableBlock>
             </EditableColumn>
-            <KeyOprationColumn
+            <KeyOperationColumn
               v-model="rowData.white_regex"
               field="white_regex"
               :label="t('包含 Key')"
               required
               @batch-edit="handleBatchEdit">
-            </KeyOprationColumn>
-            <KeyOprationColumn
+            </KeyOperationColumn>
+            <KeyOperationColumn
               v-model="rowData.black_regex"
               field="black_regex"
               :label="t('排除 Key')"
               @batch-edit="handleBatchEdit">
-            </KeyOprationColumn>
+            </KeyOperationColumn>
             <OperationColumn
               :create-row-method="createRowData"
               :table-data="formData.tableData" />
@@ -77,7 +82,7 @@
           :content="t('重置将会清空当前填写的所有内容_请谨慎操作')"
           :title="t('确认重置页面')">
           <BkButton
-            class="ml8 w-88"
+            class="ml-8 w-88"
             :disabled="isSubmitting">
             {{ t('重置') }}
           </BkButton>
@@ -94,13 +99,16 @@
 
   import { useCreateTicket, useTicketDetail } from '@hooks';
 
-  import { TicketTypes } from '@common/const';
+  import { ClusterTypes, TicketTypes } from '@common/const';
 
+  import BatchInput from '@views/db-manage/common/batch-input/Index.vue';
   import TicketPayload, {
     createTickePayload,
   } from '@views/db-manage/common/toolbox-field/form-item/ticket-payload/Index.vue';
-  import KeyOprationColumn from '@views/db-manage/redis/common/edit-field/KeyOprationColumn.vue';
-  import KeyOpreationAlert from '@views/db-manage/redis/common/KeyOpreationAlert.vue';
+  import KeyOperationAlert from '@views/db-manage/redis/common/toolbox-common/key-operation-alert/Index.vue';
+  import KeyOperationColumn from '@views/db-manage/redis/common/toolbox-field/key-operation-column/Index.vue';
+
+  import { random } from '@utils';
 
   import ClusterColumn from './components/ClusterColumn.vue';
 
@@ -108,7 +116,7 @@
     black_regex: string;
     cluster: {
       bk_cloud_id: number;
-      cluster_type: string;
+      cluster_type: ClusterTypes;
       cluster_type_name: string;
       id: number;
       master_domain: string;
@@ -171,6 +179,7 @@
   const formRef = useTemplateRef('form');
   const editableTableRef = useTemplateRef('editableTable');
 
+  const tableKey = ref(random());
   const formData = reactive(createDefaultFormData());
 
   // 集群列表跳转
@@ -193,6 +202,42 @@
   );
   const selectedMap = computed(() => Object.fromEntries(selected.value.map((cur) => [cur.master_domain, true])));
 
+  const batchInputConfig = [
+    {
+      case: 'redis.test.dba.db',
+      key: 'domain',
+      label: t('集群域名'),
+    },
+    {
+      case: 'key1\\nkey2',
+      key: 'white_regex',
+      label: t('包含 Key'),
+    },
+    {
+      case: 'key1\\nkey2',
+      key: 'black_regex',
+      label: t('排除 Key'),
+    },
+  ];
+
+  const handleBatchInput = (data: Record<string, any>[], isClear: boolean) => {
+    const dataList = data.map((item) =>
+      createRowData({
+        black_regex: item.black_regex?.replaceAll('\\n', '\n') || '',
+        cluster: {
+          master_domain: item.domain || '',
+        } as IDataRow['cluster'],
+        white_regex: item.white_regex?.replaceAll('\\n', '\n') || '',
+      }),
+    );
+    if (isClear) {
+      tableKey.value = random();
+      formData.tableData = [...dataList];
+    } else {
+      formData.tableData = [...(formData.tableData[0].cluster.id ? formData.tableData : []), ...dataList];
+    }
+  };
+
   const handleClusterBatchEdit = (clusterList: RedisModel[]) => {
     const newList: IDataRow[] = [];
     clusterList.forEach((item) => {
@@ -210,15 +255,13 @@
         );
       }
     });
-    formData.tableData = [...(formData.tableData[0].cluster.master_domain ? formData.tableData : []), ...newList];
-    window.changeConfirm = true;
+    formData.tableData = [...(formData.tableData[0]!.cluster.master_domain ? formData.tableData : []), ...newList];
   };
 
   const handleBatchEdit = (value: string, field: string) => {
     formData.tableData.forEach((item) => {
       Object.assign(item, { [field]: value });
     });
-    window.changeConfirm = true;
   };
 
   const handleSubmit = async () => {
@@ -241,7 +284,6 @@
 
   const handleReset = () => {
     Object.assign(formData, createDefaultFormData());
-    window.changeConfirm = false;
   };
 
   const handleTypeChange = () => {

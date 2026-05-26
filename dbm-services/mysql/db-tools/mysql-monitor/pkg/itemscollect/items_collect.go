@@ -10,6 +10,8 @@
 package itemscollect
 
 import (
+	"dbm-services/mysql/db-tools/mysql-monitor/pkg/itemscollect/inforeport"
+	"dbm-services/mysql/db-tools/mysql-monitor/pkg/itemscollect/maintaingrantproc"
 	"dbm-services/mysql/db-tools/mysql-monitor/pkg/itemscollect/proxyrebind"
 	"dbm-services/mysql/db-tools/mysql-monitor/pkg/itemscollect/rotateproxyconnlog"
 
@@ -80,7 +82,7 @@ func init() {
 	_ = registerItemConstructor(mysqlprocesslist.RegisterMySQLLock())
 	_ = registerItemConstructor(mysqlprocesslist.RegisterMySQLInject())
 	_ = registerItemConstructor(rotateslowlog.RegisterRotateSlowLog())
-	_ = registerItemConstructor(mysqlconnlog.RegisterMySQLConnLogSize())
+	//_ = registerItemConstructor(mysqlconnlog.RegisterMySQLConnLogSize()) // 废弃
 	_ = registerItemConstructor(mysqlconnlog.RegisterMySQLConnLogRotate())
 	//_ = registerItemConstructor(mysqlconnlog.RegisterMySQLConnLogReport())
 	_ = registerItemConstructor(mysqlconfigdiff.Register())
@@ -99,4 +101,7 @@ func init() {
 	_ = registerItemConstructor(spiderctlchecker.GetCtlPrimaryRegister())
 	//_ = registerItemConstructor(privcheck.Register())
 	_ = registerItemConstructor(proxyrebind.Register())
+	_ = registerItemConstructor(maintaingrantproc.Register())
+	_ = registerItemConstructor(inforeport.Register())
+	_ = registerItemConstructor(rotateslowlog.RegisterSlowlogReport())
 }

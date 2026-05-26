@@ -8,21 +8,24 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+import itertools
 
 from django.db.models import Q
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend import env
 from backend.components.hcm.client import HCMApi
 from backend.components.xwork.client import XworkApi
-from backend.configuration.constants import DBType
+from backend.configuration.constants import DBType, SystemSettingsEnum
+from backend.configuration.models import SystemSettings
 from backend.constants import INT_MAX
 from backend.db_dirty.constants import MachineEventType
 from backend.db_meta.enums import InstanceRole
 from backend.db_meta.enums.spec import SpecClusterType, SpecMachineType
 from backend.db_meta.models import Spec
 from backend.db_meta.models.machine import DeviceClass, Machine
+from backend.db_meta.models.tag import Tag
 from backend.db_services.dbresource import mock
 from backend.db_services.dbresource.constants import ResourceGroupByEnum, ResourceOperation
 from backend.db_services.dbresource.mock import (
@@ -31,11 +34,13 @@ from backend.db_services.dbresource.mock import (
     RESOURCE_UPDATE_PARAMS,
     SPEC_DATA,
 )
-from backend.db_services.ipchooser.constants import BkOsTypeCode
+from backend.db_services.dbresource.models import ResourceReplenishRecord
+from backend.db_services.ipchooser.constants import BkOsType, BkOsTypeCode
 from backend.db_services.ipchooser.serializers.base import QueryHostsBaseSer
 from backend.ticket.builders.common.base import HostInfoSerializer
 from backend.ticket.builders.common.field import DBTimezoneField
-from backend.ticket.constants import TicketStatus
+from backend.ticket.constants import TICKET_RUNNING_STATUS_SET, TicketStatus, TicketType
+from backend.ticket.models import Ticket
 
 
 class ResourceImportSerializer(serializers.Serializer):
@@ -43,7 +48,14 @@ class ResourceImportSerializer(serializers.Serializer):
         ip = serializers.CharField()
         host_id = serializers.IntegerField()
         bk_cloud_id = serializers.IntegerField()
-        os_type = serializers.CharField(required=False, default=BkOsTypeCode.LINUX)
+        # 前端展示字段
+        status = serializers.CharField(help_text=_("Agent状态"), required=False, default="")
+        city_name = serializers.CharField(help_text=_("城市"), required=False, default="")
+        sub_zone = serializers.CharField(help_text=_("园区"), required=False, default="")
+        rack_id = serializers.CharField(help_text=_("机架"), required=False, default="")
+        bk_os_name = serializers.CharField(help_text=_("操作系统"), required=False, default="")
+        svr_device_class = serializers.CharField(help_text=_("机型"), required=False, default="")
+        bk_cloud_name = serializers.CharField(help_text=_("云区域"), required=False, default="")
 
     for_biz = serializers.IntegerField(help_text=_("专属业务"))
     resource_type = serializers.CharField(help_text=_("专属DB"), allow_blank=True, allow_null=True)
@@ -51,32 +63,63 @@ class ResourceImportSerializer(serializers.Serializer):
     hosts = serializers.ListSerializer(help_text=_("资源主机"), child=ResourceHostSerializer())
     labels = serializers.ListField(help_text=_("标签"), child=serializers.CharField(), required=False)
     return_resource = serializers.BooleanField(help_text=_("是否为退回资源"), required=False)
+    os_type = serializers.CharField(required=False, default=BkOsTypeCode.LINUX)
+    # 前端展示参数
+    label_names = serializers.ListField(help_text=_("标签"), child=serializers.CharField(), required=False)
 
     def validate(self, attrs):
-        host_id__ip_map = {host["host_id"]: host["ip"] for host in attrs["hosts"]}
-        host_ids = list(host_id__ip_map.keys())
-
         # 如果主机存在元数据，则拒绝导入
+        host_ids = [host["host_id"] for host in attrs["hosts"]]
         exist_hosts = list(Machine.objects.filter(bk_host_id__in=host_ids).values_list("ip", flat=True))
         if exist_hosts:
             raise serializers.ValidationError(_("导入失败，主机{}存在元数据，请检查后重新导入").format(exist_hosts))
 
+        # 如果主机存在同云区域的重复IP，则拒绝导入
+        ip_cloud_tuples = [(host["ip"], host["bk_cloud_id"]) for host in attrs["hosts"]]
+        ips = [ip for ip, bk_cloud_id in ip_cloud_tuples]
+        exist_hosts = list(Machine.objects.filter(ip__in=ips).values("ip", "bk_cloud_id"))
+        for host in exist_hosts:
+            if (host["ip"], host["bk_cloud_id"]) in ip_cloud_tuples:
+                raise serializers.ValidationError(_("导入失败，主机{}存在云区域重复IP，请检查后重新导入").format(host["ip"]))
+
+        dissolved_switch = SystemSettings.get_setting_value(
+            key=SystemSettingsEnum.HOST_DISSOLVED_SWITCH, default=False
+        )
+        host_to_fault_switch = SystemSettings.get_setting_value(
+            key=SystemSettingsEnum.HOST_TO_FAULT_SWITCH, default=False
+        )
+
+        # 直连区域主机才进行uwork/xwork检查
+        host_id__ip_map = {host["host_id"]: host["ip"] for host in attrs["hosts"] if host["bk_cloud_id"] == 0}
+        host_ip__host_id_map = {host["ip"]: host["host_id"] for host in attrs["hosts"] if host["bk_cloud_id"] == 0}
+        direct_host_ids = list(host_id__ip_map.keys())
         # 存在uwork或者是待裁撤主机，则不允许导入
-        check_uwork = HCMApi.check_host_has_uwork(host_ids)
+        check_uwork = {} if not host_to_fault_switch else HCMApi.check_host_has_uwork(direct_host_ids)
         if check_uwork:
             ips = [host_id__ip_map[host_id] for host_id in check_uwork.keys()]
             raise serializers.ValidationError(_("导入失败，检测主机{}有关联的uwork单据，请检查后重新导入").format(ips))
 
-        host_ip__host_id_map = {host["ip"]: host["host_id"] for host in attrs["hosts"]}
-        check_xwork = XworkApi.check_xwork_list(host_ip__host_id_map)
+        check_xwork = {} if not host_to_fault_switch else XworkApi.check_xwork_list(host_ip__host_id_map)
         if check_xwork:
             ips = [host_id__ip_map[host_id] for host_id in check_xwork.keys()]
             raise serializers.ValidationError(_("导入失败，检测主机{}有关联的xwork单据，请检查后重新导入").format(ips))
 
-        check_dissolved = HCMApi.check_host_is_dissolved(host_ids)
+        check_dissolved = [] if not dissolved_switch else HCMApi.check_host_is_dissolved(direct_host_ids)
         if check_dissolved:
             ips = [host_id__ip_map[host_id] for host_id in check_dissolved]
             raise serializers.ValidationError(_("导入失败，检测主机{}为待裁撤主机，请检查后重新导入").format(ips))
+
+        # 存在正在运行的已下架主机处理单据，则不允许导入
+        recycling_tickets = Ticket.objects.filter(
+            ticket_type__in=[TicketType.RECYCLE_OLD_HOST, TicketType.RECYCLE_APPLY_HOST],
+            status__in=TICKET_RUNNING_STATUS_SET,
+        )
+        recycling_map = {host["bk_host_id"]: t.id for t in recycling_tickets for host in t.details["recycle_hosts"]}
+        conflict_host = next(iter(set(host_ids) & recycling_map.keys()), None)
+        if conflict_host:
+            raise serializers.ValidationError(
+                _("导入失败，检测主机{}关联已下架主机处理单据{}").format(conflict_host, recycling_map[conflict_host])
+            )
 
         return attrs
 
@@ -116,7 +159,7 @@ class ResourceListSerializer(serializers.Serializer):
     subzone_ids = serializers.CharField(help_text=_("园区ID"), required=False)
 
     os_type = serializers.CharField(help_text=_("操作系统类型"), required=False)
-    os_names = serializers.ListField(help_text=_("操作系统版本"), child=serializers.CharField(), required=False)
+    os_names = serializers.CharField(help_text=_("操作系统版本"), required=False)
     cpu = serializers.CharField(help_text=_("cpu资源限制"), required=False)
     mem = serializers.CharField(help_text=_("内存资源限制"), required=False)
     disk = serializers.CharField(help_text=_("磁盘资源限制"), required=False)
@@ -126,6 +169,7 @@ class ResourceListSerializer(serializers.Serializer):
 
     agent_status = serializers.BooleanField(help_text=_("agent状态"), required=False)
     labels = serializers.CharField(help_text=_("标签列表id"), required=False)
+    label_names = serializers.CharField(help_text=_("标签名称"), required=False)
 
     limit = serializers.IntegerField(help_text=_("单页数量"))
     offset = serializers.IntegerField(help_text=_("偏移量"))
@@ -143,10 +187,26 @@ class ResourceListSerializer(serializers.Serializer):
                     attrs[field] = list(map(int, attrs[field]))
                 # cpu, mem, disk 需要转换为结构体
                 elif field in ["mem"]:
-                    attrs[field] = {"min": float(attrs[field][0] or 0), "max": float(attrs[field][1] or INT_MAX)}
+                    attrs[field] = {
+                        "min": int(attrs[field][0] or 0) * 1024,
+                        "max": int(attrs[field][1] or INT_MAX) * 1024,
+                    }
                 elif field in ["cpu", "disk"]:
                     attrs[field] = {"min": int(attrs[field][0] or 0), "max": int(attrs[field][1] or INT_MAX)}
 
+        # 根据标签名称拿到标签id去查询资源
+        if attrs.get("label_names"):
+            tag_ids = Tag.objects.filter(value__in=attrs["label_names"]).values_list("id", flat=True)
+            tag_str_ids = [str(tag_id) for tag_id in tag_ids]
+            attrs["labels"] = tag_str_ids
+
+        # 城市如果是default, 则不需要传default
+        if "default" in attrs.get("city", []):
+            attrs["city"].remove("default")
+            if not attrs["city"]:
+                attrs.pop("city")
+
+        spec_offset = SystemSettings.get_setting_value(SystemSettingsEnum.SPEC_OFFSET)
         # 转换规格查询参数
         if attrs.get("spec_id"):
             spec = Spec.objects.get(spec_id=attrs["spec_id"])
@@ -154,19 +214,32 @@ class ResourceListSerializer(serializers.Serializer):
                 {
                     "mount_point": storage_spec["mount_point"],
                     "disk_type": "" if storage_spec["type"] == "ALL" else storage_spec["type"],
-                    "min": storage_spec["size"],
-                    "max": INT_MAX,
+                    "min": storage_spec["min"] - spec_offset["disk"],
+                    "max": storage_spec["max"],
                 }
                 for storage_spec in spec.storage_spec
             ]
             if spec.device_class:
                 attrs["device_class"] = spec.device_class
             else:
-                attrs["cpu"], attrs["mem"] = spec.cpu, spec.mem
+                attrs["cpu"] = spec.cpu
+                attrs["mem"] = {
+                    "min": max(int(spec.mem["min"] * 1024 - spec_offset["mem"]), 0),
+                    "max": int(spec.mem["max"] * 1024),
+                }
 
-        # 转换内存查询单位, GB --> MB
-        if attrs.get("mem"):
-            attrs["mem"] = {"min": int(attrs["mem"]["min"] * 1024), "max": int(attrs["mem"]["max"] * 1024)}
+        def replace_empty_value(value):
+            if value == "__empty__":
+                return ""
+            elif isinstance(value, dict):
+                for k in list(value.keys()):
+                    value[k] = replace_empty_value(value[k])
+                return value
+            elif isinstance(value, list):
+                return [replace_empty_value(item) for item in value]
+            return value
+
+        attrs = replace_empty_value(attrs)
 
         # 格式化agent参数
         attrs["gse_agent_alive"] = str(attrs.get("agent_status", "")).lower()
@@ -176,6 +249,7 @@ class ResourceListSerializer(serializers.Serializer):
             attrs,
             fields=[
                 "device_class",
+                "os_names",
                 "hosts",
                 "city",
                 "subzones",
@@ -185,6 +259,7 @@ class ResourceListSerializer(serializers.Serializer):
                 "disk",
                 "bk_cloud_ids",
                 "labels",
+                "label_names",
             ],
         )
         return attrs
@@ -236,6 +311,10 @@ class ResourceUpdateSerializer(serializers.Serializer):
     city_meta = serializers.JSONField(help_text=_("地域信息"), required=False)
     sub_zone_meta = serializers.JSONField(help_text=_("园区信息"), required=False)
     device_class = serializers.CharField(help_text=_("机型"), required=False)
+    bk_biz_id = serializers.IntegerField(help_text=_("当前业务ID"), required=False)
+    remark = serializers.ListField(help_text=_("备注"), required=False, child=serializers.DictField())
+    update_type = serializers.CharField(help_text=_("更新类型"), required=False)
+    host_id_ip_map = serializers.DictField(help_text=_("主机id,ip映射"), required=False)
 
     # def validate(self, attrs):
     #     machine_property = SystemSettings.get_setting_value(
@@ -337,6 +416,7 @@ class ResourceSummaryResponseSerializer(serializers.Serializer):
 class SpecSerializer(serializers.ModelSerializer):
     spec_db_type = serializers.SerializerMethodField(help_text=_("规格组件类型"))
     capacity = serializers.SerializerMethodField(help_text=_("规格容量"))
+    tags = serializers.SerializerMethodField(help_text=_("规格标签"))
 
     class Meta:
         model = Spec
@@ -351,11 +431,18 @@ class SpecSerializer(serializers.ModelSerializer):
     def get_capacity(self, obj):
         return obj.capacity
 
-    def validate_valid_cpu_mem(self, attrs):
+    def get_tags(self, obj):
+        return [tag.desc for tag in obj.tags.all()]
+
+    def validate_valid_cpu_mem_disk(self, attrs):
         # 校验cpu,mem的值是int
         try:
             attrs["cpu"]["min"], attrs["cpu"]["max"] = int(attrs["cpu"]["min"]), int(attrs["cpu"]["max"])
             attrs["mem"]["min"], attrs["mem"]["max"] = float(attrs["mem"]["min"]), float(attrs["mem"]["max"])
+            for storage in attrs["storage_spec"]:
+                storage["max"], storage["min"] = int(storage["max"]), int(storage["min"])
+                if storage["min"] > storage["max"]:
+                    raise serializers.ValidationError(_("请保证磁盘的最小最大范围合理"))
         except ValueError:
             raise serializers.ValidationError(_("请保证CPU/MEM的取值为数字"))
         # 校验cpu, mem是正确的范围
@@ -408,7 +495,7 @@ class SpecSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(_("【{}】后端磁盘挂载点必须包含/data").format(attrs["spec_machine_type"]))
 
     def validate(self, attrs):
-        self.validate_valid_cpu_mem(attrs)
+        self.validate_valid_cpu_mem_disk(attrs)
         self.validate_only_spec(attrs)
         self.validate_data_points(attrs)
         return attrs
@@ -421,9 +508,20 @@ class DeleteSpecSerializer(serializers.Serializer):
         swagger_schema_fields = {"example": {"spec_ids": [1, 2, 3]}}
 
 
-class SpecEnableDisableSerializer(serializers.Serializer):
+class SpecBatchUpdateSerializer(serializers.Serializer):
     spec_ids = serializers.ListField(help_text=_("规格id列表"), child=serializers.IntegerField())
-    enable = serializers.BooleanField(help_text=_("是否启用"))
+    biz_scope = serializers.ListField(help_text=_("业务id列表"), child=serializers.IntegerField(), required=False)
+    enable = serializers.BooleanField(help_text=_("是否启用"), required=False)
+
+    def validate(self, attrs):
+        if not any([key in attrs for key in ("biz_scope", "enable")]):
+            raise serializers.ValidationError(_("至少需要提供一个可更新字段"))
+        return attrs
+
+
+class SpecNeedReplenishSerializer(serializers.Serializer):
+    spec_ids = serializers.ListField(help_text=_("规格id列表"), child=serializers.IntegerField())
+    need_replenish = serializers.BooleanField(help_text=_("是否需要补货"))
 
 
 class VerifyDuplicatedSpecNameSerializer(serializers.Serializer):
@@ -483,6 +581,9 @@ class GetDiskTypeResponseSerializer(serializers.Serializer):
 class SpecCountResourceSerializer(serializers.Serializer):
     bk_biz_id = serializers.IntegerField(help_text=_("业务ID"))
     bk_cloud_id = serializers.IntegerField(help_text=_("云区域ID"))
+    sub_zone_ids = serializers.ListField(
+        help_text=_("云区域ID列表"), child=serializers.CharField(), required=False, default=[]
+    )
     spec_ids = serializers.ListField(help_text=_("规格ID列表"), child=serializers.IntegerField())
     city = serializers.CharField(help_text=_("城市"), default="default", required=False)
 
@@ -507,6 +608,9 @@ class ListCvmDeviceClassSerializer(serializers.ModelSerializer):
 class AppendHostLabelSerializer(serializers.Serializer):
     bk_host_ids = serializers.ListField(help_text=_("主机ID列表"), child=serializers.IntegerField())
     labels = serializers.ListField(help_text=_("追加标签列表"), child=serializers.CharField())
+    bk_biz_id = serializers.IntegerField(help_text=_("当前业务ID"), required=False)
+    remark = serializers.ListField(help_text=_("备注"), required=False, child=serializers.DictField())
+    host_id_ip_map = serializers.DictField(help_text=_("主机id,ip映射"), required=False)
 
 
 class CheckFaultHostsSerializer(serializers.Serializer):
@@ -515,3 +619,85 @@ class CheckFaultHostsSerializer(serializers.Serializer):
         bk_host_id = serializers.IntegerField(help_text=_("主机ID"))
 
     hosts = serializers.ListField(help_text=_("主机信息"), child=CheckHostSerializer())
+
+
+class CalcResourceWaterLevelSerializer(serializers.Serializer):
+    cache = serializers.BooleanField(help_text=_("是否获取缓存"), required=True)
+
+
+class ResourceHcmReplenishSerializer(serializers.Serializer):
+    db_type = serializers.ChoiceField(help_text=_("数据库类型"), choices=DBType.get_choices())
+    spec_id = serializers.IntegerField(help_text=_("规格ID"))
+    city = serializers.CharField(help_text=_("城市"))
+    subzone = serializers.CharField(help_text=_("园区名称"))
+    os_name = serializers.CharField(help_text=_("操作系统名称"))
+    count = serializers.IntegerField(help_text=_("申请数量"))
+    os_type = serializers.CharField(help_text=_("操作系统类型"), required=False)
+    operator = serializers.CharField(help_text=_("操作人"), required=False)
+    spec = serializers.JSONField(help_text=_("规格展示信息"), required=False)
+    for_biz = serializers.IntegerField(help_text=_("业务ID"), required=False, default=0)
+    resource_type = serializers.CharField(help_text=_("专属DB"), allow_blank=True, allow_null=True, required=False)
+
+    def to_internal_value(self, data):
+        data = super().to_representation(data)
+        spec = Spec.objects.get(spec_id=data["spec_id"])
+        data["os_type"] = BkOsType.db_type_to_os_type(data["db_type"])
+        data["spec"] = spec.to_dict()
+        # 资源申请到公共池对应组件
+        data["resource_type"] = data["db_type"]
+        if self.context.get("request"):
+            data["operator"] = self.context["request"].user.username
+        return data
+
+    def validate(self, attrs):
+        if not env.HCM_APIGW_DOMAIN:
+            raise serializers.ValidationError(_("没有合法海磊域名，不支持主机资源补货"))
+        return attrs
+
+
+class CreateResourceReplenishSerializer(serializers.Serializer):
+    infos = serializers.ListSerializer(help_text=_("资源补货信息"), child=ResourceHcmReplenishSerializer())
+    bk_biz_id = serializers.IntegerField(help_text=_("业务ID"))
+    remark = serializers.CharField(help_text=_("备注"), required=False, default="")
+
+
+class ReplenishRecordSerializer(serializers.ModelSerializer):
+    status = serializers.SerializerMethodField(help_text=_("状态"))
+
+    class Meta:
+        model = ResourceReplenishRecord
+        fields = "__all__"
+
+    @property
+    def ticket_status_map(self):
+        if hasattr(self, "_ticket_status_map"):
+            return self._ticket_status_map
+
+        ticket_ids = itertools.chain(*[r.ticket_ids for r in self.instance])
+        status_list = Ticket.objects.filter(ticket_type=TicketType.RESOURCE_HCM_REPLENISH, id__in=ticket_ids).values(
+            "id", "status"
+        )
+        self._ticket_status_map = {status["id"]: status["status"] for status in status_list}
+        return self._ticket_status_map
+
+    def get_status(self, obj):
+        status_list = [self.ticket_status_map[ticket_id] for ticket_id in obj.ticket_ids]
+        return status_list
+
+
+class ListTicketApplyCountSerializer(serializers.Serializer):
+    ticket_ids = serializers.CharField(help_text=_("单据ID(逗号分割)"))
+
+
+class ExportReplenishTicketSerializer(serializers.Serializer):
+    ticket_ids = serializers.ListField(help_text=_("单据ID列表"), child=serializers.IntegerField(), required=False)
+    replenish_record_ids = serializers.ListField(
+        help_text=_("补货记录ID列表"), child=serializers.IntegerField(), required=False
+    )
+
+
+class SetSpecReplenishRatioSerializer(serializers.Serializer):
+    ratio_map = serializers.JSONField(help_text=_("补货比例映射"))
+
+    class Meta:
+        swagger_schema_fields = {"ratio_map": {1: 0.05, 2: 0.1}}

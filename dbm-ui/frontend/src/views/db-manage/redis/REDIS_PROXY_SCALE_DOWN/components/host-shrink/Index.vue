@@ -12,8 +12,12 @@
 -->
 
 <template>
+  <BatchInput
+    class="mb-16"
+    :config="batchInputConfig"
+    @change="handleBatchInput" />
   <EditableTable
-    :key="tableData.length"
+    :key="tableKey"
     ref="table"
     class="mb-20"
     :model="tableData">
@@ -28,6 +32,7 @@
         field="proxy_reduced_host.master_domain"
         :label="t('关联集群')"
         :min-width="200"
+        readonly
         :rowspan="rowSpan[item.proxy_reduced_host.master_domain]">
         <EditableBlock
           v-model="item.proxy_reduced_host.master_domain"
@@ -46,9 +51,14 @@
 <script lang="ts" setup>
   import _ from 'lodash';
   import { useTemplateRef } from 'vue';
+  import type { ComponentProps } from 'vue-component-type-helpers';
   import { useI18n } from 'vue-i18n';
 
   import type { Redis } from '@services/model/ticket/ticket';
+
+  import BatchInput from '@views/db-manage/common/batch-input/Index.vue';
+
+  import { random } from '@utils';
 
   import OnlineSwitchTypeColumn, { ONLINE_SWITCH_TYPE } from '../OnlineSwitchTypeColumn.vue';
 
@@ -56,19 +66,11 @@
 
   interface RowData {
     online_switch_type: string;
-    proxy_reduced_host: {
-      bk_biz_id: number;
-      bk_cloud_id: number;
-      bk_host_id: number;
-      cluster_id: number;
-      ip: string;
-      master_domain: string;
-      role: string;
-    };
+    proxy_reduced_host: ComponentProps<typeof HostColumn>['modelValue'];
   }
 
   interface Props {
-    ticketDetails?: Redis.ResourcePool.ProxyScaleDown;
+    ticketDetails?: Redis.ProxyScaleDown;
   }
 
   interface Exposes {
@@ -94,17 +96,36 @@
   const { t } = useI18n();
   const tableRef = useTemplateRef('table');
 
-  const createTableRow = (data = {} as Partial<RowData>) => ({
-    online_switch_type: data.online_switch_type || ONLINE_SWITCH_TYPE.USER_CONFIRM,
-    proxy_reduced_host: data.proxy_reduced_host || {
-      bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
-      bk_cloud_id: 0,
-      bk_host_id: 0,
-      cluster_id: 0,
-      ip: '',
-      master_domain: '',
-      role: 'proxy',
+  const tableKey = ref(random());
+
+  const batchInputConfig = [
+    {
+      case: '127.0.0.1',
+      key: 'ip',
+      label: t('Proxy主机'),
     },
+    {
+      case: t('需人工确认'),
+      key: 'online_switch_type',
+      label: t('切换方式'),
+      values: [t('需人工确认'), t('无需确认')],
+    },
+  ];
+
+  const createTableRow = (data = {} as DeepPartial<RowData>) => ({
+    online_switch_type: data.online_switch_type || ONLINE_SWITCH_TYPE.USER_CONFIRM,
+    proxy_reduced_host: Object.assign(
+      {
+        bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
+        bk_cloud_id: 0,
+        bk_host_id: 0,
+        cluster_id: 0,
+        ip: '',
+        master_domain: '',
+        role: 'proxy',
+      },
+      data.proxy_reduced_host,
+    ),
   });
 
   const tableData = ref<RowData[]>([createTableRow()]);
@@ -129,22 +150,15 @@
     () => props.ticketDetails,
     () => {
       if (props.ticketDetails) {
-        const { clusters, infos } = props.ticketDetails;
+        const { infos } = props.ticketDetails;
         if (infos.length > 0) {
           tableData.value = infos.reduce<typeof tableData.value>((acc, item) => {
-            const clusterInfo = clusters[item.cluster_id];
             item.old_nodes.proxy_reduced_hosts.forEach((host) => {
               acc.push(
                 createTableRow({
                   online_switch_type: item.online_switch_type,
                   proxy_reduced_host: {
-                    bk_biz_id: host.bk_biz_id,
-                    bk_cloud_id: host.bk_cloud_id,
-                    bk_host_id: host.bk_host_id,
-                    cluster_id: clusterInfo.id,
                     ip: host.ip,
-                    master_domain: clusterInfo.immute_domain,
-                    role: 'proxy',
                   },
                 }),
               );
@@ -163,13 +177,7 @@
           createTableRow({
             online_switch_type: item.online_switch_type,
             proxy_reduced_host: {
-              bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
-              bk_cloud_id: item.bk_cloud_id,
-              bk_host_id: item.bk_host_id,
-              cluster_id: item.related_clusters[0].id,
               ip: item.ip,
-              master_domain: item.related_clusters[0].immute_domain,
-              role: item.role,
             },
           }),
         );
@@ -185,6 +193,23 @@
         online_switch_type: value,
       });
     });
+  };
+
+  const handleBatchInput = (data: Record<string, any>[], isClear: boolean) => {
+    const dataList = data.map((item) =>
+      createTableRow({
+        online_switch_type: item.online_switch_type,
+        proxy_reduced_host: {
+          ip: item.ip,
+        },
+      }),
+    );
+    if (isClear) {
+      tableKey.value = random();
+      tableData.value = [...dataList];
+    } else {
+      tableData.value = [...(tableData.value[0].proxy_reduced_host.bk_host_id ? tableData.value : []), ...dataList];
+    }
   };
 
   defineExpose<Exposes>({

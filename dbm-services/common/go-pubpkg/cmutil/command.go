@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
+	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -99,4 +101,25 @@ func ExecCommandReturnBytes(bash bool, cwd string, cmdName string, args ...strin
 		return stdout.Bytes(), stderr.Bytes(), err
 	}
 	return stdout.Bytes(), stderr.Bytes(), nil
+}
+
+func GetOSUserId(userName string) (int, int, error) {
+	// 1. Retrieve User Information
+	targetUser, err := user.Lookup(userName)
+	if err != nil {
+		fmt.Printf("Error looking up user %s: %v\n", userName, err)
+		return 0, 0, err
+	}
+
+	uid, err := strconv.ParseUint(targetUser.Uid, 10, 32)
+	if err != nil {
+		fmt.Printf("Error parsing UID: %v\n", err)
+		return 0, 0, err
+	}
+	gid, err := strconv.ParseUint(targetUser.Gid, 10, 32)
+	if err != nil {
+		fmt.Printf("Error parsing GID: %v\n", err)
+		return 0, 0, err
+	}
+	return int(uid), int(gid), nil
 }

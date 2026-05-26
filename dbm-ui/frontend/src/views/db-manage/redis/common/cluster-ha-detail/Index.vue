@@ -19,6 +19,11 @@
       <DisplayBox
         cluster-detail-router-name="redisClusterHaDetail"
         :data="data">
+        <template #load>
+          <ClusterLoad
+            :cluster-type="ClusterTypes.REDIS_INSTANCE"
+            :domain="data.master_domain" />
+        </template>
         <OperationBtnStatusTips
           v-bk-tooltips="{
             content: t('暂不支持跨管控区域提取Key'),
@@ -75,8 +80,8 @@
             Webconsole
           </BkButton>
         </AuthRouterLink>
-        <MoreActionExtend trigger="hover">
-          <template #handler>
+        <MoreActionExtend>
+          <template #trigger>
             <BkButton
               v-bk-tooltips="t('更多操作')"
               class="ml-4"
@@ -85,7 +90,7 @@
               <DbIcon type="more" />
             </BkButton>
           </template>
-          <BkDropdownItem v-db-console="'redis.haClusterManage.backup'">
+          <div v-db-console="'redis.haClusterManage.backup'">
             <OperationBtnStatusTips
               :data="data"
               :disabled="!data.isOffline">
@@ -100,8 +105,8 @@
                 {{ t('备份') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem v-db-console="'redis.haClusterManage.dbClear'">
+          </div>
+          <div v-db-console="'redis.haClusterManage.dbClear'">
             <OperationBtnStatusTips
               :data="data"
               :disabled="!data.isOffline">
@@ -116,8 +121,8 @@
                 {{ t('清档') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem v-db-console="'redis.haClusterManage.getAccess'">
+          </div>
+          <div v-db-console="'redis.haClusterManage.getAccess'">
             <OperationBtnStatusTips
               :data="data"
               :disabled="!data.isOffline">
@@ -132,8 +137,13 @@
                 {{ t('获取访问方式') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem v-db-console="'redis.haClusterManage.queryAccessSource'">
+          </div>
+          <ClusterAlarmSubscribe
+            :data="data"
+            db-console-prefix="redis.haClusterManage"
+            is-dropdown
+            @edit="(e) => handleToDetails(data!.id, e, 'alarmSubscription')" />
+          <div v-db-console="'redis.haClusterManage.queryAccessSource'">
             <OperationBtnStatusTips
               :data="data"
               :disabled="!data.isOffline">
@@ -148,8 +158,8 @@
                 {{ t('查询访问来源') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem
+          </div>
+          <div
             v-if="data.isOnline"
             v-db-console="'redis.haClusterManage.disable'">
             <OperationBtnStatusTips :data="data">
@@ -164,8 +174,8 @@
                 {{ t('禁用') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem
+          </div>
+          <div
             v-if="data.isOffline"
             v-db-console="'redis.haClusterManage.enable'">
             <OperationBtnStatusTips :data="data">
@@ -180,8 +190,8 @@
                 {{ t('启用') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem v-db-console="'redis.haClusterManage.delete'">
+          </div>
+          <div v-db-console="'redis.haClusterManage.delete'">
             <OperationBtnStatusTips :data="data">
               <AuthButton
                 v-bk-tooltips="{
@@ -198,10 +208,8 @@
                 {{ t('删除') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem>
-            <ClusterDomainDnsRelation :data="data" />
-          </BkDropdownItem>
+          </div>
+          <ClusterDomainDnsRelation :data="data" />
         </MoreActionExtend>
       </DisplayBox>
       <ActionPanel
@@ -210,8 +218,24 @@
         :cluster-type="ClusterTypes.REDIS_INSTANCE">
         <template #infoContent>
           <BaseInfo
+            :cluster-type="ClusterTypes.REDIS_INSTANCE"
             :data="data"
-            @refresh="fetchDetailData" />
+            @refresh="fetchDetailData">
+            <template #slaveDomain>
+              <SlaveDomain
+                :cluster-type="ClusterTypes.REDIS_INSTANCE"
+                :data="data.slaveEntryList" />
+            </template>
+            <template #load>
+              <ClusterLoad
+                :cluster-type="ClusterTypes.REDIS_INSTANCE"
+                :domain="data.master_domain"
+                type="text" />
+            </template>
+            <template #moduleNames>
+              <TagBlock :data="data.module_names" />
+            </template>
+          </BaseInfo>
         </template>
       </ActionPanel>
     </template>
@@ -227,20 +251,22 @@
   import { useRequest } from 'vue-request';
   import { useRouter } from 'vue-router';
 
-  import RedisModel from '@services/model/redis/redis';
+  import RedisDetailModel from '@services/model/redis/redis-detail';
   import { getRedisDetail } from '@services/source/redis';
 
   import { ClusterTypes, DBTypes, TicketTypes } from '@common/const';
 
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
+  import TagBlock from '@components/tag-block/Index.vue';
 
-  import { ActionPanel, DisplayBox } from '@views/db-manage/common/cluster-details';
+  import ClusterAlarmSubscribe from '@views/db-manage/common/cluster-alarm-subscribe/Index.vue';
+  import { ActionPanel, BaseInfo, DisplayBox, SlaveDomain } from '@views/db-manage/common/cluster-details';
   import ClusterDomainDnsRelation from '@views/db-manage/common/cluster-domain-dns-relation/Index.vue';
+  import ClusterLoad from '@views/db-manage/common/cluster-load/Index.vue';
   import { useOperateClusterBasic, useRedisClusterListToToolbox } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
-  import ClusterPassword from '@views/db-manage/redis/common/cluster-oprations/ClusterPassword.vue';
-
-  import BaseInfo from './components/BaseInfo.vue';
+  import useGoClusterDetail from '@views/db-manage/hooks/useGoClusterDetail';
+  import ClusterPassword from '@views/db-manage/redis/common/cluster-operations/ClusterPassword.vue';
 
   interface Props {
     clusterId: number;
@@ -255,8 +281,9 @@
   const router = useRouter();
 
   const { handleToToolbox } = useRedisClusterListToToolbox();
+  const { goClusterDetail: handleToDetails } = useGoClusterDetail('redisClusterHaDetail');
 
-  const data = ref<RedisModel>();
+  const data = ref<RedisDetailModel>();
 
   const passwordState = reactive({
     fetchParams: {
@@ -289,7 +316,7 @@
   };
 
   const { handleDeleteCluster, handleDisableCluster, handleEnableCluster } = useOperateClusterBasic(
-    ClusterTypes.TENDBHA,
+    ClusterTypes.REDIS_INSTANCE,
     {
       onSuccess: () => {
         fetchDetailData();

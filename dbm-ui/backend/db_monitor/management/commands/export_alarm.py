@@ -116,7 +116,7 @@ class Command(BaseCommand):
         custom_conditions = options["custom_conditions"] or []
         db_type = options["db_type"]
         is_disabled = options["is_disabled"]
-        res = BKMonitorV3Api.search_alarm_strategy_v3(
+        res = BKMonitorV3Api.search_alarm_strategy(
             {
                 "page": 1,
                 "page_size": 1000,
@@ -142,6 +142,7 @@ class Command(BaseCommand):
             strategy_template["source"] = "dbm"
             strategy_template["bk_biz_id"] = ""
             strategy_template["priority"] = TargetPriority.PLATFORM.value
+            strategy_template["actions"] = []
 
             # 平台策略仅开启基于分派通知
             strategy_template["notice"]["options"]["assign_mode"] = ["by_rule"]

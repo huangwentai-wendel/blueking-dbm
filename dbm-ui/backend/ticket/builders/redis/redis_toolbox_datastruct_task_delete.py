@@ -12,7 +12,7 @@ import operator
 from functools import reduce
 
 from django.db.models import Q
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.db_meta.enums import DestroyedStatus
@@ -20,12 +20,16 @@ from backend.db_meta.models import Cluster, Machine
 from backend.db_services.redis.rollback.models import TbTendisRollbackTasks
 from backend.flow.engine.controller.redis import RedisController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import DisplayInfoSerializer, HostRecycleSerializer, SkipToRepresentationMixin
-from backend.ticket.builders.redis.base import BaseRedisTicketFlowBuilder, RedisBasePauseParamBuilder
+from backend.ticket.builders.common.base import DisplayInfoSerializer
+from backend.ticket.builders.redis.base import (
+    BaseRedisTicketFlowBuilder,
+    RedisBaseOperateDetailSerializer,
+    RedisBasePauseParamBuilder,
+)
 from backend.ticket.constants import TicketType
 
 
-class RedisDataStructureTaskDeleteDetailSerializer(SkipToRepresentationMixin, serializers.Serializer):
+class RedisDataStructureTaskDeleteDetailSerializer(RedisBaseOperateDetailSerializer):
     """数据构造与实例销毁"""
 
     class InfoSerializer(DisplayInfoSerializer):
@@ -35,6 +39,7 @@ class RedisDataStructureTaskDeleteDetailSerializer(SkipToRepresentationMixin, se
 
         def validate(self, attr):
             """业务逻辑校验"""
+            attr = super().validate(attr)
             # 判断集群是否存在
             try:
                 prod_cluster = Cluster.objects.get(id=attr["cluster_id"])
@@ -56,7 +61,7 @@ class RedisDataStructureTaskDeleteDetailSerializer(SkipToRepresentationMixin, se
             return attr
 
     infos = serializers.ListField(help_text=_("批量操作参数列表"), child=InfoSerializer())
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.DEFAULT)
+    skip_connections_check = serializers.BooleanField(help_text=_("跳过请求检查"), default=False)
 
 
 class RedisDataStructureTaskDeleteParamBuilder(builders.FlowParamBuilder):

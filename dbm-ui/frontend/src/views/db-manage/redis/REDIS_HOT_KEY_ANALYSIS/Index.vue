@@ -16,34 +16,39 @@
     <BkAlert
       class="mb-20"
       closable
-      :title="t('对集群的实例进行内存分析或热 Key 分析，内存分析仅支持 TendisCache 、RedisCluster 、主从版。')" />
+      :title="t('对集群的实例进行热 Key 分析，热 Key 分析仅支持 TendisCache 、RedisCluster 、主从版。')" />
+    <BatchInput
+      :config="batchInputConfig"
+      @change="handleBatchInput" />
     <BkForm
       ref="form"
       class="toolbox-form mb-20"
       form-type="vertical"
       :model="formData">
       <EditableTable
+        :key="tableKey"
         ref="table"
-        class="mb-20"
+        class="mt-16 mb-20"
         :model="formData.tableData">
         <EditableRow
           v-for="(item, index) in formData.tableData"
           :key="index">
           <InstanceColumn
-            ref="instanceColumnRef"
             v-model="item.instance"
             :selected="selected"
             @batch-edit="handleInstanceBatchEdit" />
           <EditableColumn
             :label="t('所属集群')"
-            :min-width="150">
+            :min-width="150"
+            readonly>
             <EditableBlock
               v-model="item.instance.master_domain"
               :placeholder="t('自动生成')" />
           </EditableColumn>
           <EditableColumn
             :label="t('架构版本')"
-            :min-width="150">
+            :min-width="150"
+            readonly>
             <EditableBlock
               v-model="item.instance.cluster_type_name"
               :placeholder="t('自动生成')" />
@@ -78,7 +83,7 @@
         :content="t('重置将会情况当前填写的所有内容_请谨慎操作')"
         :title="t('确认重置页面')">
         <BkButton
-          class="ml8 w-88"
+          class="ml-8 w-88"
           :disabled="isSubmitting">
           {{ t('重置') }}
         </BkButton>
@@ -88,6 +93,7 @@
 </template>
 <script lang="ts" setup>
   import { reactive, useTemplateRef } from 'vue';
+  import type { ComponentProps } from 'vue-component-type-helpers';
   import { useI18n } from 'vue-i18n';
 
   import RedisInstanceModel from '@services/model/redis/redis-instance';
@@ -97,29 +103,30 @@
 
   import { TicketTypes } from '@common/const';
 
+  import BatchInput from '@views/db-manage/common/batch-input/Index.vue';
   import TicketPayload, {
     createTickePayload,
   } from '@views/db-manage/common/toolbox-field/form-item/ticket-payload/Index.vue';
+  import InstanceColumn from '@views/db-manage/redis/common/toolbox-field/instance-column/Index.vue';
 
-  import InstanceColumn from './components/InstanceColumn.vue';
+  import { random } from '@utils';
 
   interface RowData {
-    instance: {
-      bk_cloud_id: number;
-      bk_host_id: number;
-      cluster_id: number;
-      cluster_type: string;
-      cluster_type_name: string;
-      instance_address: string;
-      master_domain: string;
-    };
+    instance: NonNullable<ComponentProps<typeof InstanceColumn>['modelValue']>;
   }
 
   const { t } = useI18n();
 
+  const batchInputConfig = [
+    {
+      case: '192.168.1.200:10000',
+      key: 'instance',
+      label: t('目标实例'),
+    },
+  ];
+
   const formRef = useTemplateRef('form');
-  const tableRef = useTemplateRef('table');
-  const instanceColumnRef = useTemplateRef<Array<InstanceType<typeof InstanceColumn>>>('instanceColumnRef');
+  const editableTableRef = useTemplateRef('table');
 
   useTicketDetail<Redis.HotKeyAnalyse>(TicketTypes.REDIS_HOT_KEY_ANALYSIS, {
     onSuccess(ticketDetail) {
@@ -137,9 +144,6 @@
             }),
           ),
         ),
-      });
-      nextTick(() => {
-        instanceColumnRef.value!.map((item) => item.inputManualChange());
       });
     },
   });
@@ -169,6 +173,8 @@
     label: `${item}s`,
     value: item,
   }));
+
+  const tableKey = ref(random());
 
   const formData = reactive(defaultData());
 
@@ -210,8 +216,29 @@
     formData.tableData = [...(selected.value.length ? formData.tableData : []), ...dataList];
   };
 
+  const handleBatchInput = (data: Record<string, any>[], isClear: boolean) => {
+    const dataList = data.map((item) =>
+      createTableRow({
+        instance: {
+          instance_address: item.instance,
+        } as RowData['instance'],
+      }),
+    );
+
+    if (isClear) {
+      tableKey.value = random();
+      formData.tableData = [...dataList];
+    } else {
+      formData.tableData = [...(selected.value.length ? formData.tableData : []), ...dataList];
+    }
+
+    setTimeout(() => {
+      editableTableRef.value!.validate();
+    }, 200);
+  };
+
   const handleSubmit = async () => {
-    const result = await tableRef.value!.validate();
+    const result = await editableTableRef.value!.validate();
     if (!result) {
       return;
     }

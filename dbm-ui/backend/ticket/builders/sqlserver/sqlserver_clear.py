@@ -9,7 +9,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.flow.consts import SqlserverCleanMode
@@ -41,7 +41,7 @@ class SQLServerClearDetailSerializer(SQLServerBaseOperateDetailSerializer):
         # 校验集群是否可用
         super().validate_cluster_can_access(attrs)
         # 库表选择器校验
-        super().validate_database_table_selector(attrs)
+        # super().validate_database_table_selector(attrs)
         return attrs
 
 

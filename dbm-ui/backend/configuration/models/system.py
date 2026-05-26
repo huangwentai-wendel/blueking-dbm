@@ -13,13 +13,13 @@ from typing import Any, Dict, List, Optional, Union
 
 from django.conf import settings
 from django.db import connection, models
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend import env
 from backend.bk_web.constants import LEN_LONG, LEN_NORMAL
 from backend.bk_web.models import AuditedModel
 from backend.configuration import constants
-from backend.configuration.constants import BizSettingsEnum
+from backend.configuration.constants import BIZ_DEFAULT_CONFIGS, BizSettingsEnum, SystemSettingsEnum
 from backend.db_meta.enums import ClusterType
 
 logger = logging.getLogger("root")
@@ -117,15 +117,6 @@ class SystemSettings(AbstractSettings):
             desc=constants.SystemSettingsEnum.get_choice_label(key),
         )
 
-    @classmethod
-    def get_external_whitelist_cluster_ids(cls) -> List:
-        return [
-            conf["cluster_id"]
-            for conf in cls.get_setting_value(
-                key=constants.SystemSettingsEnum.EXTERNAL_WHITELIST_CLUSTER_IDS.value, default=[]
-            )
-        ]
-
 
 class BizSettings(AbstractSettings):
     """业务配置表"""
@@ -145,7 +136,12 @@ class BizSettings(AbstractSettings):
 
     @classmethod
     def get_setting_value(cls, bk_biz_id: int, key: str, default: Optional[Any] = None) -> Union[str, Dict, List]:
-        return super().get_setting_value(key={"key": key, "bk_biz_id": bk_biz_id}, default=default)
+        data = super().get_setting_value(key={"key": key, "bk_biz_id": bk_biz_id}, default=default)
+
+        if not data:
+            biz_configs = SystemSettings.get_setting_value(key=SystemSettingsEnum.BIZ_CONFIG, default={})
+            data = biz_configs.get(key, {}) or BIZ_DEFAULT_CONFIGS.get(key)
+        return data
 
     @classmethod
     def insert_setting_value(cls, bk_biz_id: int, key: str, value: Any, value_type: str = "str", user: str = "admin"):

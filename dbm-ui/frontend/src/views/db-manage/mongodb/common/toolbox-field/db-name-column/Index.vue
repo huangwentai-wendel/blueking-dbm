@@ -68,7 +68,7 @@
 
   interface Props {
     clusterId: number;
-    compareData?: string[];
+    // compareData?: string[];
     field: string;
     label: string;
     required?: boolean;
@@ -109,17 +109,17 @@
       trigger: 'change',
       validator: (value: string[]) => _.every(value, (item) => !['admin', 'config', 'local'].includes(item)),
     },
-    {
-      message: t('忽略DB名、忽略表名要么同时为空, 要么同时不为空'),
-      trigger: 'blur',
-      validator: (value: string[]) => {
-        const { compareData } = props;
-        if (compareData) {
-          return (value.length === 0 && compareData?.length === 0) || (value.length > 0 && compareData?.length > 0);
-        }
-        return true;
-      },
-    },
+    // {
+    //   message: t('忽略DB名、忽略表名要么同时为空, 要么同时不为空'),
+    //   trigger: 'blur',
+    //   validator: (value: string[]) => {
+    //     const { compareData } = props;
+    //     if (compareData) {
+    //       return (value.length === 0 && compareData?.length === 0) || (value.length > 0 && compareData?.length > 0);
+    //     }
+    //     return true;
+    //   },
+    // },
     {
       message: t('DB 不存在'),
       trigger: 'blur',
@@ -128,7 +128,9 @@
         if (clearDbList.length < 1) {
           return true;
         }
-
+        if (!props.clusterId) {
+          return true;
+        }
         return checkClusterDatabase({
           bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
           cluster_id: props.clusterId as number,
@@ -154,7 +156,7 @@
 
   const tagInputPasteFn = (value: string) => value.split(batchSplitRegex).map((item) => ({ id: item }));
 
-  const disabledMethod = () => (!props.clusterId ? t('请先选择集群') : false);
+  const disabledMethod = () => (!props.clusterId ? t('请先输入合法的集群域名') : false);
 
   const handleBatchEditShow = () => {
     isShowBatchEdit.value = true;

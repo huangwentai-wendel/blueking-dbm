@@ -1,6 +1,8 @@
 <template>
   <FunController module-id="redis">
-    <BkMenuGroup name="Redis">
+    <MenuGroup
+      :db-type="DBTypes.REDIS"
+      :is-error="isError">
       <BkSubmenu key="RedisManage">
         <template #icon>
           <DbIcon type="fenbushijiqun" />
@@ -64,15 +66,15 @@
         </BkMenuItem>
       </BkSubmenu>
       <div
-        v-if="Object.keys(favorMeunMap).length > 0"
+        v-if="Object.keys(toolboxFavorMap).length > 0"
         class="split-line" />
       <ToolboxMenu
         v-for="toolboxGroupId in toolboxMenuSortList"
         :id="toolboxGroupId"
         :key="toolboxGroupId"
         v-db-console="'redis.toolbox'"
-        :favor-map="favorMeunMap"
-        :toolbox-menu-config="menuChildList" />
+        :favor-map="toolboxFavorMap"
+        :toolbox-menu-config="toolboxMenuList" />
       <FunController
         controller-id="toolbox"
         module-id="redis">
@@ -89,53 +91,28 @@
           </span>
         </BkMenuItem>
       </FunController>
-    </BkMenuGroup>
+    </MenuGroup>
   </FunController>
 </template>
 <script setup lang="ts">
-  import _ from 'lodash';
-  import { onBeforeUnmount, shallowRef } from 'vue';
   import { useI18n } from 'vue-i18n';
 
-  import { useEventBus } from '@hooks';
+  import { ClusterTypes, DBTypes } from '@common/const';
 
-  import { useUserProfile } from '@stores';
-
-  import { ClusterTypes, UserPersonalSettings } from '@common/const';
-
-  import toolboxMenuConfig from '@views/db-manage/redis/toolbox-menu';
-
-  import { makeMap } from '@utils';
+  import { menuGroupList, toolboxMenuList } from '@views/db-manage/redis/toolbox/toolboxMenuList';
 
   import CountTag from './components/CountTag.vue';
+  import MenuGroup from './components/MenuGroup.vue';
   import ToolboxMenu from './components/ToolboxMenu.vue';
+  import { useToolboxFavor } from './hooks/useToolboxFavor';
 
-  const userProfile = useUserProfile();
+  interface Props {
+    isError: boolean;
+  }
+
+  defineProps<Props>();
+
   const { t } = useI18n();
-  const eventBus = useEventBus();
 
-  const toolboxMenuSortList = shallowRef<string[]>([]);
-  const favorMeunMap = shallowRef<Record<string, boolean>>({});
-
-  // const menuChildList = _.flatten(toolboxMenuConfig.map((item) => item.menuList));
-
-  // TODO 暂时先做特殊处理至同层级，后期等设计稿交互变更
-  const commonMenuList = _.cloneDeep(toolboxMenuConfig[0]);
-  const manageItem = commonMenuList.menuList.find((item) => item.id === 'common-manage');
-  manageItem!.children.push(...toolboxMenuConfig[1].menuList[0].children);
-  const menuChildList = commonMenuList.menuList;
-
-  const renderToolboxMenu = () => {
-    toolboxMenuSortList.value =
-      userProfile.profile[UserPersonalSettings.REDIS_TOOLBOX_MENUS] || menuChildList.map((item) => item.id);
-    favorMeunMap.value = makeMap(userProfile.profile[UserPersonalSettings.REDIS_TOOLBOX_FAVOR]);
-  };
-
-  renderToolboxMenu();
-
-  eventBus.on('REDIS_TOOLBOX_CHANGE', renderToolboxMenu);
-
-  onBeforeUnmount(() => {
-    eventBus.off('REDIS_TOOLBOX_CHANGE', renderToolboxMenu);
-  });
+  const { toolboxFavorMap, toolboxMenuSortList } = useToolboxFavor(DBTypes.REDIS, toolboxMenuList, menuGroupList);
 </script>

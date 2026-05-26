@@ -12,16 +12,23 @@
 -->
 
 <template>
-  <BkTable
+  <TicketInfoTable
     :data="ticketDetails.details.infos"
-    :show-overflow="false">
-    <BkTableColumn :label="t('待重建从库主机')">
-      <template #default="{ data }: { data: RowData }">
+    row-key="cluster_ids">
+    <TicketInfoTableColumn
+      col-key="cluster_ids"
+      :get-copy-value="
+        (row: RowData) => row.old_nodes.old_slave_host[0].ip
+      "
+      :title="t('待重建从库主机')">
+      <template #default="{ row: data }: { row: RowData }">
         {{ data.old_nodes.old_slave_host[0].ip }}
       </template>
-    </BkTableColumn>
-    <BkTableColumn :label="t('同机关联集群')">
-      <template #default="{ data }: { data: RowData }">
+    </TicketInfoTableColumn>
+    <TicketInfoTableColumn
+      col-key="immute_domain"
+      :title="t('同机关联集群')">
+      <template #default="{ row: data }: { row: RowData }">
         <div
           v-for="clusterId in data.cluster_ids"
           :key="clusterId"
@@ -29,13 +36,45 @@
           {{ ticketDetails.details.clusters[clusterId].immute_domain }}
         </div>
       </template>
-    </BkTableColumn>
-    <BkTableColumn :label="t('新从库主机')">
-      <template #default="{ data }: { data: RowData }">
+    </TicketInfoTableColumn>
+    <template v-if="isResourcePool">
+      <TicketInfoTableColumn
+        col-key="spec_id"
+        :min-width="120"
+        :title="t('规格')">
+        <template #default="{ row: data }: { row: RowData }">
+          {{ ticketDetails.details.specs?.[data.resource_spec.sqlserver_ha?.spec_id]?.name || '--' }}
+        </template>
+      </TicketInfoTableColumn>
+      <TicketInfoTableColumn
+        col-key="label_names"
+        :min-width="200"
+        :title="t('资源标签')">
+        <template #default="{ row: data }: { row: RowData }">
+          <template v-if="data.resource_spec.sqlserver_ha?.label_names?.length">
+            <BkTag
+              v-for="item in data.resource_spec.sqlserver_ha.label_names"
+              :key="item">
+              {{ item }}
+            </BkTag>
+          </template>
+          <BkTag
+            v-else
+            theme="success">
+            {{ t('通用无标签') }}
+          </BkTag>
+        </template>
+      </TicketInfoTableColumn>
+    </template>
+    <TicketInfoTableColumn
+      v-else
+      col-key="sqlserver_ha"
+      :title="t('新从库主机')">
+      <template #default="{ row: data }: { row: RowData }">
         {{ data.resource_spec.sqlserver_ha.hosts[0].ip }}
       </template>
-    </BkTableColumn>
-  </BkTable>
+    </TicketInfoTableColumn>
+  </TicketInfoTable>
 </template>
 
 <script setup lang="tsx">
@@ -56,7 +95,9 @@
     inheritAttrs: false,
   });
 
-  defineProps<Props>();
+  const props = defineProps<Props>();
 
   const { t } = useI18n();
+
+  const isResourcePool = !props.ticketDetails.details.infos[0].resource_spec.sqlserver_ha.hosts;
 </script>

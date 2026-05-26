@@ -5,13 +5,19 @@
     <template v-if="data && data.length">
       <BkTag
         v-for="item in renderData"
-        :key="item">
-        {{ item }}
+        :key="item"
+        :size="size"
+        :theme="theme">
+        <BkOverflowTitle type="tips">
+          {{ item }}
+        </BkOverflowTitle>
       </BkTag>
       <BkTag
         v-if="moreTagCount > 0"
         key="more"
-        ref="moreRef">
+        ref="moreRef"
+        :size="size"
+        :theme="theme">
         +{{ moreTagCount }}
       </BkTag>
       <div
@@ -29,7 +35,9 @@
       style="position: absolute; word-break: keep-all; white-space: nowrap; visibility: hidden">
       <BkTag
         v-for="item in data"
-        :key="item">
+        :key="item"
+        :size="size"
+        :theme="theme">
         {{ item }}
       </BkTag>
     </div>
@@ -39,7 +47,9 @@
         class="dbm-tag-block-more-panel">
         <BkTag
           v-for="item in data.slice(renderData.length)"
-          :key="item">
+          :key="item"
+          :size="size"
+          :theme="theme">
           {{ item }}
         </BkTag>
       </div>
@@ -47,9 +57,11 @@
   </div>
 </template>
 <script setup lang="ts">
+  import BkTag from 'bkui-vue/lib/tag';
   import { throttle } from 'lodash';
   import tippy, { type Instance, type SingleTarget } from 'tippy.js';
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue';
+  import type { ComponentProps } from 'vue-component-type-helpers';
   import { useI18n } from 'vue-i18n';
 
   import { execCopy } from '@utils';
@@ -57,11 +69,15 @@
   interface Props {
     copyenable?: boolean;
     data: Array<string>;
+    size?: 'default' | 'small';
+    // eslint-disable-next-line vue/require-default-prop
+    theme?: ComponentProps<typeof BkTag>['theme'];
   }
 
   const props = withDefaults(defineProps<Props>(), {
     copyenable: false,
     max: 0,
+    size: 'default',
   });
 
   const { t } = useI18n();
@@ -96,14 +112,23 @@
         const copyBtnWidth = props.copyenable ? 30 : 0;
 
         const allTagEleList = Array.from(tagListRef.value!.querySelectorAll('.bk-tag'));
-        if (tagListRef.value!.getBoundingClientRect().width + copyBtnWidth <= maxWidth || props.data.length === 1) {
+        if (tagListRef.value!.getBoundingClientRect().width + copyBtnWidth <= maxWidth) {
           renderTagNum.value = props.data.length;
         } else {
           const tagMargin = 6;
           let totalTagWidth = -tagMargin;
-          // eslint-disable-next-line @typescript-eslint/prefer-for-of
+
           for (let i = 0; i < allTagEleList.length; i++) {
             const { width: tagWidth } = allTagEleList[i].getBoundingClientRect();
+
+            // 检查当前tag是否超过可用宽度
+            const availableWidth =
+              maxWidth - copyBtnWidth - (i < allTagEleList.length - 1 ? tipsTagPlaceholderWidth : 0);
+            if (tagWidth > availableWidth) {
+              // 如果单个tag就超过可用宽度，不计入显示
+              break;
+            }
+
             totalTagWidth += tagWidth + tagMargin;
             if (totalTagWidth + tipsTagPlaceholderWidth + copyBtnWidth <= maxWidth) {
               renderTagCount = renderTagCount + 1;
@@ -111,7 +136,7 @@
               break;
             }
           }
-          renderTagNum.value = Math.max(renderTagCount, 1);
+          renderTagNum.value = renderTagCount;
         }
 
         isCalcRenderTagNum.value = false;
@@ -176,7 +201,7 @@
   onMounted(() => {
     calcRenderTagNum();
 
-    const resizeObserver = new ResizeObserver(
+    resizeObserver = new ResizeObserver(
       throttle(() => {
         calcRenderTagNum();
       }),
@@ -197,6 +222,7 @@
   .dbm-tag-block {
     position: relative;
     display: block;
+    overflow: hidden;
     word-break: keep-all;
     white-space: nowrap;
 
@@ -213,6 +239,7 @@
     }
 
     .bk-tag {
+      max-width: calc(100% - 40px);
       margin-right: 0;
       margin-left: 0;
 

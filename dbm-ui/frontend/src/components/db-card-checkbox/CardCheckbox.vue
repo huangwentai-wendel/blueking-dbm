@@ -20,12 +20,22 @@
     class="card-checkbox"
     :class="statusClass"
     @click="handleChange">
-    <div class="card-checkbox__icon">
+    <div class="card-checkbox-icon">
       <DbIcon :type="icon" />
     </div>
-    <div class="card-checkbox__content">
-      <strong class="card-checkbox__title">{{ title }}</strong>
-      <p class="card-checkbox__desc">
+    <div class="card-checkbox-content">
+      <strong class="card-checkbox-title">{{ title }}</strong>
+      <template v-if="descList.length">
+        <p
+          v-for="item in descList"
+          :key="item"
+          class="card-checkbox-desc">
+          {{ item }}
+        </p>
+      </template>
+      <p
+        v-else
+        class="card-checkbox-desc">
         {{ desc }}
       </p>
     </div>
@@ -35,13 +45,14 @@
 <script setup lang="ts">
   interface Props {
     checked?: boolean;
-    desc: string;
+    desc?: string;
+    descList?: string[];
     disabled?: boolean;
     disabledTooltips?: string;
     falseValue?: boolean | string;
-    icon: string;
+    icon?: string;
     modelValue?: boolean | string;
-    title: string;
+    title?: string;
     trueValue?: boolean | string;
   }
 
@@ -50,6 +61,7 @@
   const props = withDefaults(defineProps<Props>(), {
     checked: false,
     desc: 'desc',
+    descList: () => [],
     disabled: false,
     disabledTooltips: '',
     falseValue: false,
@@ -64,16 +76,17 @@
   const statusClass = computed(() => ({
     'card-checkbox--disabled': props.disabled,
     'card-checkbox--selected': props.modelValue === props.trueValue || props.checked,
+    'card-checkbox-initial-height': props.descList.length > 0,
   }));
 
-  function handleChange() {
+  const handleChange = () => {
     if (props.disabled || props.modelValue === props.trueValue) {
       return;
     }
 
     const isSelected = props.modelValue === props.trueValue;
     emits('update:modelValue', isSelected ? props.falseValue : props.trueValue);
-  }
+  };
 </script>
 
 <style lang="less" scoped>
@@ -86,68 +99,71 @@
     border: 1px solid #c4c6cc;
     border-radius: 2px;
 
-    &__icon {
+    .card-checkbox-icon {
+      display: flex;
       width: 56px;
       font-size: 32px;
       line-height: 62px;
       text-align: center;
       background-color: #fafbfd;
       flex-shrink: 0;
+      align-items: center;
+      justify-content: center;
     }
 
-    &__content {
+    .card-checkbox-content {
       padding: 8px 12px;
       font-size: @font-size-mini;
       line-height: 20px;
       border-left: 1px solid #c4c6cc;
     }
 
-    &__title {
+    .card-checkbox-title {
       display: inline-block;
       color: @title-color;
     }
 
-    &__desc {
+    .card-checkbox-desc {
       padding-top: 4px;
     }
 
-    &:not(&--disabled) {
+    &:not(&.card-checkbox--disabled) {
       cursor: pointer;
     }
 
-    &--disabled {
+    &.card-checkbox--disabled {
       color: @disable-color;
       cursor: not-allowed;
       border-color: @border-disable;
 
-      .card-checkbox__icon {
+      .card-checkbox-icon {
         background-color: #fafbfd;
       }
 
-      .card-checkbox__title {
+      .card-checkbox-title {
         color: @gray-color;
       }
 
-      .card-checkbox__content {
+      .card-checkbox-content {
         border-color: @border-disable;
       }
     }
 
-    &:hover:not(&--disabled),
-    &--selected {
+    &:hover:not(&.card-checkbox--disabled),
+    &.card-checkbox--selected {
       border-color: @border-primary;
 
-      .card-checkbox__icon {
+      .card-checkbox-icon {
         color: @primary-color;
         background-color: #e1ecff;
       }
 
-      .card-checkbox__content {
+      .card-checkbox-content {
         border-color: @border-primary;
       }
     }
 
-    &--selected {
+    &.card-checkbox--selected {
       &::before {
         position: absolute;
         top: 0;
@@ -170,5 +186,9 @@
         transform: rotate(-135deg);
       }
     }
+  }
+
+  .card-checkbox-initial-height {
+    height: initial;
   }
 </style>

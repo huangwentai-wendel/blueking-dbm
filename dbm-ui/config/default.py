@@ -12,17 +12,23 @@ from pathlib import Path
 from typing import Dict
 
 import pymysql
+from backend import env
+from backend.core.encrypt.interceptors import SymmetricInterceptor
 from bkcrypto import constants
 from bkcrypto.asymmetric.options import RSAAsymmetricOptions, SM2AsymmetricOptions
 from bkcrypto.symmetric.options import AESSymmetricOptions, SM4SymmetricOptions
 from blueapps.conf.default_settings import *  # pylint: disable=wildcard-import
 from blueapps.core.celery.celery import app
+from blueking.mysql_patch import PatchFeatures
+from django.db.backends.mysql.features import DatabaseFeatures
 
-from backend import env
-from backend.core.encrypt.interceptors import SymmetricInterceptor
+DatabaseFeatures.minimum_database_version = PatchFeatures.minimum_database_version
 
 if env.RUN_VER == "open":
     from blueapps.patch.settings_open_saas import *  # pylint: disable=wildcard-import
+    # 社区版额外加上bkoauth的配置
+    OAUTH_COOKIES_PARAMS = {"bk_token": "bk_token"}
+    INSTALLED_APPS += ("bkoauth", )
 else:
     from blueapps.patch.settings_paas_services import *  # pylint: disable=wildcard-import
 
@@ -39,7 +45,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 APP_CODE = env.APP_CODE
 SECRET_KEY = env.SECRET_KEY
-ENVIRONMENT = env.ENVIRONMENT
+BKPAAS_ENVIRONMENT = ENVIRONMENT = env.ENVIRONMENT
 
 CONF_PATH = os.path.abspath(__file__)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(CONF_PATH))
@@ -63,10 +69,13 @@ CORS_ALLOW_HEADERS = (
     "x-requested-with",
     "x-csrftoken",
     "HTTP_X_REQUESTED_WITH",
+    "time-zone",
+    "traceparent"
 )
 
 ALLOWED_HOSTS = ["*"]
 
+# 安装的APPS
 INSTALLED_APPS += (
     "django_celery_beat",
     "whitenoise.runserver_nostatic",
@@ -82,6 +91,8 @@ INSTALLED_APPS += (
     "backend.version_log",
     # bk_notice
     "bk_notice_sdk",
+    # bkvison
+    "blueking.bkvision",
     # pipeline
     "pipeline.component_framework",
     "pipeline.eri",
@@ -94,6 +105,7 @@ INSTALLED_APPS += (
     "blueapps.opentelemetry.instrument_app",
     # apigw
     "apigw_manager.apigw",
+    "apigw_manager.drf",
     # DB重连
     "backend.django_dbconn_retry",
     # 动态 raw-id
@@ -114,6 +126,7 @@ INSTALLED_APPS += (
     "backend.db_services.mysql.permission.clone",
     "backend.db_services.mysql.open_area",
     "backend.db_services.ipchooser",
+    "backend.db_services.risk_memo",
     "backend.dbm_tools",
     "backend.db_proxy",
     "backend.db_monitor",
@@ -121,15 +134,28 @@ INSTALLED_APPS += (
     "backend.db_services.redis.rollback",
     "backend.db_services.redis.autofix",
     "backend.db_services.redis.maxmemory_set",
+    "backend.db_services.redis.capacity_evaluate_service",
     "backend.db_dirty",
     "backend.db_periodic_task",
     "backend.db_report",
     "backend.db_services.redis.slots_migrate",
     "backend.db_services.redis.redis_modules",
+    "backend.db_services.redis.hot_key_analysis",
+    "backend.db_services.redis.redis_keystat_report",
     "backend.db_services.mysql.dumper",
+    "backend.db_services.dbresource",
     "backend.dbm_init",
+    "backend.db_services.mongodb.password",
 )
 
+if env.ENABLE_DBM_AI:
+    INSTALLED_APPS += (
+        # aidev
+        "aidev_bkplugin",
+        "backend.dbm_aiagent",
+    )
+
+# 中间件
 MIDDLEWARE = (
     # 跨域中间件
     "corsheaders.middleware.CorsMiddleware",
@@ -141,8 +167,6 @@ MIDDLEWARE = (
     "apigw_manager.apigw.authentication.ApiGatewayJWTGenericMiddleware",
     "apigw_manager.apigw.authentication.ApiGatewayJWTAppMiddleware",
     "apigw_manager.apigw.authentication.ApiGatewayJWTUserMiddleware",
-    # 分析页面、接口和SQL调用耗时调试工具
-    "debug_toolbar.middleware.DebugToolbarMiddleware",
     # request instance provider
     "blueapps.middleware.request_provider.RequestProvider",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -168,6 +192,10 @@ MIDDLEWARE = (
     "backend.bk_web.middleware.RequestProviderMiddleware",
 )
 
+if DEBUG and env.DEBUG_TOOL_BAR:
+    MIDDLEWARE += ("debug_toolbar.middleware.DebugToolbarMiddleware",)
+
+# 认证后端
 AUTHENTICATION_BACKENDS = [
     *AUTHENTICATION_BACKENDS,
     "backend.bk_web.middleware.JWTUserModelBackend",
@@ -202,7 +230,7 @@ MAX_DBCONN_RETRY_TIMES = 3
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.mysql",
+        "ENGINE": "dj_db_conn_pool.backends.mysql",
         "NAME": os.environ.get("DB_NAME", APP_CODE),
         "USER": os.environ.get("DB_USER", "root"),
         "PASSWORD": os.environ.get("DB_PASSWORD", ""),
@@ -213,23 +241,54 @@ DATABASES = {
             "CHARSET": "utf8",
             "COLLATION": "utf8_general_ci",
         },
+        "POOL_OPTIONS": {
+            "POOL_SIZE": int(os.environ.get("DB_POOL_SIZE", 5)),
+            "MAX_OVERFLOW": int(os.environ.get("DB_POOL_MAX_OVERFLOW", 10)),
+            "RECYCLE": 60 * 60,
+        },
     },
     "report_db": {
-        "ENGINE": "django.db.backends.mysql",
+        "ENGINE": "dj_db_conn_pool.backends.mysql",
         "NAME": os.environ.get("REPORT_DB_NAME", APP_CODE),
         "USER": os.environ.get("REPORT_DB_USER", "root"),
         "PASSWORD": os.environ.get("REPORT_DB_PASSWORD", ""),
         "HOST": os.environ.get("REPORT_DB_HOST", "127.0.0.1"),
         "PORT": os.environ.get("REPORT_DB_PORT", "3306"),
-        "OPTIONS": {"init_command": "SET default_storage_engine=INNODB", "charset": "utf8mb4"},
+        "OPTIONS": {"init_command": """SET default_storage_engine=INNODB,time_zone='+00:00'""", "charset": "utf8mb4"},
         "TEST": {
             "CHARSET": "utf8",
             "COLLATION": "utf8_general_ci",
         },
+        "POOL_OPTIONS": {
+            "POOL_SIZE": int(os.environ.get("DB_POOL_SIZE", 5)),
+            "MAX_OVERFLOW": int(os.environ.get("DB_POOL_MAX_OVERFLOW", 10)),
+            "RECYCLE": 60 * 60,
+        },
+    },
+    "stats_db": {
+        "ENGINE": "dj_db_conn_pool.backends.mysql",
+        "NAME": os.environ.get("STATS_DB_NAME", APP_CODE),
+        "USER": os.environ.get("STATS_DB_USER", "root"),
+        "PASSWORD": os.environ.get("STATS_DB_PASSWORD", ""),
+        "HOST": os.environ.get("STATS_DB_HOST", "127.0.0.1"),
+        "PORT": os.environ.get("STATS_DB_PORT", "3306"),
+        "OPTIONS": {"init_command": """SET default_storage_engine=INNODB,time_zone='+00:00'""", "charset": "utf8mb4"},
+        "TEST": {
+            "CHARSET": "utf8",
+            "COLLATION": "utf8_general_ci",
+        },
+        "POOL_OPTIONS": {
+            "POOL_SIZE": int(os.environ.get("DB_POOL_SIZE", 5)),
+            "MAX_OVERFLOW": int(os.environ.get("DB_POOL_MAX_OVERFLOW", 10)),
+            "RECYCLE": 60 * 60,
+        },
     },
 }
 
-DATABASE_ROUTERS = ["backend.db_report.database_router.ReportRouter"]
+DATABASE_ROUTERS = [
+    "backend.db_report.database_router.ReportRouter",
+    "backend.db_report.database_router.StatsRouter",
+]
 
 # Cache - 缓存后端采用redis
 # https://docs.djangoproject.com/en/3.2/ref/settings/#cache
@@ -297,14 +356,21 @@ BK_APIGW_MANAGER_MAINTAINERS = env.BK_APIGW_MANAGER_MAINTAINERS
 BK_APIGW_STAGE_NAME = env.BK_APIGW_STAGE_NAME
 BK_APIGATEWAY_DOMAIN = env.BK_APIGATEWAY_DOMAIN
 BK_API_URL_TMPL = env.BK_API_URL_TMPL
-BK_APIGW_NAME = "bkdbm"
+BK_APIGW_NAME = env.BK_APIGW_NAME
+BK_APIGW_MCP_NAME = env.BK_APIGW_MCP_NAME
 BK_APIGW_GRANT_APPS = env.BK_APIGW_GRANT_APPS
 # TODO: apigw文档待补充
 BK_APIGW_RESOURCE_DOCS_BASE_DIR = env.BK_APIGW_RESOURCE_DOCS_BASE_DIR
+BK_APIGW_STAGE_BACKEND_SUBPATH = ""
 
 BK_NOTICE = {
     "BK_API_URL_TMPL": BK_API_URL_TMPL,
 }
+
+BKAPP_BKVISION_APIGW_URL = env.BKAPP_BKVISION_APIGW_URL
+
+# 跨域信任请求源
+CSRF_TRUSTED_ORIGINS = env.get_csrf_trusted_origins()
 
 # 需将 bkapi.example.com 替换为真实的云 API 域名，在 PaaS 3.0 部署的应用，可从环境变量中获取 BK_API_URL_TMPL
 
@@ -375,6 +441,8 @@ REQUEST_ID_HEADER = "HTTP_X_REQUEST_ID"
 
 APIGW_PUBLIC_KEY = env.APIGW_PUBLIC_KEY
 
+OAUTH_API_URL = env.OAUTH_API_URL
+
 # DRF 配置
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -392,6 +460,7 @@ REST_FRAMEWORK = {
     "DATETIME_FORMAT": None,
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
     "EXCEPTION_HANDLER": "backend.bk_web.handlers.drf_exception_handler",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -411,6 +480,7 @@ CELERY_IMPORTS = (
 app.conf.enable_utc = False
 app.conf.timezone = "Asia/Shanghai"
 app.conf.broker_url = env.BROKER_URL
+app.conf.broker_connection_retry_on_startup = True
 
 # 版本日志
 VERSION_LOG = {"MD_FILES_DIR": os.path.join(PROJECT_ROOT, "release")}
@@ -582,6 +652,17 @@ GRAFANA = {
     "BACKEND_CLASS": "backend.bk_dataview.grafana.backends.api.APIHandler",
 }
 
+# 自定义上报监控配置
+if env.BKAPP_MONITOR_REPORTER_ENABLE:
+    from backend.bk_dataview.prometheus import config
+
+    config.monitor_celery_report_config()
+    config.monitor_web_report_config()
+
+
+# 接入告警屏蔽的延迟秒, 默认 10s 无延迟，最小 10s
+DISABLE_ALARM_SHIELD_DELAY = max(int(os.getenv("DISABLE_ALARM_SHIELD_DELAY", 10)), 10)
+
 # 全局启用 pyinstrument，或者在url后面加上?profile=1
 # PYINSTRUMENT_PROFILE_DIR = os.path.join(STATIC_ROOT, 'assets/perf')
 
@@ -590,3 +671,14 @@ if env.DEBUG_TOOL_BAR:
     INTERNAL_IPS = ["127.0.0.1", "localhost"]
 
 
+# ================================ DBM AIDEV 配置 =========================================
+# 基础的Agent配置
+AGENT_APP_CODE = env.BK_AIDEV_AGENT_APP_CODE or env.APP_CODE
+AGENT_APP_SECRET = env.BK_AIDEV_AGENT_APP_SECRET or env.SECRET_KEY
+BK_AIDEV_APIGW_ENDPOINT = env.BK_AIDEV_APIGW_ENDPOINT
+# 默认关闭 AIDEV MCP server
+BK_APIGW_STAGE_ENABLE_MCP_SERVERS = False
+BK_APIGW_STAGE_MCP_SERVERS = []
+# ENABLE_DBM_AI 时才加载完整配置
+if env.ENABLE_DBM_AI:
+    from backend.dbm_aiagent.config import *  # noqa: F401,F403  # pylint: disable=wildcard-import,unused-wildcard-import

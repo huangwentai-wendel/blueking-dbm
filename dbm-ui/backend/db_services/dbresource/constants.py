@@ -9,7 +9,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.db_meta.enums.spec import SpecClusterType, SpecMachineType
 from backend.db_services.dbresource.handlers import (
@@ -20,7 +20,7 @@ from backend.db_services.dbresource.handlers import (
     TendisPlusSpecFilter,
     TendisSSDSpecFilter,
 )
-from blue_krill.data_types.enum import EnumField, StructuredEnum
+from blue_krill.data_types.enum import EnumField, StrStructuredEnum
 
 SWAGGER_TAG = _("资源池")
 
@@ -40,12 +40,23 @@ SPEC_FILTER_FACTORY = {
     SpecClusterType.MongoDB: {SpecMachineType.MONGODB: MongoDBShardSpecFilter},
 }
 
+RESOURCE_UPDATE_REMARK = {
+    "for_biz": _("所属业务"),
+    "resource_type": _("所属DB"),
+    "labels": _("资源标签"),
+    "city": _("地域 "),
+    "sub_zone": _("园区"),
+    "rack_id": _("机架"),
+    "device_class": _("机型"),
+    "storage_device": _("数据盘"),
+}
 
-class ResourceOperation(str, StructuredEnum):
+
+class ResourceOperation(StrStructuredEnum):
     import_hosts = EnumField("imported", _("导入主机"))
     consume_hosts = EnumField("consumed", _("消费主机"))
 
 
-class ResourceGroupByEnum(str, StructuredEnum):
+class ResourceGroupByEnum(StrStructuredEnum):
     DEVICE_CLASS = EnumField("device_class", _("按照机型聚合"))
     SPEC = EnumField("spec", _("按规格聚合"))

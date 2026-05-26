@@ -29,24 +29,27 @@
       :min="320"
       placement="right">
       <template #main>
+        <PanelTab
+          v-model="currentClusterType"
+          :panel-list="configList" />
         <RenderTable
-          v-model:selected="selected"
+          v-model:selected="localSelected"
           :params="params" />
       </template>
       <template #aside>
-        <PreviewResult v-model:selected="selected" />
+        <PreviewResult v-model:selected="localSelected" />
       </template>
     </BkResizeLayout>
     <template #footer>
       <BkButton
         class="w-88"
-        :disabled="selected.length === 0"
+        :disabled="localSelected.length === 0"
         theme="primary"
         @click="handleSubmit">
         {{ t('确定') }}
       </BkButton>
       <BkButton
-        class="ml8 w-88"
+        class="ml-8 w-88"
         @click="handleClose">
         {{ t('取消') }}
       </BkButton>
@@ -54,17 +57,24 @@
   </BkDialog>
 </template>
 <script setup lang="ts">
+  import _ from 'lodash';
   import { useI18n } from 'vue-i18n';
 
+  import { ClusterTypes } from '@common/const';
+
   import comFactory from './com-factory';
+  import PanelTab from './components/PanelTab.vue';
   import PreviewResult from './components/PreviewResult.vue';
   import RenderTable, { type IValue } from './components/RenderTable.vue';
 
   export type IMachine = IValue;
 
+  type SupportClusterTypes = keyof typeof comFactory;
+
   interface Props {
-    clusterType: keyof typeof comFactory;
+    clusterTypes: SupportClusterTypes[];
     role?: string;
+    selected: IValue[];
   }
 
   type Emits = (e: 'change', data: any[]) => void;
@@ -77,23 +87,39 @@
     required: true,
   });
 
-  const selected = defineModel<IValue[]>('selected', {
-    required: true,
-  });
-
   const { t } = useI18n();
 
+  const currentClusterType = ref<SupportClusterTypes>(ClusterTypes.TENDBHA);
+  const localSelected = shallowRef<IValue[]>([]);
+
+  const configList = computed(() => props.clusterTypes.map((clusterType) => comFactory[clusterType]));
+
   const params = computed(() => ({
-    ...comFactory[props.clusterType],
+    ...comFactory[currentClusterType.value].params,
     instance_role: props.role,
   }));
+
+  watch(isShow, () => {
+    if (isShow.value) {
+      currentClusterType.value = props.clusterTypes[0];
+    }
+  });
+
+  watch(
+    () => props.selected,
+    (newValue, oldValue) => {
+      if (!_.isEqual(newValue, oldValue)) {
+        localSelected.value = props.selected;
+      }
+    },
+  );
 
   const handleClose = () => {
     isShow.value = false;
   };
 
   const handleSubmit = () => {
-    emits('change', selected.value);
+    emits('change', localSelected.value);
     handleClose();
   };
 </script>

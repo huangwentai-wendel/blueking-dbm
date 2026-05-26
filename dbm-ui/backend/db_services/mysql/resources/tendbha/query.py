@@ -10,9 +10,8 @@ specific language governing permissions and limitations under the License.
 """
 from typing import Any, Callable, Dict, List
 
-from django.db.models import F, Q, QuerySet
-from django.forms import model_to_dict
-from django.utils.translation import ugettext_lazy as _
+from django.db.models import Q, QuerySet
+from django.utils.translation import gettext_lazy as _
 
 from backend.db_meta.api.cluster.tendbha.detail import scan_cluster
 from backend.db_meta.enums import ClusterEntryRole, InstanceInnerRole, InstanceRole
@@ -20,13 +19,43 @@ from backend.db_meta.enums.cluster_type import ClusterType
 from backend.db_meta.models import AppCache, StorageInstance
 from backend.db_meta.models.cluster import Cluster
 from backend.db_services.dbbase.resources import query
-from backend.db_services.dbbase.resources.query import ResourceList
+from backend.db_services.dbbase.resources.query import (
+    CommonExportQueryResourceMixin,
+    CommonQueryResourceMixin,
+    ResourceList,
+)
 from backend.db_services.dbbase.resources.query_base import build_q_for_domain_by_cluster
 from backend.db_services.dbbase.resources.register import register_resource_decorator
+from backend.db_services.mysql.resources.query import MysqlListRetrieveResource
+
+
+class TenDBHAExportQueryResourceMixin(CommonExportQueryResourceMixin):
+    """补充TenDBHA集群列表导出所需的header及数据"""
+
+    @classmethod
+    def update_headers(cls, headers, **kwargs):
+        extra_headers = [
+            {"id": "clb", "name": _("clb")},
+        ]
+        return headers, extra_headers
+
+    @classmethod
+    def update_cluster_info(cls, cluster, cluster_info, **kwargs):
+        """
+        补充额外的集群列表数据
+        """
+        # 补充clb
+        clb_entry, _ = CommonQueryResourceMixin.get_cluster_clb_polaris_entries(cluster)
+        cluster_info.update(
+            {
+                "clb": clb_entry,
+            }
+        )
+        return cluster_info
 
 
 @register_resource_decorator()
-class ListRetrieveResource(query.ListRetrieveResource):
+class ListRetrieveResource(MysqlListRetrieveResource, TenDBHAExportQueryResourceMixin):
     """查看 mysql dbha 架构的资源"""
 
     cluster_types = [ClusterType.TenDBHA]
@@ -123,6 +152,8 @@ class ListRetrieveResource(query.ListRetrieveResource):
         cloud_info: Dict[str, Any],
         biz_info: AppCache,
         cluster_stats_map: Dict[str, Dict[str, int]],
+        cluster_zone_map: Dict[str, str],
+        dns_to_clb: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
         """将集群对象转为可序列化的 dict 结构"""
@@ -147,7 +178,7 @@ class ListRetrieveResource(query.ListRetrieveResource):
             spec = kwargs["remote_spec_map"].get(spec_id)
         else:
             spec = None
-        cluster_spec_info = {"cluster_spec": model_to_dict(spec) if spec else None}
+        cluster_spec_info = {"cluster_spec": spec.to_dict() if spec else None}
 
         cluster_info = super()._to_cluster_representation(
             cluster,
@@ -158,6 +189,8 @@ class ListRetrieveResource(query.ListRetrieveResource):
             cloud_info,
             biz_info,
             cluster_stats_map,
+            cluster_zone_map,
+            dns_to_clb,
             **kwargs,
         )
         cluster_info.update(cluster_role_info)
@@ -165,14 +198,23 @@ class ListRetrieveResource(query.ListRetrieveResource):
         return cluster_info
 
     @classmethod
+    def _to_instance_representation(
+        cls, instance: dict, cluster_entry_map: dict, db_module_names_map: dict, **kwargs
+    ) -> Dict[str, Any]:
+        """
+        将实例对象转为可序列化的 dict 结构
+        @param instance: 实例信息
+        @param cluster_entry_map: key 是 cluster.id, value 是当前集群对应的 entry 映射
+        @param db_module_names_map: key 是 db_module_id, value 是 db_module_name
+        """
+        instance_info = super()._to_instance_representation(instance, cluster_entry_map, db_module_names_map, **kwargs)
+        if instance["machine__machine_type"] == "backend":
+            instance_info["is_stand_by"] = StorageInstance.objects.get(id=instance["id"]).is_stand_by
+
+        return instance_info
+
+    @classmethod
     def _filter_instance_qs_hook(cls, storage_queryset, proxy_queryset, inst_fields, query_filters, query_params):
-        # mysql的storage角色取instance_inner_role，需要重新根据query_filters获取queryset
-        storage_queryset = (
-            StorageInstance.objects.select_related("machine")
-            .prefetch_related("cluster")
-            .annotate(role=F("instance_inner_role"))
-            .filter(query_filters)
-        )
         instance_queryset = storage_queryset.union(proxy_queryset).values(*inst_fields).order_by("create_at")
         #  部署时间表头排序
         if query_params.get("ordering"):

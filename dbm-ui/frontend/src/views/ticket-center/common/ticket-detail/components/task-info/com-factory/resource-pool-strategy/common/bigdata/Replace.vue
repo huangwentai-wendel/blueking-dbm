@@ -26,15 +26,40 @@
       <InfoItem :label="t('服务器选择方式')">
         {{ item.ipSourceDisplay }}
       </InfoItem>
-      <InfoItem :label="t('已选IP')">
-        <BkTable :data="item.hostList">
-          <BkTableColumn
-            field="oldNodeIp"
-            :label="t('被替换的节点IP')" />
-          <BkTableColumn
-            field="newNodeIp"
-            :label="t('新节点IP')" />
-        </BkTable>
+      <InfoItem
+        :label="t('已选IP')"
+        style="flex: 1 0 100%">
+        <TicketInfoTable
+          :data="item.hostList"
+          ellipsis
+          row-key="oldNodeIp">
+          <TicketInfoTableColumn
+            col-key="oldNodeIp"
+            :get-copy-value="(row: RowData['hostList'][number]) => row.oldNodeIp"
+            :title="t('被替换的节点IP')" />
+          <TicketInfoTableColumn
+            col-key="newNodeIp"
+            :title="t('新节点IP')" />
+          <TicketInfoTableColumn
+            col-key="label_names"
+            :min-width="200"
+            :title="t('资源标签')">
+            <template #default="{ row }: { row: RowData['hostList'][number] }">
+              <template v-if="row.labelNames.length">
+                <BkTag
+                  v-for="labelItem in row.labelNames"
+                  :key="labelItem">
+                  {{ labelItem }}
+                </BkTag>
+              </template>
+              <BkTag
+                v-else
+                theme="success">
+                {{ t('通用无标签') }}
+              </BkTag>
+            </template>
+          </TicketInfoTableColumn>
+        </TicketInfoTable>
       </InfoItem>
     </InfoList>
   </div>
@@ -55,6 +80,7 @@
     clusterId: number;
     clusterName: string;
     hostList: {
+      labelNames: string[];
       newNodeIp: string;
       oldNodeIp: string;
     }[];
@@ -72,11 +98,13 @@
     client: 'Client',
     cold: t('冷节点'),
     datanode: 'DataNode',
+    follower: 'Follower',
     hot: t('热节点'),
     master: 'Master',
     namenode: 'NameNode',
     proxy: 'Proxy',
     slave: 'Slave',
+    warm: t('温节点'),
     zookeeper: 'Zookeeper',
   };
 
@@ -92,6 +120,7 @@
           clusterName: clusters[clusterId]?.immute_domain || '--',
           hostList: hosts.map((host: { ip: string }) => {
             return {
+              labelNames: currentResourceSpec?.label_names || [],
               newNodeIp: isManulSelect
                 ? currentResourceSpec.hosts[0].ip
                 : `${t('匹配规格：')} ${specs[currentResourceSpec.spec_id].name}`,

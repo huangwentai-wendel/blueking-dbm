@@ -14,9 +14,12 @@
 import * as directives from 'bkui-vue/lib/directives';
 import type { App } from 'vue';
 
+import { BkXssFilterDirective } from '@blueking/xss-filter';
+
 import Cursor from './cursor';
 import DbConsole from './dbConsole';
 import OverflowTips from './overflowTips';
+import Test from './test';
 
 type BkuiDirectives = keyof typeof directives;
 
@@ -34,4 +37,6 @@ export const setGlobalDirectives = (app: App<Element>) => {
   app.directive('overflow-tips', OverflowTips);
   app.directive('cursor', Cursor);
   app.directive('db-console', DbConsole);
+  app.directive('test', Test);
+  app.directive('BkXssFilterDirective', BkXssFilterDirective as any);
 };

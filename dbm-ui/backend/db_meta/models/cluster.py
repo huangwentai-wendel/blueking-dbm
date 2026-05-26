@@ -19,7 +19,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
 from django.db.models import Q, QuerySet
 from django.forms import model_to_dict
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.bk_web.models import AuditedModel
 from backend.components.db_remote_service.client import DRSApi
@@ -71,6 +71,7 @@ class Cluster(AuditedModel):
     )
     time_zone = models.CharField(max_length=16, default=DEFAULT_TIME_ZONE, help_text=_("集群所在的时区"))
     tags = models.ManyToManyField(Tag, blank=True, help_text=_("标签（外键）"))
+    zone_list = models.JSONField(default=list, help_text=_("指定机房列表，空列表代表随机"), blank=True, null=True)
 
     class Meta:
         unique_together = [("bk_biz_id", "immute_domain", "cluster_type", "db_module_id"), ("immute_domain",)]
@@ -151,6 +152,7 @@ class Cluster(AuditedModel):
         if self.cluster_type in [
             ClusterType.TendisPredixyRedisCluster,
             ClusterType.TendisPredixyTendisplusCluster,
+            ClusterType.TendisPredixyTendisplusInstance,
         ]:
             return PredixyVersion.PredixyLatest
         if self.cluster_type in [
@@ -332,7 +334,7 @@ class Cluster(AuditedModel):
             role = TenDBClusterSpiderRole.SPIDER_MASTER
             return self.proxyinstance_set.filter(tendbclusterspiderext__spider_role=role).first().port
 
-    def tendbcluster_ctl_primary_address(self) -> str:
+    def tendbcluster_ctl_primary_address(self, v2=False) -> str:
         """
         查询并返回 tendbcluster 的中控 primary
         集群类型不是 TenDBCluster 时会抛出异常
@@ -349,14 +351,24 @@ class Cluster(AuditedModel):
             logger.info("ctl address: {}".format(ctl_address))
 
             try:
-                res = DRSApi.short_rpc(
-                    {
-                        "addresses": [ctl_address],
-                        "cmds": ["tdbctl get primary"],
-                        "force": False,
-                        "bk_cloud_id": self.bk_cloud_id,
-                    }
-                )
+                if v2:
+                    res = DRSApi.v2_short_rpc(
+                        {
+                            "addresses": [ctl_address],
+                            "cmds": ["tdbctl get primary"],
+                            "force": False,
+                            "bk_cloud_id": self.bk_cloud_id,
+                        }
+                    )
+                else:
+                    res = DRSApi.short_rpc(
+                        {
+                            "addresses": [ctl_address],
+                            "cmds": ["tdbctl get primary"],
+                            "force": False,
+                            "bk_cloud_id": self.bk_cloud_id,
+                        }
+                    )
 
                 logger.info("tdbctl get primary res: {}".format(res))
 
@@ -424,7 +436,7 @@ class Cluster(AuditedModel):
         return machines
 
     @classmethod
-    def get_cluster_id__primary_address_map(cls, cluster_ids: List[int]) -> Dict[int, str]:
+    def get_cluster_id__primary_address_map(cls, cluster_ids: List[int], v2=False) -> Dict[int, str]:
         """
         通过集群id列表批量
         查询并返回 tendbcluster 的中控 primary
@@ -457,14 +469,24 @@ class Cluster(AuditedModel):
             logger.info("addresses: {}".format(addresses))
 
             try:
-                res = DRSApi.short_rpc(
-                    {
-                        "addresses": addresses,
-                        "cmds": ["tdbctl get primary"],
-                        "force": False,
-                        "bk_cloud_id": bk_cloud_id,
-                    }
-                )
+                if v2:
+                    res = DRSApi.v2_short_rpc(
+                        {
+                            "addresses": addresses,
+                            "cmds": ["tdbctl get primary"],
+                            "force": False,
+                            "bk_cloud_id": bk_cloud_id,
+                        }
+                    )
+                else:
+                    res = DRSApi.short_rpc(
+                        {
+                            "addresses": addresses,
+                            "cmds": ["tdbctl get primary"],
+                            "force": False,
+                            "bk_cloud_id": bk_cloud_id,
+                        }
+                    )
             except (ApiError, Exception) as e:
                 logger.error(_("get primary failed: {}".format(e)))
                 continue

@@ -1,8 +1,10 @@
 import type { HostInfo } from '@services/types';
 
-import type { DetailBase, SpecInfo } from '../common';
+import type { ApplySpecInfo, DetailBase } from '../common';
 
 export interface Apply extends DetailBase {
+  bk_cloud_id: number;
+  bk_cloud_name: string;
   city_code: string;
   cluster_alias: string;
   cluster_name: string;
@@ -18,8 +20,8 @@ export interface Apply extends DetailBase {
     master: HostInfo[];
   };
   resource_spec: {
-    datanode: SpecInfo;
-    namenode: SpecInfo;
-    zookeeper: SpecInfo;
+    datanode: ApplySpecInfo;
+    namenode: ApplySpecInfo;
+    zookeeper: ApplySpecInfo;
   };
 }

@@ -69,6 +69,21 @@ class MongoRestoreApiView(FlowTestView):
         return Response({"root_id": root_id})
 
 
+class MongoDataExportApiView(FlowTestView):
+    """
+    Mongo Data Export Api
+    """
+
+    @staticmethod
+    def post(request):
+        """
+        mongo_data_export
+        """
+        root_id = uuid.uuid1().hex
+        MongoDBController(root_id=root_id, ticket_data=request.data).mongo_data_export()
+        return Response({"root_id": root_id})
+
+
 class MongoPitrRestoreApiView(FlowTestView):
     """
     Mongo PitrRestore Api
@@ -81,6 +96,18 @@ class MongoPitrRestoreApiView(FlowTestView):
         """
         root_id = uuid.uuid1().hex
         MongoDBController(root_id=root_id, ticket_data=request.data).mongo_pitr_restore()
+        return Response({"root_id": root_id})
+
+
+class MongoUpgradeVersionApiView(FlowTestView):
+    """
+    Mongo UpgradeVersion Api
+    """
+
+    @staticmethod
+    def post(request):
+        root_id = uuid.uuid1().hex
+        MongoDBController(root_id=root_id, ticket_data=request.data).mongo_upgrade_version()
         return Response({"root_id": root_id})
 
 
@@ -295,4 +322,52 @@ class MongoDBClusterMigrateView(FlowTestView):
     def post(request):
         root_id = uuid.uuid1().hex
         MongoDBController(root_id=root_id, ticket_data=request.data).migrate_meta()
+        return Response({"root_id": root_id})
+
+
+class MongoDBClusterAddShardView(FlowTestView):
+    """
+    cluster增加shard
+    """
+
+    @staticmethod
+    def post(request):
+        root_id = uuid.uuid1().hex
+        MongoDBController(root_id=root_id, ticket_data=request.data).cluster_add_shard()
+        return Response({"root_id": root_id})
+
+
+class MongoDBInstanceMigrateView(FlowTestView):
+    """
+    instance迁移
+    """
+
+    @staticmethod
+    def post(request):
+        root_id = uuid.uuid1().hex
+        MongoDBController(root_id=root_id, ticket_data=request.data).instance_migrate()
+        return Response({"root_id": root_id})
+
+
+class MongoDBInstanceFixStatusView(FlowTestView):
+    """
+    instance状态修复
+    """
+
+    @staticmethod
+    def post(request):
+        root_id = uuid.uuid1().hex
+        MongoDBController(root_id=root_id, ticket_data=request.data).instance_fix_status()
+        return Response({"root_id": root_id})
+
+
+class MongoDBStandardizationView(FlowTestView):
+    """
+    集群标准化
+    """
+
+    @staticmethod
+    def post(request):
+        root_id = uuid.uuid1().hex
+        MongoDBController(root_id=root_id, ticket_data=request.data).cluster_standardization()
         return Response({"root_id": root_id})

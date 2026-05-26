@@ -17,10 +17,11 @@ from bamboo_engine import api, builder, states
 from bamboo_engine.api import EngineAPIResult
 from bamboo_engine.builder import Data
 from bamboo_engine.eri import NodeType
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from pipeline.eri.models import State
 from pipeline.eri.runtime import BambooDjangoRuntime
 
+from backend.db_services.taskflow.utils import force_skip_and_retry_decorator
 from backend.flow.engine.bamboo.builder import Builder
 from backend.flow.engine.exceptions import PipelineError
 from backend.flow.models import FlowNode, FlowTree, StateType
@@ -85,11 +86,13 @@ class BambooEngine:
         result = api.forced_fail_activity(runtime=BambooDjangoRuntime(), node_id=node_id, ex_data="force failed")
         return result
 
-    def retry_node(self, node_id: str, data: Optional[dict] = None) -> EngineAPIResult:
+    @force_skip_and_retry_decorator("can_retry")
+    def retry_node(self, node_id: str, data: Optional[dict] = None, is_force: bool = False) -> EngineAPIResult:
         result = api.retry_node(runtime=BambooDjangoRuntime(), node_id=node_id, data=data)
         return result
 
-    def skip_node(self, node_id: str) -> EngineAPIResult:
+    @force_skip_and_retry_decorator("can_skip")
+    def skip_node(self, node_id: str, is_force: bool = False) -> EngineAPIResult:
         result = api.skip_node(runtime=BambooDjangoRuntime(), node_id=node_id)
         return result
 
@@ -107,6 +110,10 @@ class BambooEngine:
 
     def get_node_histories(self, node_id: str) -> EngineAPIResult:
         result = api.get_node_histories(runtime=BambooDjangoRuntime(), node_id=node_id)
+        return result
+
+    def get_node_execution_data(self, node_id: str):
+        result = api.get_execution_data(runtime=BambooDjangoRuntime(), node_id=node_id)
         return result
 
     def get_node_state(self, node_id: str) -> State:
@@ -221,6 +228,13 @@ class BambooEngine:
             activity["name"] = i18n_str(activity["name"])
             if "pipeline" in activity:
                 self.recursion_translate_activity(activity["pipeline"]["activities"])
+
+    def recursion_activity_name(self, activities: Dict, flow_node_name_map: Dict):
+        """递归获取节点名称"""
+        for node_id, activity in activities.items():
+            flow_node_name_map.update({node_id: activity["name"]})
+            if "pipeline" in activity:
+                self.recursion_activity_name(activity["pipeline"]["activities"], flow_node_name_map)
 
     def get_pipeline_tree_states(self) -> Optional[Dict]:
         """获取流程数据包括状态"""

@@ -42,39 +42,77 @@ const (
 )
 
 const (
-	// PUBLIC_RESOURCE_DBTYEP 公共资源DB类型
-	PUBLIC_RESOURCE_DBTYEP = "PUBLIC"
 	// PUBLIC_RESOURCE_BIZ  公共资源业务ID
 	PUBLIC_RESOURCE_BIZ = 0
 )
 
+// 资源类型
+const (
+	RESOURCE_TYPE_PUBLIC       = "PUBLIC"
+	RESOURCE_TYPE_MYSQL        = "mysql"
+	RESOURCE_TYPE_TENDBCLUSTER = "tendbcluster"
+	RESOURCE_TYPE_REDIS        = "redis"
+	RESOURCE_TYPE_MONGODB      = "mongodb"
+)
+
+// NormalizeResourceType maps legacy API values to the canonical rs_type stored in DB.
+// External callers may still send RESOURCE_TYPE_TENDBCLUSTER; matching and writes use RESOURCE_TYPE_MYSQL.
+func NormalizeResourceType(rsType string) string {
+	if rsType == RESOURCE_TYPE_TENDBCLUSTER {
+		return RESOURCE_TYPE_MYSQL
+	}
+	return rsType
+}
+
+// NormalizeResourceTypes applies NormalizeResourceType to each element and returns a de-duplicated slice
+// in first-seen order.
+func NormalizeResourceTypes(rsTypes []string) []string {
+	if len(rsTypes) == 0 {
+		return []string{}
+	}
+	seen := make(map[string]struct{}, len(rsTypes))
+	out := make([]string, 0, len(rsTypes))
+	for _, t := range rsTypes {
+		n := NormalizeResourceType(t)
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out
+}
+
 // TbRpDetail  机器资源明细表
 // nolint
 type TbRpDetail struct {
-	ID              int                      `gorm:"primary_key;auto_increment;not_null" json:"-"`
-	BkCloudID       int                      `gorm:"uniqueIndex:ip;column:bk_cloud_id;type:int(11);not null;comment:'云区域 ID'" json:"bk_cloud_id"`
-	BkBizId         int                      `gorm:"column:bk_biz_id;type:int(11);not null;comment:机器当前所属业务" json:"bk_biz_id"`
-	DedicatedBiz    int                      `gorm:"column:dedicated_biz;type:int(11);default:0;comment:专属业务" json:"dedicated_biz"`
-	RsType          string                   `gorm:"column:rs_type;type:varchar(64);default:'PUBLIC';comment:资源专用组件类型" json:"rs_type"`
-	Bizs            map[string]string        `gorm:"-" json:"-"`
-	BkHostID        int                      `gorm:"index:idx_host_id;column:bk_host_id;type:int(11);not null;comment:'bk主机ID'" json:"bk_host_id"`
-	IP              string                   `gorm:"uniqueIndex:ip;column:ip;type:varchar(20);not null" json:"ip"`
-	AssetID         string                   `gorm:"column:asset_id;type:varchar(64);not null;comment:'固定资产编号'" json:"asset_id"`
-	DeviceClass     string                   `gorm:"column:device_class;type:varchar(64);not null" json:"device_class"`
-	SvrTypeName     string                   `gorm:"column:svr_type_name;type:varchar(64);not null;comment:'服务器型号,判断是否是云机器'" json:"svr_type_name"`
-	CPUNum          int                      `gorm:"column:cpu_num;type:int(11);not null;comment:'cpu核数'" json:"cpu_num"`
-	DramCap         int                      `gorm:"column:dram_cap;type:int(11);not null;comment:'内存大小'" json:"dram_cap"`
-	StorageDevice   json.RawMessage          `gorm:"column:storage_device;type:json;comment:'磁盘设备'" json:"storage_device"`
-	TotalStorageCap int                      `gorm:"column:total_storage_cap;type:int(11);comment:'磁盘总容量'" json:"total_storage_cap"`
-	Storages        map[string]bk.DiskDetail `gorm:"-" json:"-"`
-	//  操作系统类型 Liunx,Windows
+	ID                  int                      `gorm:"primary_key;auto_increment;not_null" json:"-"`
+	BkCloudID           int                      `gorm:"uniqueIndex:ip;column:bk_cloud_id;type:int(11);not null;comment:'云区域 ID'" json:"bk_cloud_id"`
+	BkBizId             int                      `gorm:"column:bk_biz_id;type:int(11);not null;comment:机器当前所属业务" json:"bk_biz_id"`
+	DedicatedBiz        int                      `gorm:"column:dedicated_biz;type:int(11);default:0;comment:专属业务" json:"dedicated_biz"`
+	RsType              string                   `gorm:"column:rs_type;type:varchar(64);default:'PUBLIC';comment:资源专用组件类型" json:"rs_type"`
+	Bizs                map[string]string        `gorm:"-" json:"-"`
+	BkHostID            int                      `gorm:"index:idx_host_id;column:bk_host_id;type:int(11);not null;comment:'bk主机ID'" json:"bk_host_id"`
+	IP                  string                   `gorm:"uniqueIndex:ip;column:ip;type:varchar(20);not null" json:"ip"`
+	AssetID             string                   `gorm:"column:asset_id;type:varchar(64);not null;comment:'固定资产编号'" json:"asset_id"`
+	DeviceClass         string                   `gorm:"column:device_class;type:varchar(64);not null" json:"device_class"`
+	SvrTypeName         string                   `gorm:"column:svr_type_name;type:varchar(64);not null;comment:'服务器型号,判断是否是云机器'" json:"svr_type_name"`
+	CPUNum              int                      `gorm:"column:cpu_num;type:int(11);not null;comment:'cpu核数'" json:"cpu_num"`
+	DramCap             int                      `gorm:"column:dram_cap;type:int(11);not null;comment:'内存大小'" json:"dram_cap"`
+	StorageDevice       json.RawMessage          `gorm:"column:storage_device;type:json;comment:'磁盘设备'" json:"storage_device"`
+	TotalStorageCap     int                      `gorm:"column:total_storage_cap;type:int(11);comment:'磁盘总容量'" json:"total_storage_cap"`
+	TotalDataStorageCap int                      `gorm:"column:total_data_storage_cap;type:int(11);comment:'数据盘总容量'" json:"total_data_storage_cap"`
+	Storages            map[string]bk.DiskDetail `gorm:"-" json:"-"`
+	//  操作系统类型 Linux,Windows
 	/*Linux(1) Windows(2) AIX(3) Unix(4) Solaris(5) FreeBSD(7)*/
 	OsType string `gorm:"column:os_type;type:varchar(32);not null;comment:'操作系统类型'" json:"os_type"`
 	OsBit  string `gorm:"column:os_bit;type:varchar(32);not null;comment:'操作系统位数'" json:"os_bit"`
 	//  操作系统版本
-	OsVerion string `gorm:"column:os_version;type:varchar(64);not null;comment:'操作系统版本'" json:"os_version"`
+	OsVersion string `gorm:"column:os_version;type:varchar(64);not null;comment:'操作系统版本'" json:"os_version"`
 	//  操作系统名称
 	OsName string `gorm:"column:os_name;type:varchar(64);not null;comment:'操作系统名称'" json:"os_name"`
+	//  操作系统名称原始
+	OsNameOrigin string `gorm:"column:os_name_origin;type:varchar(128);not null;comment:'操作系统名称原始'" json:"os_name_origin"`
 	//  磁盘Raid
 	Raid string `gorm:"column:raid;type:varchar(20);not null" json:"raid"`
 	//  实际城市ID
@@ -85,6 +123,10 @@ type TbRpDetail struct {
 	SubZone string `gorm:"column:sub_zone;type:varchar(32);not null" json:"sub_zone"`
 	//  园区ID cc_device_szone_id
 	SubZoneID string `gorm:"column:sub_zone_id;type:varchar(64);not null" json:"sub_zone_id"`
+	//  IDC 名称 cc idc_name
+	IDCName string `gorm:"column:idc_name;type:varchar(128);not null;default:'';comment:'IDC名称'" json:"idc_name"`
+	//  IDC ID cc idc_id
+	IDCID int `gorm:"column:idc_id;type:int(11);not null;default:0;comment:'IDC ID'" json:"idc_id"`
 	//  存放机架ID,判断是否是同机架
 	RackID string `gorm:"column:rack_id;type:varchar(64);not null" json:"rack_id"`
 	//  网络设备ID, 判断是同交换机
@@ -110,13 +152,13 @@ type TbRpDetail struct {
 	UpdateTime time.Time `gorm:"column:update_time;type:timestamp;default:CURRENT_TIMESTAMP()" json:"update_time"`
 	// 创建时间
 	CreateTime time.Time `gorm:"column:create_time;type:timestamp;default:CURRENT_TIMESTAMP()" json:"create_time"`
-	// foreiginKey:关联表的结构字段 references:当前表的结构字段
+	// foreignKey:关联表的结构字段 references:当前表的结构字段
 	// SubStorages []TbRpStorageItem `gorm:"foreignKey:BkHostID;references:BkHostID"`
 }
 
 const (
-	// LiunxOs linux
-	LiunxOs = "Linux"
+	// LinuxOs linux
+	LinuxOs = "Linux"
 	// WindowsOs windows
 	WindowsOs = "Windows"
 	// UnixOs unix
@@ -129,7 +171,7 @@ const (
 func ConvertOsTypeToHuman(osType string) string {
 	switch osType {
 	case "1":
-		return LiunxOs
+		return LinuxOs
 	case "2":
 		return WindowsOs
 	case "4":
@@ -170,13 +212,17 @@ func (t TbRpDetail) MatchDbmSpec(spec dbmapi.DbmSpec) bool {
 	}
 	if len(spec.StorageSpecs) > 0 {
 		if err := t.UnmarshalDiskInfo(); err != nil {
-			logger.Error("unmarshal disk info failed, err:%s")
+			logger.Error("unmarshal disk info failed, err:%s", err.Error())
 			return false
 		}
 		for _, diskSpec := range spec.StorageSpecs {
 			mp := diskSpec.MountPoint
 			realDiskInfo, ok := t.Storages[mp]
 			if !ok {
+				// 如果磁盘规格最小值为0，匹配空的磁盘也允许
+				if diskSpec.Min == 0 {
+					continue
+				}
 				logger.Warn("disk not found, mp:%s, detail:%s", mp, t.IP)
 				return false
 			}
@@ -185,7 +231,7 @@ func (t TbRpDetail) MatchDbmSpec(spec dbmapi.DbmSpec) bool {
 					return false
 				}
 			}
-			if realDiskInfo.Size < diskSpec.Size {
+			if realDiskInfo.Size < diskSpec.Min || realDiskInfo.Size > diskSpec.Max {
 				return false
 			}
 		}
@@ -231,12 +277,33 @@ func GetTbRpDetailAll(sqlstr string) ([]TbRpDetail, error) {
 	return m, nil
 }
 
+// GetSubzoneIdMap 获取subzone,subzone_id 对应的关系
+func GetSubzoneIdMap() (map[string]string, error) {
+	var m []TbRpDetail
+	err := DB.Self.Table(TbRpDetailName()).Select("sub_zone,sub_zone_id").Scan(&m).Error
+	if err != nil {
+		return nil, err
+	}
+	// 并合并 tbrpdetailarchive表的信息
+	var mArchive []TbRpDetail
+	errArchive := DB.Self.Table(TbRpDetailArchiveName()).Select("sub_zone,sub_zone_id").Scan(&mArchive).Error
+	if errArchive != nil {
+		return nil, errArchive
+	}
+	m = append(m, mArchive...)
+	subzoneIdMap := make(map[string]string)
+	for _, v := range m {
+		subzoneIdMap[v.SubZoneID] = v.SubZone
+	}
+	return subzoneIdMap, nil
+}
+
 // SetMore TODO
 func (t *TbRpDetail) SetMore(ip string, diskMap map[string]*bk.ShellResCollection, diskList []yunti.CvmDataDisk) {
-	diskdetailMap := lo.SliceToMap(diskList, func(d yunti.CvmDataDisk) (string, yunti.CvmDataDisk) {
+	diskDetailMap := lo.SliceToMap(diskList, func(d yunti.CvmDataDisk) (string, yunti.CvmDataDisk) {
 		return d.DiskId, d
 	})
-	logger.Info("diskdetailMap:%v", diskdetailMap)
+	logger.Info("diskDetailMap:%v", diskDetailMap)
 	if disk, ok := diskMap[ip]; ok {
 		if t.CPUNum <= 0 {
 			t.CPUNum = disk.Cpu
@@ -248,13 +315,26 @@ func (t *TbRpDetail) SetMore(ip string, diskMap map[string]*bk.ShellResCollectio
 		if t.DeviceClassIsLocalSSD() {
 			dks = bk.SetDiskType(disk.Disk, bk.SSD)
 		}
-		if len(diskdetailMap) > 0 {
+		// 判断是否存在相同的diskId
+		diskIdSet := make(map[string]struct{})
+		hasSameDiskId := false
+		for _, dk := range dks {
+			if _, exist := diskIdSet[dk.DiskId]; exist {
+				logger.Info("发现重复的diskId: %s,可能存在分盘", dk.DiskId)
+				hasSameDiskId = true
+			} else {
+				diskIdSet[dk.DiskId] = struct{}{}
+			}
+		}
+		if len(diskDetailMap) > 0 {
 			rebuildDks := make([]bk.DiskInfo, 0)
 			for _, dk := range dks {
 				dd := dk
-				if detail, exist := diskdetailMap[dk.DiskId]; exist {
-					dd.Size = detail.DiskSize
-					dd.DiskType = TransferCloudDiskType(detail.DiskType)
+				if detail, exist := diskDetailMap[dk.DiskId]; exist {
+					if !hasSameDiskId {
+						dd.Size = detail.DiskSize
+						dd.DiskType = TransferCloudDiskType(detail.DiskType)
+					}
 				}
 				rebuildDks = append(rebuildDks, dd)
 			}
@@ -266,13 +346,12 @@ func (t *TbRpDetail) SetMore(ip string, diskMap map[string]*bk.ShellResCollectio
 		} else {
 			t.StorageDevice = []byte(r)
 		}
-		if t.TotalStorageCap <= 0 {
-			totalSize := 0
-			for _, dk := range disk.Disk {
-				totalSize += dk.Size
-			}
-			t.TotalStorageCap = totalSize
+		// reset total storage cap
+		totalSize := 0
+		for _, dk := range disk.Disk {
+			totalSize += dk.Size
 		}
+		t.TotalDataStorageCap = totalSize
 	}
 }
 
@@ -299,6 +378,16 @@ func UpdateTbRpDetail(ids []int, status string) (int64, error) {
 	return db.RowsAffected, db.Error
 }
 
+// PreselectFromUnused CAS 将 Unused 的资源更新为目标状态(典型为 Preselected)。
+// 通过显式 status=Unused 条件，避免依赖驱动行为(rows-changed vs rows-matched)
+// 与表 schema(是否带 ON UPDATE CURRENT_TIMESTAMP) 隐式保护带来的不确定性。
+func PreselectFromUnused(ids []int, status string) (int64, error) {
+	db := DB.Self.Table(TbRpDetailName()).
+		Where("bk_host_id in (?) and status = ?", ids, Unused).
+		Update("status", status)
+	return db.RowsAffected, db.Error
+}
+
 // UpdateTbRpDetailStatusAtSelling TODO
 func UpdateTbRpDetailStatusAtSelling(ids []int, status string) error {
 	return DB.Self.Table(TbRpDetailName()).Where("bk_host_id in (?) and status = ? ", ids, Preselected).
@@ -311,6 +400,27 @@ func DeleteTbRpDetail(ids []int) (int64, error) {
 	return db.RowsAffected, db.Error
 }
 
+// GetExistTbRpDetailHostIds 查询入参 ids 中实际存在于资源池的 bk_host_id 列表
+func GetExistTbRpDetailHostIds(ids []int) ([]int, error) {
+	var existIds []int
+	err := DB.Self.Table(TbRpDetailName()).
+		Where("bk_host_id in (?)", ids).
+		Pluck("bk_host_id", &existIds).Error
+	return existIds, err
+}
+
+// InUseStatusList 资源池中视为"已被占用"的状态集合,这些状态下的主机不可被删除
+var InUseStatusList = []string{Preselected, Prepoccupied, Used, UsedByOther}
+
+// GetInUseTbRpDetailHostIds 查询入参 ids 中处于"已被占用"状态(Preselected/Prepoccupied/Used/UsedByOther)的 bk_host_id 列表
+func GetInUseTbRpDetailHostIds(ids []int) ([]int, error) {
+	var inUseIds []int
+	err := DB.Self.Table(TbRpDetailName()).
+		Where("bk_host_id in (?) and status in (?)", ids, InUseStatusList).
+		Pluck("bk_host_id", &inUseIds).Error
+	return inUseIds, err
+}
+
 // BatchGetTbDetail TODO
 type BatchGetTbDetail struct {
 	Item      string `json:"item"`
@@ -319,11 +429,19 @@ type BatchGetTbDetail struct {
 
 // BatchGetTbDetailResult TODO
 type BatchGetTbDetailResult struct {
-	Item string       `json:"item"`
-	Data []TbRpDetail `json:"data"`
+	Item    string                 `json:"item"`
+	Data    []TbRpDetail           `json:"data"`
+	Total   int                    `json:"total"`
+	Summary map[string]interface{} `json:"summary"`
 }
 
-// BatchGetSatisfiedByAssetIds batch setting resource status
+// BatchGetSatisfiedByAssetIds batch setting resource status.
+//
+// 流程:
+//  1. 在同一事务内，对每个 item 执行 SetSatisfiedStatus 完成「纯 status CAS」
+//     (Preselected → 目标状态)，任一失败则整事务回滚；
+//  2. 全部 CAS 通过后，一次性批量刷新所有 host 的 consume_time，
+//     让同一批申请落账时间一致，并把状态机迁移与 bookkeeping 解耦。
 func BatchGetSatisfiedByAssetIds(elements []BatchGetTbDetail, mode string) (result []BatchGetTbDetailResult,
 	err error) {
 	db := DB.Self.Begin()
@@ -333,13 +451,34 @@ func BatchGetSatisfiedByAssetIds(elements []BatchGetTbDetail, mode string) (resu
 		}
 	}()
 	var d []TbRpDetail
+	var allHostIds []int
 	for _, v := range elements {
 		d, err = SetSatisfiedStatus(db, v.BkHostIds, mode)
 		if err != nil {
 			logger.Error("Item:%s,failed to obtain resource details!,Error is %s", v.Item, err.Error())
 			return nil, err
 		}
-		result = append(result, BatchGetTbDetailResult{Item: v.Item, Data: d})
+		result = append(result, BatchGetTbDetailResult{Item: v.Item, Data: d, Total: len(d)})
+		allHostIds = append(allHostIds, v.BkHostIds...)
+	}
+	if len(allHostIds) > 0 {
+		ar := db.Exec(
+			"update tb_rp_detail set consume_time=now() where bk_host_id in ?",
+			allHostIds,
+		)
+		if ar.Error != nil {
+			err = ar.Error
+			logger.Error("batch update consume_time failed: %v", err)
+			return nil, err
+		}
+		if int(ar.RowsAffected) != len(allHostIds) {
+			err = fmt.Errorf(
+				"batch update consume_time affected %d rows, expect %d",
+				ar.RowsAffected, len(allHostIds),
+			)
+			logger.Error("%s", err.Error())
+			return nil, err
+		}
 	}
 	err = db.Commit().Error
 	if err != nil {
@@ -349,7 +488,13 @@ func BatchGetSatisfiedByAssetIds(elements []BatchGetTbDetail, mode string) (resu
 	return
 }
 
-// SetSatisfiedStatus get resources that meet the conditions and update status
+// SetSatisfiedStatus 纯 CAS：仅当 status 仍为 Preselected 时才把行推进到目标状态
+// (Used / Prepoccupied)，用以防止并发申请下同一台机器被重复落账。
+//
+// 这里只更新 status 一列，consume_time 由调用方 (BatchGetSatisfiedByAssetIds)
+// 在所有 item CAS 通过后统一批量刷新，原因：
+//   - status UPDATE 的 RowsAffected 直接 = CAS 通过的行数，语义最清晰；
+//   - 同一批申请 consume_time 取同一个 NOW()，便于按申请单维度对账。
 func SetSatisfiedStatus(tx *gorm.DB, bkhostIds []int, status string) (result []TbRpDetail, err error) {
 	err = tx.Exec("select * from tb_rp_detail where bk_host_id in (?) for update", bkhostIds).Error
 	if err != nil {
@@ -361,16 +506,23 @@ func SetSatisfiedStatus(tx *gorm.DB, bkhostIds []int, status string) (result []T
 	}
 	if len(bkhostIds) != len(result) {
 		logger.Error("Get TbRpDetail is %v", result)
-		return nil, fmt.Errorf("requried count is %d,But Only Get %d", len(bkhostIds), len(result))
+		return nil, fmt.Errorf("required count is %d, But Get %d (possible duplicate bk_host_id rows)",
+			len(bkhostIds), len(result))
 	}
-	rdb := tx.Exec("update tb_rp_detail set status=?,consume_time=now() where bk_host_id in ?", status, bkhostIds)
+	rdb := tx.Exec(
+		"update tb_rp_detail set status=? where bk_host_id in ? and status = ?",
+		status, bkhostIds, Preselected,
+	)
 	if rdb.Error != nil {
 		logger.Error("update status Failed,Error %v", rdb.Error)
-		return nil, err
+		return nil, rdb.Error
 	}
 	if int(rdb.RowsAffected) != len(bkhostIds) {
-		return nil, fmt.Errorf("requried Update Instance count is %d,But Affected Rows Count Only %d", len(bkhostIds),
-			rdb.RowsAffected)
+		return nil, fmt.Errorf(
+			"required Update Instance count is %d, But Affected Rows Count Only %d "+
+				"(expect status=%s, possibly already allocated by another request)",
+			len(bkhostIds), rdb.RowsAffected, Preselected,
+		)
 	}
 	return result, nil
 }

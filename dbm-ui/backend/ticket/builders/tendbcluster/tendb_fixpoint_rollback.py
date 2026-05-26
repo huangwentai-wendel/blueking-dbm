@@ -58,6 +58,9 @@ class TendbFixPointRollbackDetailSerializer(TendbBaseOperateDetailSerializer):
         )
         tables = serializers.ListField(help_text=_("目标table列表"), child=DBTableField())
         tables_ignore = serializers.ListField(help_text=_("忽略table列表"), child=DBTableField(), required=False)
+        affect_database_list = serializers.ListField(
+            help_text=_("影响的DB"), child=serializers.CharField(), allow_null=True, required=False
+        )
 
     rollback_cluster_type = serializers.ChoiceField(
         help_text=_("回档集群类型"), choices=RollbackBuildClusterType.get_choices()
@@ -69,8 +72,7 @@ class TendbFixPointRollbackDetailSerializer(TendbBaseOperateDetailSerializer):
     ignore_check_db = serializers.BooleanField(help_text=_("是否忽略业务库"), required=False, default=False)
 
     def validate(self, attrs):
-        # 校验集群是否可用
-        super().validate_cluster_can_access(attrs)
+        attrs = super().validate(attrs)
 
         # 校验回档信息
         now = datetime.datetime.now(timezone.utc)
@@ -141,8 +143,10 @@ class TendbFixPointRollbackResourceParamBuilder(BaseOperateResourceParamBuilder)
 @builders.BuilderFactory.register(TicketType.TENDBCLUSTER_ROLLBACK_CLUSTER, is_apply=True)
 class TendbFixPointRollbackFlowBuilder(BaseTendbTicketFlowBuilder):
     serializer = TendbFixPointRollbackDetailSerializer
+    inner_flow_builder = TendbFixPointRollbackFlowParamBuilder
     # 这里不要用batch_builder，因为下一节点是部署临时集群
     resource_apply_builder = TendbFixPointRollbackResourceParamBuilder
+    validator = SpiderController.tendb_cluster_rollback_data.validator
 
     def get_cluster_config(self, cluster, details):
         db_config = DBConfigApi.query_conf_item(
@@ -254,3 +258,18 @@ class TendbFixPointRollbackFlowBuilder(BaseTendbTicketFlowBuilder):
         flow_desc = cls._add_itsm_pause_describe(flow_desc=[], flow_config_map=flow_config_map)
         flow_desc.extend([_("回档临时集群部署"), _("TenDBCluster 回档执行")])
         return flow_desc
+
+
+@builders.BuilderFactory.register(TicketType.TENDBCLUSTER_FIXPOINT_NEW, is_apply=True)
+class TendbFixPointFlowNewClusterBuilder(TendbFixPointRollbackFlowBuilder):
+    inner_flow_name = _("定点构造执行")
+
+
+@builders.BuilderFactory.register(TicketType.TENDBCLUSTER_FIXPOINT_EXIST, is_apply=True)
+class TendbFixPointFlowExistClusterBuilder(TendbFixPointRollbackFlowBuilder):
+    inner_flow_name = _("定点构造执行")
+
+
+@builders.BuilderFactory.register(TicketType.TENDBCLUSTER_ROLLBACK, is_apply=True)
+class TendbRollbackFlowBuilder(TendbFixPointRollbackFlowBuilder):
+    inner_flow_name = _("定点回档执行")

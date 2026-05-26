@@ -1,82 +1,132 @@
 <template>
-  <BkTableColumn
-    field="ip"
-    label="IP" />
-  <BkTableColumn
-    field="host_info.alive"
-    :label="t('Agent 状态')">
-    <template #default="{ data }: { data: IData }">
-      <HostAgentStatus :data="data?.host_info?.alive || 0" />
+  <TableColumn
+    col-key="ip"
+    :filter="tableFilter['ip']"
+    fixed="left"
+    title="IP"
+    width="150">
+  </TableColumn>
+  <TableColumn
+    col-key="host_info.alive"
+    :title="t('Agent 状态')"
+    width="96">
+    <template #default="{ row }: { row: IRowData }">
+      <HostAgentStatus :data="row?.host_info?.alive || 0" />
     </template>
-  </BkTableColumn>
-  <BkTableColumn
-    field="role"
-    :title="t('部署角色')">
-    <template #default="{ data }: { data: IData }">
-      <RenderClusterRole :data="[data.instance_role]" />
+  </TableColumn>
+  <TableColumn
+    col-key="instance_role"
+    :filter="tableFilter['instance_role']"
+    :title="t('部署角色')"
+    width="150">
+    <template #default="{ row }: { row: IRowData }">
+      <RenderClusterRole :data="[row.instance_role]" />
     </template>
-  </BkTableColumn>
-  <BkTableColumn
-    field="host_info.bk_idc_city_name"
-    :label="t('地域')">
-    <template #default="{ data }: { data: IData }">
-      {{ data.host_info.bk_idc_city_name || '--' }}
+  </TableColumn>
+  <TableColumn
+    col-key="bk_city_id"
+    :filter="tableFilter['bk_city_id']"
+    :title="t('地域')">
+    <template #default="{ row }: { row: IRowData }">
+      {{ row.host_info.bk_idc_city_name || '--' }}
     </template>
-  </BkTableColumn>
-  <BkTableColumn
-    field="bk_sub_zone"
-    :label="t('园区')">
-    <template #default="{ data }: { data: IData }">
-      {{ data.bk_sub_zone || '--' }}
+  </TableColumn>
+  <TableColumn
+    col-key="bk_sub_zone"
+    :filter="tableFilter['bk_sub_zone']"
+    :title="t('园区')">
+    <template #default="{ row }: { row: IRowData }">
+      {{ row.bk_sub_zone || '--' }}
     </template>
-  </BkTableColumn>
-  <BkTableColumn
-    field="bk_os_name"
-    :label="t('操作系统')">
-    <template #default="{ data }: { data: IData }">
-      {{ data.bk_os_name || '--' }}
+  </TableColumn>
+  <TableColumn
+    col-key="bk_rack_id"
+    :title="t('机架 ID')">
+    <template #default="{ row }: { row: IRowData }">
+      {{ row.bk_rack_id || '--' }}
     </template>
-  </BkTableColumn>
-  <BkTableColumn
-    field="bk_svr_device_cls_name"
-    :label="t('机型')">
-    <template #default="{ data }: { data: IData }">
-      {{ data.bk_svr_device_cls_name || '--' }}
+  </TableColumn>
+  <TableColumn
+    col-key="bk_os_name"
+    :filter="tableFilter['bk_os_name']"
+    :title="t('操作系统')"
+    :width="150">
+    <template #default="{ row }: { row: IRowData }">
+      {{ row.bk_os_name || '--' }}
     </template>
-  </BkTableColumn>
-  <BkTableColumn
-    field="host_info.bk_cpu_architecture"
-    :label="t('CPU_核_')">
-    <template #default="{ data }: { data: IData }">
-      {{ data.host_info.bk_cpu || '--' }}
+  </TableColumn>
+  <TableColumn
+    col-key="spec_id"
+    :filter="tableFilter['spec_id']"
+    :title="t('绑定规格')"
+    :width="150">
+    <template #default="{ row }: { row: IRowData }">
+      <SpecDetailPopover
+        v-if="row.spec_name"
+        :data="row.spec_config">
+        <span style="padding-bottom: 2px; border-bottom: 1px dashed #979ba5">{{ row.spec_name }}</span>
+      </SpecDetailPopover>
+      <span v-else>--</span>
     </template>
-  </BkTableColumn>
-  <BkTableColumn
-    field="host_info.bk_mem"
-    :label="t('内存G')">
-    <template #default="{ data }: { data: IData }">
-      {{ transformMToG(data.host_info.bk_mem) }}
+  </TableColumn>
+  <TableColumn
+    col-key="bk_svr_device_cls_name"
+    :filter="tableFilter['bk_svr_device_cls_name']"
+    :title="t('机型')">
+    <template #default="{ row }: { row: IRowData }">
+      {{ row.bk_svr_device_cls_name || '--' }}
     </template>
-  </BkTableColumn>
-  <BkTableColumn
-    field="host_info.bk_disk"
-    :label="t('磁盘G')">
-    <template #default="{ data }: { data: IData }">
-      {{ data.host_info.bk_disk || '--' }}
+  </TableColumn>
+  <TableColumn
+    col-key="host_info.bk_cpu_architecture"
+    :title="t('CPU_核_')"
+    :width="100">
+    <template #default="{ row }: { row: IRowData }">
+      {{ row.host_info.bk_cpu || '--' }}
     </template>
-  </BkTableColumn>
+  </TableColumn>
+  <TableColumn
+    col-key="host_info.bk_mem"
+    :title="t('内存G')"
+    :width="100">
+    <template #default="{ row }: { row: IRowData }">
+      {{ transformMToG(row.host_info.bk_mem) }}
+    </template>
+  </TableColumn>
+  <TableColumn
+    col-key="host_info.bk_disk"
+    :title="t('磁盘G')"
+    :width="100">
+    <template #default="{ row }: { row: IRowData }">
+      {{ row.host_info.bk_disk || '--' }}
+    </template>
+  </TableColumn>
 </template>
 <script setup lang="ts">
   import { useI18n } from 'vue-i18n';
 
+  import type { ClusterTypes } from '@common/const';
+
   import HostAgentStatus from '@components/host-agent-status/Index.vue';
+  import SpecDetailPopover from '@components/spec-detail-popover/Index.vue';
 
   import RenderClusterRole from '@views/db-manage/common/RenderRole.vue';
   import useClusterMachineList from '@views/db-manage/hooks/useClusterMachineList';
 
-  type IData = ServiceReturnType<ReturnType<typeof useClusterMachineList>>['results'][number];
+  import { useHostListTableFilter } from './hooks';
+
+  type IRowData = ServiceReturnType<ReturnType<typeof useClusterMachineList>>['results'][number];
+
+  interface Props {
+    clusterId: number;
+    clusterType: ClusterTypes;
+  }
+
+  const props = defineProps<Props>();
 
   const { t } = useI18n();
+
+  const tableFilter = useHostListTableFilter(props.clusterType, props.clusterId);
 
   const transformMToG = (value: number) => {
     return value ? (value / 1024).toFixed(2) : '--';

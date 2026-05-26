@@ -12,14 +12,13 @@ import logging
 from typing import Dict
 
 from django.db import transaction
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.db_meta import request_validator
 from backend.db_meta.api import common
 from backend.db_meta.enums import ClusterEntryType, ClusterPhase, ClusterStatus, ClusterType
 from backend.db_meta.exceptions import DBMetaException
 from backend.db_meta.models import Cluster, ClusterEntry, StorageInstance
-from backend.flow.utils.sqlserver.sqlserver_db_function import get_instance_time_zone
 
 logger = logging.getLogger("root")
 
@@ -51,7 +50,11 @@ def create(
     bk_cloud_id: int,
     region: str,
     creator: str = "",
+    zone_list: list = None,
 ) -> Cluster:
+    # 延迟导入，避免循环依赖
+    from backend.flow.utils.sqlserver.sqlserver_db_function import get_instance_time_zone
+
     bk_biz_id = request_validator.validated_integer(bk_biz_id)
     immute_domain = request_validator.validated_domain(immute_domain)
     db_module_id = request_validator.validated_integer(db_module_id)
@@ -76,6 +79,7 @@ def create(
         time_zone=get_instance_time_zone(storage_objs[0]),
         major_version=major_version,
         region=region,
+        zone_list=zone_list if zone_list else [],
     )
     cluster.storageinstance_set.add(*storage_objs)
 

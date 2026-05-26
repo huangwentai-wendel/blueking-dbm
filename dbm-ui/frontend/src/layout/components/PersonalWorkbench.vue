@@ -16,12 +16,12 @@
         <span>
           {{ t('单据待办') }}
         </span>
-        <span class="ticket-count">{{ todoCount }}</span>
+        <span class="ticket-count">{{ ticketTodoCount }}</span>
       </BkMenuItem>
       <BkMenuItem
         v-if="userProfileStore.isDba"
-        key="AlarmEventsTodo"
-        v-db-console="'personalWorkbench.AlarmEventsTodo'">
+        key="platformAlarmEventsTodo"
+        v-db-console="'personalWorkbench.platformAlarmEventsTodo'">
         <template #icon>
           <DbIcon type="warning" />
         </template>
@@ -32,7 +32,7 @@
       </BkMenuItem>
       <BkMenuItem
         v-if="userProfileStore.isDba"
-        key="InspectionTodos"
+        key="inspectionTodosGlobal"
         v-db-console="'personalWorkbench.InspectionTodos'">
         <template #icon>
           <DbIcon type="cluster-standardize" />
@@ -40,7 +40,42 @@
         <span>
           {{ t('巡检待办') }}
         </span>
-        <span class="ticket-count">{{ manageCount }}</span>
+        <span class="ticket-count">{{ reportManageCount }}</span>
+      </BkMenuItem>
+      <BkMenuItem
+        v-if="userProfileStore.isDba"
+        key="resourceManageHostTodo"
+        v-db-console="'personalWorkbench.hostTodo'">
+        <template #icon>
+          <DbIcon type="host" />
+        </template>
+        <span>
+          {{ t('主机处理待办') }}
+        </span>
+        <span class="ticket-count">{{ hostTodoCount }}</span>
+      </BkMenuItem>
+      <BkMenuItem
+        key="ClusterDisableTodo"
+        v-db-console="'personalWorkbench.clusterDisableTodo'">
+        <template #icon>
+          <DbIcon type="todos" />
+        </template>
+        <span>
+          {{ t('集群下架待办') }}
+        </span>
+        <span class="ticket-count">{{ clusterDisableTodoCount + clusterDisableToAssistCount }}</span>
+      </BkMenuItem>
+      <BkMenuItem
+        v-if="userProfileStore.isDba"
+        key="RiskMemoTodos"
+        v-db-console="'personalWorkbench.RiskMemoTodos'">
+        <template #icon>
+          <DbIcon type="file" />
+        </template>
+        <span>
+          {{ t('风险备忘录') }}
+        </span>
+        <span class="ticket-count">{{ riskMemoTodoCount }}</span>
       </BkMenuItem>
     </BkMenuGroup>
     <BkMenuGroup
@@ -73,7 +108,23 @@
     </BkMenuGroup>
     <BkMenuGroup
       v-db-console="'personalWorkbench'"
-      :name="t('服务申请')">
+      :name="t('订阅')">
+      <BkMenuItem
+        key="myAlarmSubscription"
+        v-db-console="'personalWorkbench.myAlarmSubscription'">
+        <template #icon>
+          <DbIcon type="note" />
+        </template>
+        <span
+          v-overflow-tips.right
+          class="text-overflow">
+          {{ t('我的告警订阅') }}
+        </span>
+      </BkMenuItem>
+    </BkMenuGroup>
+    <BkMenuGroup
+      v-db-console="'personalWorkbench'"
+      :name="t('数据库部署')">
       <BkMenuItem
         key="serviceApply"
         v-db-console="'personalWorkbench.serviceApply'">
@@ -83,7 +134,7 @@
         <span
           v-overflow-tips.right
           class="text-overflow">
-          {{ t('服务申请') }}
+          {{ t('部署申请') }}
         </span>
       </BkMenuItem>
     </BkMenuGroup>
@@ -93,7 +144,14 @@
   import { Menu } from 'bkui-vue';
   import { useI18n } from 'vue-i18n';
 
-  import { useAlarmEventsCount, useReportCount, useTicketCount } from '@hooks';
+  import {
+    useAlarmEventsCount,
+    useClusterDisableCount,
+    useHostTodoCount,
+    useReportCount,
+    useRiskMemoCount,
+    useTicketCount,
+  } from '@hooks';
 
   import { useUserProfile } from '@stores';
 
@@ -109,12 +167,15 @@
     routeLocation: handleMenuChange,
   } = useActiveKey(menuRef as Ref<InstanceType<typeof Menu>>, 'MyTodos');
 
-  const { data: ticketCount } = useTicketCount();
-  const { manageCount } = useReportCount();
-  const { todoCount: alarmEventsTodoCount } = useAlarmEventsCount();
   const userProfileStore = useUserProfile();
+  const { data: ticketCount } = useTicketCount();
+  const { toAssistCount: clusterDisableToAssistCount, todoCount: clusterDisableTodoCount } = useClusterDisableCount();
+  const { totalCount: hostTodoCount } = useHostTodoCount();
+  const { todoCount: alarmEventsTodoCount } = useAlarmEventsCount();
+  const { todoCount: riskMemoTodoCount } = useRiskMemoCount();
+  const { manageCount: reportManageCount } = useReportCount(userProfileStore.isDba);
 
-  const todoCount = computed(() => {
+  const ticketTodoCount = computed(() => {
     if (!ticketCount.value) {
       return 0;
     }
@@ -124,6 +185,7 @@
       ticketCount.value.pending.FAILED +
       ticketCount.value.pending.RESOURCE_REPLENISH +
       ticketCount.value.pending.INNER_TODO +
+      ticketCount.value.pending.TIMER +
       ticketCount.value.pending.TODO
     );
   });

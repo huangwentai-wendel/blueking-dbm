@@ -25,7 +25,14 @@ from backend.db_meta.api.cluster.nosqlcomm.precheck import (
     create_domain_precheck,
     create_storage_precheck,
 )
-from backend.db_meta.enums import ClusterEntryType, ClusterPhase, ClusterStatus, ClusterType, InstanceRole, MachineType
+from backend.db_meta.enums import (
+    ClusterEntryRole,
+    ClusterEntryType,
+    ClusterPhase,
+    ClusterStatus,
+    InstanceRole,
+    MachineType,
+)
 from backend.db_meta.models import Cluster, ClusterEntry, StorageInstance
 from backend.flow.utils.base.cc_topo_operate import CCTopoOperator
 
@@ -102,7 +109,7 @@ def pkg_create_oracle(
     region: str = "",
     spec_id: int = 0,
     spec_config: str = "",
-    cluster_type=ClusterType.OraclePrimaryStandby.value,
+    cluster_type: str = "",  # ClusterType.OraclePrimaryStandby.value ClusterType.OracleSingleNone.value
     disaster_tolerance_level: str = "",
 ):
     """
@@ -157,7 +164,7 @@ def create_oracle_set(
     creator: str = "",
     bk_cloud_id: int = DEFAULT_BK_CLOUD_ID,
     region: str = "",
-    cluster_type=ClusterType.OraclePrimaryStandby.value,
+    cluster_type: str = "",
     disaster_tolerance_level: str = "",
 ):
     """创建副本集 MongoSet 实例
@@ -204,8 +211,16 @@ def create_oracle_set(
     try:
         for storage in storages:
             # 创建entry db_meta_clusterentry
+            if storage["role"] == InstanceRole.PRIMARY.value:
+                entry_role = ClusterEntryRole.MASTER_ENTRY.value
+            else:
+                entry_role = ClusterEntryRole.SLAVE_ENTRY.value
             cluster_entry = ClusterEntry.objects.create(
-                cluster=cluster, cluster_entry_type=ClusterEntryType.DNS, entry=storage["domain"], creator=creator
+                cluster=cluster,
+                cluster_entry_type=ClusterEntryType.DNS,
+                entry=storage["domain"],
+                creator=creator,
+                role=entry_role,
             )
             # 创建entry与实例的关系 db_meta_storageinstance_bind_entry
             cluster_entry.storageinstance_set.add(

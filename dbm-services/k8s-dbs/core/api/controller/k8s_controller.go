@@ -20,23 +20,21 @@ limitations under the License.
 package controller
 
 import (
-	coreconst "k8s-dbs/common/constant"
+	"k8s-dbs/common/api"
+	commconst "k8s-dbs/common/constant"
 	commentity "k8s-dbs/common/entity"
-	"k8s-dbs/core/entity"
-	"k8s-dbs/core/errors"
+	commutil "k8s-dbs/common/util"
+	coreconst "k8s-dbs/core/constant"
+	coreentity "k8s-dbs/core/entity"
 	"k8s-dbs/core/provider"
-	metahelper "k8s-dbs/metadata/helper"
+	"k8s-dbs/core/vo/request"
+	"k8s-dbs/core/vo/response"
+	"k8s-dbs/errors"
+	metarespvo "k8s-dbs/metadata/vo/response"
+	"reflect"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/copier"
-
-	reqvo "k8s-dbs/core/api/vo/req"
-
-	respvo "k8s-dbs/core/api/vo/resp"
-
-	pventity "k8s-dbs/core/provider/entity"
-
-	metarespvo "k8s-dbs/metadata/api/vo/resp"
 )
 
 // K8sController k8s 集群管理 controller
@@ -46,88 +44,121 @@ type K8sController struct {
 
 // CreateNamespace 创建 namespace
 func (k *K8sController) CreateNamespace(ctx *gin.Context) {
-	var namespaceReq reqvo.K8sNamespaceReqVo
-	if err := ctx.ShouldBindJSON(&namespaceReq); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.CreateK8sNsError, err))
+	ctx.Set(commconst.APIName, commconst.APIK8sNsCreate)
+	var reqVo request.K8sNamespaceRequest
+	if err := ctx.ShouldBindJSON(&reqVo); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.ParameterInvalidError, err))
 		return
 	}
-	var namespaceEntity pventity.K8sNamespaceEntity
-	if err := copier.Copy(&namespaceEntity, &namespaceReq); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.CreateK8sNsError, err))
+	var namespaceEntity coreentity.K8sNamespaceEntity
+	if err := copier.Copy(&namespaceEntity, &reqVo); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.CreateK8sNsError, err))
 		return
 	}
-	dbsContext := commentity.DbsContext{
-		BkAuth: &namespaceReq.BKAuth,
+	dbsCtx := commentity.DbsContext{
+		BkAuth:           &reqVo.BKAuth,
+		K8sClusterName:   reqVo.K8sClusterName,
+		Namespace:        reqVo.Name,
+		RequestType:      coreconst.CreateK8sNs,
+		APIRequestParams: reqVo,
 	}
-	added, err := k.k8sProvider.CreateNamespace(&dbsContext, &namespaceEntity)
+	added, err := k.k8sProvider.CreateNamespace(&dbsCtx, &namespaceEntity)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.CreateK8sNsError, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.CreateK8sNsError, err))
 		return
 	}
-	var data respvo.K8sNamespaceRespVo
+	var data response.K8sNamespaceResponse
 	if err := copier.Copy(&data, added); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.CreateK8sNsError, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.CreateK8sNsError, err))
 		return
 	}
-	entity.SuccessResponse(ctx, data, coreconst.Success)
-}
-
-// GetPodLogs 获取 pod 日志详情
-func (k *K8sController) GetPodLogs(ctx *gin.Context) {
-	var logReq reqvo.K8sPodLogReqVo
-	if err := ctx.ShouldBindJSON(&logReq); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetPodLogError, err))
-		return
-	}
-	var podLogEntity pventity.K8sPodLogEntity
-	if err := copier.Copy(&podLogEntity, &logReq); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetPodLogError, err))
-		return
-	}
-	logs, _, err := k.k8sProvider.GetPodLog(&podLogEntity, nil)
-	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetPodLogError, err))
-		return
-	}
-	data := respvo.K8sPodLogRespVo{
-		Logs:           logs,
-		K8sClusterName: logReq.K8sClusterName,
-		ClusterName:    logReq.ClusterName,
-		Namespace:      logReq.Namespace,
-		PodName:        logReq.PodName,
-		Container:      logReq.Container,
-	}
-	entity.SuccessResponse(ctx, data, coreconst.Success)
+	api.SuccessResponse(ctx, data, commconst.Success)
 }
 
 // ListPodLogs 获取 pod 日志分页结果
 func (k *K8sController) ListPodLogs(ctx *gin.Context) {
-	pagination, err := metahelper.BuildPagination(ctx)
+	ctx.Set(commconst.APIName, commconst.APIK8sPodLogList)
+	pagination, err := commutil.BuildPagination(ctx)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetMetaDataErr, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.ParameterInvalidError, err))
 		return
 	}
-	var logReq reqvo.K8sPodLogReqVo
-	if err := ctx.ShouldBindJSON(&logReq); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetPodLogError, err))
+	var podLogEntity coreentity.K8sPodLogQueryParams
+	if err := commutil.DecodeParams(ctx, commutil.BuildParams, &podLogEntity, nil); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.ParameterInvalidError, err))
 		return
 	}
-	var podLogEntity pventity.K8sPodLogEntity
-	if err := copier.Copy(&podLogEntity, &logReq); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetPodLogError, err))
-		return
-	}
-	logs, count, err := k.k8sProvider.GetPodLog(&podLogEntity, pagination)
+	logs, count, err := k.k8sProvider.ListPodLogs(&podLogEntity, pagination)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.GetPodLogError, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.GetPodLogError, err))
 		return
 	}
-
 	var responseData = metarespvo.PageResult{
 		Count:  count,
 		Result: logs,
 	}
-	entity.SuccessResponse(ctx, responseData, coreconst.Success)
+	api.SuccessResponse(ctx, responseData, commconst.Success)
+}
+
+// GetPodRawLogs 获取 pod 日志原始日志
+func (k *K8sController) GetPodRawLogs(ctx *gin.Context) {
+	ctx.Set(commconst.APIName, commconst.APIK8sPodRawLog)
+	var podLogQueryEntity coreentity.K8sPodLogQueryParams
+	targetMap := map[string]reflect.Type{
+		"previous": reflect.TypeOf(true),
+	}
+
+	if err := commutil.DecodeParams(ctx, commutil.BuildParams, &podLogQueryEntity, targetMap); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.GetMetaDataError, err))
+		return
+	}
+	data, err := k.k8sProvider.GetPodRawLogs(&podLogQueryEntity)
+	if err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.GetPodLogError, err))
+		return
+	}
+	api.SuccessResponse(ctx, data, commconst.Success)
+}
+
+// GetPodDetail 获取实例详情
+func (k *K8sController) GetPodDetail(ctx *gin.Context) {
+	ctx.Set(commconst.APIName, commconst.APIK8sPodDetail)
+	var podDetailParams coreentity.K8sPodDetailQueryParams
+	if err := commutil.DecodeParams(ctx, commutil.BuildParams, &podDetailParams, nil); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.ParameterInvalidError, err))
+		return
+	}
+	podDetail, err := k.k8sProvider.GetPodDetail(&podDetailParams)
+	if err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.GetPodDetailError, err))
+		return
+	}
+	api.SuccessResponse(ctx, podDetail, commconst.Success)
+}
+
+// DeletePod 删除实例
+func (k *K8sController) DeletePod(ctx *gin.Context) {
+	deleteRequest := &request.K8sPodOperationRequest{}
+	if err := ctx.ShouldBindJSON(&deleteRequest); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.ParameterInvalidError, err))
+		return
+	}
+	k.setAPIRequestContext(ctx, deleteRequest, commconst.APIK8sPodDelete)
+	var podDeleteEntity coreentity.K8sPodDelete
+	if err := copier.Copy(&podDeleteEntity, deleteRequest); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.CreateK8sNsError, err))
+		return
+	}
+	dbsCtx := commentity.DbsContext{
+		BkAuth:      &deleteRequest.BKAuth,
+		RequestType: coreconst.DeleteK8sPod,
+	}
+	err := k.k8sProvider.DeletePod(&dbsCtx, &podDeleteEntity)
+	if err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.DeleteK8sPodError, err))
+		return
+	}
+	api.SuccessResponse(ctx, nil, commconst.Success)
 }
 
 // NewK8sController 构建 K8sController
@@ -135,4 +166,22 @@ func NewK8sController(k8sProvider *provider.K8sProvider) *K8sController {
 	return &K8sController{
 		k8sProvider,
 	}
+}
+
+// setAPIRequestContext 设置 api 请求上下文
+func (k *K8sController) setAPIRequestContext(
+	ctx *gin.Context,
+	request *request.K8sPodOperationRequest,
+	apiName string,
+) {
+	ctx.Set(commconst.APIName, apiName)
+	ctx.Set(commconst.IsClusterAPI, true)
+	clusterRequest := &coreentity.Request{
+		K8sClusterName: request.K8sClusterName,
+		Metadata: coreentity.Metadata{
+			ClusterName: request.ClusterName,
+			Namespace:   request.Namespace,
+		},
+	}
+	ctx.Set(commconst.APIRequestEntity, clusterRequest)
 }

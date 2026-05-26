@@ -11,10 +11,11 @@ specific language governing permissions and limitations under the License.
 
 from typing import List
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend import env
 from backend.components import BKMonitorV3Api
+from backend.db_meta.models import Cluster
 from backend.db_monitor.models import MonitorPolicy, NoticeGroup
 from backend.db_monitor.utils import parse_shield_description_biz
 from backend.iam_app.dataclass.actions import ActionEnum, ActionMeta
@@ -23,6 +24,7 @@ from backend.iam_app.exceptions import ActionNotExistError, ResourceNotExistErro
 from backend.iam_app.handlers.drf_perm.base import (
     BizOrGlobalResourceActionPermission,
     ResourceActionPermission,
+    get_alarm_shield_request_key_id,
     get_request_key_id,
 )
 
@@ -125,7 +127,7 @@ class AlertShieldPermission(ResourceActionPermission):
         # 创建动作 -- 告警屏蔽创建鉴权
         if view.action == "create":
             self.actions = [ActionEnum.ALERT_SHIELD_CREATE]
-            return [get_request_key_id(request, "bk_biz_id")]
+            return [get_alarm_shield_request_key_id(request, "bk_biz_id")]
 
         # 从监控获得告警屏蔽详情
         try:
@@ -141,3 +143,23 @@ class AlertShieldPermission(ResourceActionPermission):
             self.actions = [ActionEnum.ALERT_SHIELD_MANAGE]
 
         return [bk_biz_id]
+
+
+class SaveSubscribePermission(ResourceActionPermission):
+    """
+    订阅相关动作鉴权
+    """
+
+    def __init__(self, actions: List[ActionMeta] = None, resource_meta: ResourceMeta = None):
+        # 固定资源是业务
+        super().__init__(actions=actions, resource_meta=resource_meta, instance_ids_getter=self.instance_ids_getter)
+
+    def instance_ids_getter(self, request, view):
+        domains = [c["cluster_domain"] for c in get_request_key_id(request, "clusters")]
+        cluster_types = [c["cluster_type"] for c in get_request_key_id(request, "clusters")]
+        # 订阅不允许跨组件，这里只取第一个集群的类型判断
+        self.resource_meta = ResourceEnum.cluster_type_to_resource_meta(cluster_types[0])
+        self.actions = [ActionEnum.cluster_type_to_action(cluster_types[0], action_key="subscribe_monitor")]
+        # 获取集群ID资源
+        cluster_ids = Cluster.objects.filter(immute_domain__in=domains).values_list("id", flat=True)
+        return list(cluster_ids)

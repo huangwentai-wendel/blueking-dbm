@@ -11,16 +11,13 @@ specific language governing permissions and limitations under the License.
 import copy
 import logging
 from dataclasses import asdict
-from datetime import datetime, timedelta
 from typing import Dict, Optional
 
-from django.utils import timezone
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.constants import IP_PORT_DIVIDER
 from backend.db_meta.models import Cluster
-from backend.db_services.mysql.fixpoint_rollback.handlers import FixPointRollbackHandler
 from backend.flow.engine.bamboo.scene.common.builder import Builder, SubBuilder
 from backend.flow.engine.bamboo.scene.common.get_file_list import GetFileList
 from backend.flow.engine.bamboo.scene.mysql.common.common_sub_flow import install_mysql_in_cluster_sub_flow
@@ -28,6 +25,7 @@ from backend.flow.engine.bamboo.scene.mysql.common.get_master_config import get_
 from backend.flow.engine.bamboo.scene.mysql.common.mysql_resotre_data_sub_flow import (
     mysql_restore_master_slave_sub_flow,
 )
+from backend.flow.engine.bamboo.scene.mysql.common.uninstall_instance import uninstall_instance_sub_flow
 from backend.flow.engine.bamboo.scene.mysql.deploy_peripheraltools.departs import (
     ALLDEPARTS,
     DeployPeripheralToolsDepart,
@@ -36,10 +34,6 @@ from backend.flow.engine.bamboo.scene.mysql.deploy_peripheraltools.departs impor
 from backend.flow.engine.bamboo.scene.mysql.deploy_peripheraltools.subflow import standardize_mysql_cluster_subflow
 from backend.flow.engine.bamboo.scene.spider.common.common_sub_flow import remote_migrate_switch_sub_flow
 from backend.flow.engine.bamboo.scene.spider.common.exceptions import TendbGetBackupInfoFailedException
-from backend.flow.engine.bamboo.scene.spider.spider_remote_node_migrate import (
-    remote_instance_migrate_sub_flow,
-    remote_node_uninstall_sub_flow,
-)
 from backend.flow.plugins.components.collections.common.add_alarm_shield import AddAlarmShieldComponent
 from backend.flow.plugins.components.collections.common.disable_alarm_shield import DisableAlarmShieldComponent
 from backend.flow.plugins.components.collections.common.download_backup_client import DownloadBackupClientComponent
@@ -47,6 +41,12 @@ from backend.flow.plugins.components.collections.common.pause import PauseCompon
 from backend.flow.plugins.components.collections.mysql.clear_machine import MySQLClearMachineComponent
 from backend.flow.plugins.components.collections.mysql.exec_actuator_script import ExecuteDBActuatorScriptComponent
 from backend.flow.plugins.components.collections.mysql.mysql_checksum_ticket import MySQLCheckSumTicketComponent
+from backend.flow.plugins.components.collections.mysql.mysql_checksum_ticket_result_get import (
+    MySQLCheckSumTicketResultComponent,
+)
+from backend.flow.plugins.components.collections.mysql.mysql_checksum_ticket_status import (
+    MySQLCheckSumTicketProbeComponent,
+)
 from backend.flow.plugins.components.collections.mysql.trans_flies import TransFileComponent
 from backend.flow.plugins.components.collections.spider.spider_db_meta import SpiderDBMetaComponent
 from backend.flow.utils.common_act_dataclass import DownloadBackupClientKwargs
@@ -113,18 +113,6 @@ class TenDBRemoteRebalanceFlow(object):
             self.data["module"] = info["db_module_id"]
             # 卸载流程时强制卸载
             self.data["force"] = True
-
-            backup_info = {}
-            if self.ticket_data["backup_source"] == MySQLBackupSource.REMOTE.value:
-                # 先查询备份，如果备份不存在则退出
-                # restore_time = datetime.strptime("2023-07-31 17:40:00", "%Y-%m-%d %H:%M:%S")
-                backup_handler = FixPointRollbackHandler(cluster_class.id, check_full_backup=True)
-                restore_time = datetime.now(timezone.utc)
-                backup_info = backup_handler.query_latest_backup_log(restore_time)
-                logger.debug(backup_info)
-                if backup_info is None:
-                    logger.error("cluster {} backup info not exists".format(cluster_class.id))
-                    raise TendbGetBackupInfoFailedException(message=_("获取集群 {} 的备份信息失败".format(cluster_class.id)))
 
             tendb_migrate_pipeline = SubBuilder(root_id=self.root_id, data=copy.deepcopy(self.data))
             charset, db_version = get_version_and_charset(
@@ -200,11 +188,11 @@ class TenDBRemoteRebalanceFlow(object):
                 cluster = {
                     "new_master_ip": node["master"]["ip"],
                     "new_slave_ip": node["slave"]["ip"],
-                    "cluster_id": cluster_info["cluster_id"],
-                    "bk_cloud_id": cluster_info["bk_cloud_id"],
-                    "bk_biz_id": cluster_info["bk_biz_id"],
+                    "cluster_id": cluster_class.id,
+                    "bk_cloud_id": cluster_class.bk_cloud_id,
+                    "bk_biz_id": cluster_class.bk_biz_id,
                     "ports": cluster_info["ports"],
-                    "version": cluster_info["cluster"]["major_version"],
+                    "version": cluster_class.major_version,
                 }
                 install_sub_pipeline.add_act(
                     act_name=_("写入初始化实例的db_meta元信息"),
@@ -224,7 +212,7 @@ class TenDBRemoteRebalanceFlow(object):
                         DownloadBackupClientKwargs(
                             bk_cloud_id=cluster_class.bk_cloud_id,
                             bk_biz_id=int(cluster_class.bk_biz_id),
-                            download_host_list=[cluster["new_master_ip"], cluster["new_slave_ip"]],
+                            ip_list=[cluster["new_master_ip"], cluster["new_slave_ip"]],
                         )
                     ),
                 )
@@ -260,6 +248,7 @@ class TenDBRemoteRebalanceFlow(object):
                 ins_cluster["file_target_path"] = f"{self.backup_target_path}/{node['new_master']['port']}"
                 ins_cluster["shard_id"] = shard_id
                 ins_cluster["change_master_force"] = False
+                ins_cluster["backup_source"] = self.ticket_data["backup_source"]
 
                 instances.extend(
                     [
@@ -269,40 +258,22 @@ class TenDBRemoteRebalanceFlow(object):
                 )
 
                 sync_data_sub_pipeline = SubBuilder(root_id=self.root_id, data=copy.deepcopy(self.data))
-                if self.ticket_data["backup_source"] == MySQLBackupSource.REMOTE.value:
-                    shard_backupinfo = backup_info["remote_node"].get(shard_id, {})
-                    ins_cluster["backupinfo"] = shard_backupinfo
-                    logger.debug(shard_backupinfo)
-                    if len(shard_backupinfo) == 0 or len(shard_backupinfo.get("file_list_details", {})) == 0:
-                        logger.error(
-                            "cluster {} shard {} backup info not exists".format(self.data["cluster_id"], shard_id)
-                        )
-                        raise TendbGetBackupInfoFailedException(
-                            message=_("获取集群分片 {} shard {}  的备份信息失败".format(self.data["cluster_id"], shard_id))
-                        )
-                    sync_data_sub_pipeline.add_sub_pipeline(
-                        sub_flow=remote_instance_migrate_sub_flow(
-                            root_id=self.root_id, ticket_data=copy.deepcopy(self.data), cluster_info=ins_cluster
-                        )
+
+                filter_ips = None
+                if self.ticket_data["backup_source"] == MySQLBackupSource.LOCAL.value:
+                    filter_ips = [node["master"]["ip"], node["slave"]["ip"]]
+                sync_data_sub_pipeline.add_sub_pipeline(
+                    sub_flow=mysql_restore_master_slave_sub_flow(
+                        root_id=self.root_id,
+                        ticket_data=copy.deepcopy(self.data),
+                        cluster=ins_cluster,
+                        cluster_model=cluster_class,
+                        filter_ips=filter_ips,
                     )
-                else:
-                    ins_cluster["change_master"] = False
-                    inst_list = [
-                        "{}{}{}".format(node["master"]["ip"], IP_PORT_DIVIDER, node["master"]["port"]),
-                        "{}{}{}".format(node["slave"]["ip"], IP_PORT_DIVIDER, node["slave"]["port"]),
-                    ]
-                    sync_data_sub_pipeline.add_sub_pipeline(
-                        sub_flow=mysql_restore_master_slave_sub_flow(
-                            root_id=self.root_id,
-                            ticket_data=copy.deepcopy(self.data),
-                            cluster=ins_cluster,
-                            cluster_model=cluster_class,
-                            ins_list=inst_list,
-                        )
-                    )
+                )
 
                 sync_data_sub_pipeline.add_act(
-                    act_name=_("同步完毕,写入数据节点的主从关系"),
+                    act_name=_("恢复完毕,写入数据节点的主从关系"),
                     act_component_code=SpiderDBMetaComponent.code,
                     kwargs=asdict(
                         DBMetaOPKwargs(
@@ -315,10 +286,12 @@ class TenDBRemoteRebalanceFlow(object):
                 sync_data_sub_pipeline_list.append(sync_data_sub_pipeline.build_sub_process(sub_name=_("恢复实例数据")))
 
             # 生成checksum信息
+            checksum_pairs = []
             checksum_info = {
                 "bk_biz_id": cluster_class.bk_biz_id,
-                "ticket_type": TicketType.TENDBCLUSTER_CHECKSUM,
+                "ticket_type": TicketType.TENDBCLUSTER_CHECKSUM_CRON,
                 "remark": _("spider主从成对迁移生成checksum单据"),
+                # "ignore_duplication": True,
                 "details": {
                     "data_repair": {"is_repair": True, "mode": "manual"},
                     # timing 执行checksum的时间在流程中生成
@@ -349,6 +322,12 @@ class TenDBRemoteRebalanceFlow(object):
                         "ignore_tables": [],
                     }
                 )
+                checksum_pairs.append(
+                    {
+                        "master": node["master"]["instance"],
+                        "slave": node["new_master"]["instance"],
+                    }
+                )
             switch_sub_pipeline = SubBuilder(root_id=self.root_id, data=copy.deepcopy(self.data))
             switch_sub_pipeline.add_sub_pipeline(
                 sub_flow=remote_migrate_switch_sub_flow(
@@ -370,9 +349,10 @@ class TenDBRemoteRebalanceFlow(object):
                     )
                 ),
             )
+            #  todo 注销旧实例cc
             switch_sub_pipeline_list.append(switch_sub_pipeline.build_sub_process(sub_name=_("切换remote node 节点")))
 
-            # 阶段6: 主机级别卸载实例,卸载指定ip下的所有实例
+            # 阶段5: 主机级别卸载实例,卸载指定ip下的所有实例
             uninstall_svr_sub_pipeline_list = []
             machines = cluster_info["masters"] + cluster_info["slaves"]
             for ip in machines:
@@ -388,7 +368,7 @@ class TenDBRemoteRebalanceFlow(object):
                         )
                     ),
                 )
-                ins_cluster = {"uninstall_ip": ip, "cluster_id": cluster_info["cluster_id"]}
+                ins_cluster = {"uninstall_ip": ip, "cluster_id": cluster_class.id}
                 uninstall_svr_sub_pipeline.add_act(
                     act_name=_("整机卸载前删除元数据"),
                     act_component_code=SpiderDBMetaComponent.code,
@@ -407,25 +387,51 @@ class TenDBRemoteRebalanceFlow(object):
                     kwargs=asdict(
                         ClearMachineKwargs(
                             exec_ip=ip,
-                            bk_cloud_id=self.data["bk_cloud_id"],
+                            bk_cloud_id=cluster_class.bk_cloud_id,
                         )
                     ),
                 )
                 uninstall_svr_sub_pipeline.add_sub_pipeline(
-                    sub_flow=remote_node_uninstall_sub_flow(
+                    sub_flow=uninstall_instance_sub_flow(
                         root_id=self.root_id, ticket_data=copy.deepcopy(self.data), ip=ip
                     )
                 )
                 uninstall_svr_sub_pipeline_list.append(
                     uninstall_svr_sub_pipeline.build_sub_process(sub_name=_("卸载remote节点{}".format(ip)))
                 )
-            # 安装实例
+
+            # === 主流程 串联各个子流程 ===
+            if len(sync_data_sub_pipeline_list) == 0:
+                raise Exception(_("同步子流程列表为空,请检查备份信息是否缺失"))
+            if (
+                len(install_sub_pipeline_list) == 0
+                or len(uninstall_svr_sub_pipeline_list) == 0
+                or len(instances) == 0
+                or len(switch_sub_pipeline_list) == 0
+            ):
+                raise Exception(_("安装/卸载/新实例/切换实例为空,请检查参数"))
+            # 安装remote节点
             tendb_migrate_pipeline.add_parallel_sub_pipeline(sub_flow_list=install_sub_pipeline_list)
-            # 数据同步
+            # 屏蔽新节点告警
+            tendb_migrate_pipeline.add_act(
+                act_name=_("屏蔽告警24小时"),
+                act_component_code=AddAlarmShieldComponent.code,
+                kwargs={
+                    "duration_seconds": 24 * 3600,
+                    "description": cluster_info["cluster"]["immute_domain"],
+                    "dimensions": [
+                        {
+                            "name": "instance_host",
+                            "values": list(set([ins.split(IP_PORT_DIVIDER)[0] for ins in instances])),
+                        }
+                    ],
+                },
+            )
+            # 新实例同步数据
             tendb_migrate_pipeline.add_parallel_sub_pipeline(sub_flow_list=sync_data_sub_pipeline_list)
             if self.data["need_checksum"]:
                 tendb_migrate_pipeline.add_act(
-                    act_name=_("生成checksum单据"),
+                    act_name=MySQLCheckSumTicketComponent.node_name,
                     act_component_code=MySQLCheckSumTicketComponent.code,
                     kwargs=asdict(
                         MysqlCheckSumKwargs(
@@ -436,7 +442,21 @@ class TenDBRemoteRebalanceFlow(object):
                         )
                     ),
                 )
-            # 切换前安装周边
+                tendb_migrate_pipeline.add_act(
+                    act_name=MySQLCheckSumTicketProbeComponent.node_name,
+                    act_component_code=MySQLCheckSumTicketProbeComponent.code,
+                    kwargs={},
+                )
+                tendb_migrate_pipeline.add_act(
+                    act_name=MySQLCheckSumTicketResultComponent.node_name,
+                    act_component_code=MySQLCheckSumTicketResultComponent.code,
+                    kwargs={
+                        "bk_cloud_id": cluster_class.bk_cloud_id,
+                        "checksum_pairs": checksum_pairs,
+                        "cluster_id": cluster_class.id,
+                    },
+                )
+            # 同步完安装周边
             tendb_migrate_pipeline.add_sub_pipeline(
                 sub_flow=standardize_mysql_cluster_subflow(
                     root_id=self.root_id,
@@ -452,28 +472,14 @@ class TenDBRemoteRebalanceFlow(object):
                     with_cc_standardize=False,
                 )
             )
-
+            # todo 添加checksum单据状态检查 、添加通过后添加checksum结果的查询
+            # 人工确定切换
             tendb_migrate_pipeline.add_act(
-                act_name=_("屏蔽告警"),
-                act_component_code=AddAlarmShieldComponent.code,
-                kwargs={
-                    "begin_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "end_time": (datetime.now() + timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S"),
-                    "description": cluster_info["cluster"]["immute_domain"],
-                    "dimensions": [
-                        {
-                            "name": "instance_host",
-                            "values": list(set([ins.split(":")[0] for ins in instances])),
-                        }
-                    ],
-                },
+                act_name=_("人工确认切换 {}".format(cluster_class.name)), act_component_code=PauseComponent.code, kwargs={}
             )
-
-            # 人工确认切换迁移实例
-            tendb_migrate_pipeline.add_act(act_name=_("人工确认切换"), act_component_code=PauseComponent.code, kwargs={})
-            # 切换迁移实例
+            # 切换到新实例
             tendb_migrate_pipeline.add_parallel_sub_pipeline(sub_flow_list=switch_sub_pipeline_list)
-            #  新机器安装周边组件
+            # 切换后重安装周边
             tendb_migrate_pipeline.add_sub_pipeline(
                 sub_flow=standardize_mysql_cluster_subflow(
                     root_id=self.root_id,
@@ -486,22 +492,32 @@ class TenDBRemoteRebalanceFlow(object):
                     with_instance_standardize=False,
                     with_bk_plugin=False,
                     with_backup_client=False,
-                    with_cc_standardize=False,
                 )
             )
-
+            # 解除告警屏蔽
             tendb_migrate_pipeline.add_act(
-                act_name=_("解除告警屏蔽"), act_component_code=DisableAlarmShieldComponent.code, kwargs={}
+                act_name=DisableAlarmShieldComponent.node_name,
+                act_component_code=DisableAlarmShieldComponent.code,
+                kwargs={},
             )
 
-            # 卸载流程人工确认
+            # 人工确定卸载实例
             tendb_migrate_pipeline.add_act(act_name=_("人工确认卸载实例"), act_component_code=PauseComponent.code, kwargs={})
-            # # 卸载remote节点
+            # 卸载实例
             tendb_migrate_pipeline.add_parallel_sub_pipeline(sub_flow_list=uninstall_svr_sub_pipeline_list)
+            # 集群维度构建子流程
             tendb_migrate_pipeline_all_list.append(
-                tendb_migrate_pipeline.build_sub_process(_("集群迁移{}").format(self.data["cluster_id"]))
+                tendb_migrate_pipeline.build_sub_process(_("集群迁移{}").format(cluster_class.id))
             )
-
-        # 运行流程
+        # 主流程并发执行所有集群迁移子流程
+        if len(tendb_migrate_pipeline_all_list) == 0:
+            raise Exception(_("没有生成集群迁移流程"))
         tendb_migrate_pipeline_all.add_parallel_sub_pipeline(tendb_migrate_pipeline_all_list)
-        tendb_migrate_pipeline_all.run_pipeline(init_trans_data_class=ClusterInfoContext(), is_drop_random_user=True)
+        # 执行主流程
+        # 启动接入单据值守监听
+        # tendb_migrate_pipeline_all.run_pipeline(init_trans_data_class=ClusterInfoContext(), is_drop_random_user=True)
+        tendb_migrate_pipeline_all.run_pipeline_with_sidecar(
+            init_trans_data_class=ClusterInfoContext(),
+            is_drop_random_user=True,
+            check_ai_monitor_cluster_list=list(set(cluster_ids)),
+        )

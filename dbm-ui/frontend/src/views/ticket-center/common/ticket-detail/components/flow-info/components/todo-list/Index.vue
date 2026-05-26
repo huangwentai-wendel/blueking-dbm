@@ -11,6 +11,10 @@
         :data="todoItem"
         :flow-data="flowData"
         :ticket-data="ticketData" />
+      <TypeResourceHCMReplenish
+        :data="todoItem"
+        :flow-data="flowData"
+        :ticket-data="ticketData" />
       <TypeItsm
         :data="todoItem"
         :flow-data="flowData"
@@ -35,12 +39,13 @@
   import TypeApprove from './type-approve/Index.vue';
   import TypeInnerApprove from './type-inner-approve/Index.vue';
   import TypeItsm from './type-itsm/Index.vue';
+  import TypeResourceHCMReplenish from './type-resource-hcm-replenish/Index.vue';
   import TypeResourceReplenish from './type-resource-replenish/Index.vue';
   import TypeTimer from './type-timer/Index.vue';
 
   interface Props {
     data: FlowMode['todos'];
-    flowData: FlowMode<unknown, any>;
+    flowData: FlowMode<any, any, any>;
   }
 
   const props = defineProps<Props>();

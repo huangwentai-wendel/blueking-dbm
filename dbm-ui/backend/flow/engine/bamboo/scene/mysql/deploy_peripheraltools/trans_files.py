@@ -12,7 +12,7 @@ from dataclasses import asdict
 from typing import Dict, List
 
 from bamboo_engine.builder import SubProcess
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.flow.consts import DBA_ROOT_USER, DEPENDENCIES_PLUGINS
@@ -69,7 +69,7 @@ def trans_common_files(
                     DownloadBackupClientKwargs(
                         bk_cloud_id=bk_cloud_id,
                         bk_biz_id=bk_biz_id,
-                        download_host_list=ips,
+                        ip_list=ips,
                     )
                 ),
             }

@@ -63,7 +63,7 @@
         :confirm-handler="handleReset"
         :content="t('重置将会清空当前填写的所有内容_请谨慎操作')"
         :title="t('确认重置页面')">
-        <BkButton class="ml8 w-88">
+        <BkButton class="ml-8 w-88">
           {{ t('重置') }}
         </BkButton>
       </DbPopconfirm>
@@ -82,7 +82,7 @@
 
   import PasswordInput from '@views/db-manage/common/password-input/Index.vue';
 
-  import InstanceList from './components/form-item/InstanceList.vue';
+  import InstanceList, { type IRowData } from './components/form-item/InstanceList.vue';
   import ValidDuration from './components/form-item/ValidDuration.vue';
   import RenderPasswordInstance from './components/render-passwrod-instance/Index.vue';
   import UpdateResult from './components/UpdateResult.vue';
@@ -90,7 +90,7 @@
   const { t } = useI18n();
 
   const createDefaultData = () => ({
-    instanceList: [] as { bk_cloud_id: number; cluster_type: ClusterTypes; ip: string; port: number; role: string }[],
+    instanceList: [] as IRowData[],
     password: '',
     validDuration: 1,
     validDurationType: 'day',
@@ -106,7 +106,6 @@
   watch(
     formData,
     () => {
-      console.log('formData = ', formData);
       const { instanceList } = formData;
       if (instanceList.length > 0) {
         const instance = instanceList[0];

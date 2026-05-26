@@ -14,7 +14,7 @@ import logging
 from collections import defaultdict
 from typing import Dict, List
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from jinja2.sandbox import SandboxedEnvironment as Environment
 
 from backend import env
@@ -75,7 +75,12 @@ def fill_cluster_service_nginx_conf():
 
     for cloud_id in cloud__db_type__extension.keys():
         # 获取下发nginx conf的机器 TODO: 后续要改为clb的地址进行转发
-        proxy_external_address = DBCloudProxy.get_cloud_proxy_external_address(bk_cloud_id=cloud_id)
+        try:
+            proxy_external_address = DBCloudProxy.get_cloud_proxy_external_address(bk_cloud_id=cloud_id)
+        except ProxyPassBaseException as e:
+            logger.error(_("cloud_id: {} 获取云区域代理地址失败: {}").format(cloud_id, e))
+            continue
+
         nginx_extensions = DBExtension.get_extension_in_cloud(bk_cloud_id=cloud_id, extension_type=ExtensionType.NGINX)
         # 获取nginx的bk_agent_id(兼容gse2.0的agent查询)
         for nginx_extension in nginx_extensions:

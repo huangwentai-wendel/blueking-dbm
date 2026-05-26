@@ -23,7 +23,8 @@
       v-model="serach"
       class="search-input"
       clearable
-      :placeholder="t('全站搜索，支持多对象，Enter开启搜索')"
+      :placeholder="t('不清楚 DB 所属业务？试试全站搜索（支持域名 / IP，回车直达结果页）')"
+      :show-overflow-tooltips="false"
       :type="isFocused ? 'text' : 'search'"
       @enter="handleEnter"
       @focus="handleFocus"
@@ -74,6 +75,7 @@
 
   import { quickSearch } from '@services/source/quickSearch';
 
+  import { systemSearchCache } from '@common/cache';
   import { batchSplitRegex } from '@common/regex';
 
   import { buildURLParams } from '@utils';
@@ -121,7 +123,7 @@
       const { width } = rootRef.value!.getBoundingClientRect();
       if (tippyIns) {
         popContentStyle.value = {
-          width: `${Math.max(width, 600)}px`,
+          width: `${Math.max(width, 700)}px`,
         };
         tippyIns.show();
       }
@@ -141,7 +143,9 @@
         }
       }
     }
-    tippyIns && tippyIns.hide();
+    if (tippyIns) {
+      tippyIns.hide();
+    }
   };
 
   const handleQuickKeyShow = (event: KeyboardEvent) => {
@@ -170,6 +174,8 @@
 
       return buildURLParams(query);
     };
+
+    systemSearchCache.appendItem(keyword);
 
     if (keyword) {
       quickSearch({
@@ -223,7 +229,7 @@
       onShow() {
         isPopMenuShow.value = true;
       },
-      placement: 'bottom-end',
+      placement: 'bottom',
       theme: 'light system-search-popover-theme',
       trigger: 'manual',
       zIndex: 999,

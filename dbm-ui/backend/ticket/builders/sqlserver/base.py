@@ -15,6 +15,8 @@ from rest_framework import serializers
 from backend.configuration.constants import DBType
 from backend.db_meta.enums import ClusterSqlserverStatusFlags, ClusterType
 from backend.db_meta.models import Cluster
+from backend.db_services.ipchooser.constants import BkOsType
+from backend.flow.utils.sqlserver.sqlserver_bk_config import get_module_infos
 from backend.ticket import builders
 from backend.ticket.builders import TicketFlowBuilder
 from backend.ticket.builders.common.base import (
@@ -22,6 +24,7 @@ from backend.ticket.builders.common.base import (
     CommonValidate,
     SkipToRepresentationMixin,
     SQLServerTicketFlowBuilderPatchMixin,
+    TicketBaseValidateSerializerMixin,
     fetch_cluster_ids,
 )
 from backend.ticket.builders.mysql.base import MySQLClustersTakeDownDetailsSerializer
@@ -56,7 +59,9 @@ class SQLServerTakeDownDetailsSerializer(MySQLClustersTakeDownDetailsSerializer)
     pass
 
 
-class SQLServerBaseOperateDetailSerializer(SkipToRepresentationMixin, serializers.Serializer):
+class SQLServerBaseOperateDetailSerializer(
+    TicketBaseValidateSerializerMixin, SkipToRepresentationMixin, serializers.Serializer
+):
     """
     sqlserver操作的基类，主要功能:
     1. 屏蔽序列化的to_representation
@@ -120,13 +125,36 @@ class SQLServerBaseOperateDetailSerializer(SkipToRepresentationMixin, serializer
             raise serializers.ValidationError(message)
 
     def validate(self, attrs):
+        attrs = super().validate(attrs)
         # 默认全局校验只需要校验集群的状态
         return attrs
 
 
 class SQLServerBaseOperateResourceParamBuilder(BaseOperateResourceParamBuilder):
     def format(self):
-        super().format()
+        # 忽略没有infos的单据
+        if "infos" not in self.ticket_data:
+            return
+
+        cluster_infos_map = {}
+        clusters = Cluster.objects.filter(id__in=fetch_cluster_ids(self.ticket_data))
+        # 查询集群云区域，业务，操作系统模块
+        for cluster in clusters:
+            db_config = get_module_infos(
+                bk_biz_id=cluster.bk_biz_id, db_module_id=cluster.db_module_id, cluster_type=cluster.cluster_type
+            )
+            cluster_infos_map[cluster.id] = {
+                "bk_cloud_id": cluster.bk_cloud_id,
+                "bk_biz_id": cluster.bk_biz_id,
+                "os_info": {"os_names": db_config["system_version"].split(","), "os_type": BkOsType.WINDOWS},
+            }
+
+        # 对每个info补充操作系统，云区域和业务ID
+        for info in self.ticket_data.get("infos", []):
+            cluster_info = cluster_infos_map[fetch_cluster_ids(info)[0]]
+            info.update(bk_cloud_id=cluster_info["bk_cloud_id"], bk_biz_id=cluster_info["bk_biz_id"])
+            for role, resource_info in info.get("resource_spec", {}).items():
+                resource_info.update(**cluster_info["os_info"])
 
     def post_callback(self):
         super().post_callback()

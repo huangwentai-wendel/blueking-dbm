@@ -19,6 +19,50 @@ from backend.ticket.constants import InstanceType
 # MongoDBNsFilter
 
 
+class MongoInstance:
+    ip: str
+    port: int
+    bk_cloud_id: int
+    machine_type: str
+    domain: str
+    role: str
+    username: str
+    password: str
+
+    def __init__(
+        self,
+        ip: str,
+        port: int,
+        bk_cloud_id: int,
+        machine_type: str,
+        domain: str,
+        role: str,
+        username: str,
+        password: str,
+    ):
+        self.ip = ip
+        self.port = port
+        self.bk_cloud_id = bk_cloud_id
+        self.machine_type = machine_type
+        self.domain = domain
+        self.role = role
+        self.username = username
+        self.password = password
+
+    @classmethod
+    def from_instance(cls, s: Union[ProxyInstance, StorageInstance]):
+        return MongoInstance(
+            s.ip_port.split(":")[0],
+            s.port,
+            s.machine.bk_cloud_id,
+            s.machine_type,
+            s.bind_entry.first().entry,
+            s.instance_role,
+            s.username,
+            s.password,
+        )
+
+
 class MongoNode:
     def __init__(self, ip: str, port: int, role: str, bk_cloud_id: int, mtype: str, domain: str = None):
         self.ip: str = ip
@@ -110,6 +154,12 @@ class ReplicaSet:
             return i.bk_cloud_id
         return None
 
+    def op_title(self, op: str, node: MongoNode) -> str:
+        """
+        返回操作的标题. 比如: RS-test-清档
+        """
+        return "{}:{}({}:{})".format(op, self.set_name, node.ip, node.port)
+
     def __json__(self):
         return {
             "set_name": self.set_name,
@@ -132,6 +182,7 @@ class MongoDBCluster:
     cluster_type: str
     cluster_id: str
     tags: List[str] = None
+    affinity: str
 
     def __init__(
         self,
@@ -145,6 +196,7 @@ class MongoDBCluster:
         app: str = None,
         region: str = None,
         tags: List[str] = None,
+        affinity: str = None,
     ):
         self.cluster_id = cluster_id
         self.name = name
@@ -156,6 +208,7 @@ class MongoDBCluster:
         self.app = app
         self.region = region
         self.tags = tags
+        self.affinity = affinity
 
     @abstractmethod
     def get_shards(self, with_config: bool = False, sort_by_set_name: bool = False) -> List[ReplicaSet]:
@@ -176,6 +229,20 @@ class MongoDBCluster:
 
     def get_bk_cloud_id(self) -> int:
         return self.bk_cloud_id
+
+    def op_title(self, op: str) -> str:
+        """
+        返回操作的标题. 比如: RS-test-清档
+        """
+        return "{}:{}:{}".format(op, self.cluster_type_abbr(), self.name)
+
+    def cluster_type_abbr(self) -> str:
+        if self.cluster_type == ClusterType.MongoReplicaSet:
+            return "RS"
+        elif self.cluster_type == ClusterType.MongoShardedCluster:
+            return "SH"
+        else:
+            return "NONE"
 
     def is_sharded_cluster(self) -> bool:
         return self.cluster_type == str(ClusterType.MongoShardedCluster.value)
@@ -215,6 +282,7 @@ class ReplicaSetCluster(MongoDBCluster):
         region: str = None,
         shard: ReplicaSet = None,
         tags: List[str] = None,
+        affinity: str = None,
     ):
         super().__init__(
             bk_cloud_id,
@@ -227,6 +295,7 @@ class ReplicaSetCluster(MongoDBCluster):
             app,
             region,
             tags,
+            affinity,
         )
         self.shard = shard
 
@@ -279,6 +348,7 @@ class ShardedCluster(MongoDBCluster):
         mongos: List[MongoNode] = None,
         configsvr: ReplicaSet = None,
         tags: List[str] = None,
+        affinity: str = None,
     ):
         super().__init__(
             bk_cloud_id,
@@ -291,6 +361,7 @@ class ShardedCluster(MongoDBCluster):
             app,
             region,
             tags,
+            affinity,
         )
         self.shards = shards
         self.mongos = mongos
@@ -410,6 +481,7 @@ class MongoRepository:
                     shard=shard,
                     region=i.region,
                     tags=i.tags.all() if with_tags else None,
+                    affinity=i.disaster_tolerance_level,
                 )
 
                 rows.append(row)
@@ -447,6 +519,7 @@ class MongoRepository:
                     configsvr=configsvr,
                     region=i.region,
                     tags=i.tags.all() if with_tags else None,
+                    affinity=i.disaster_tolerance_level,
                 )
                 rows.append(row)
 
@@ -616,6 +689,7 @@ class MongoNodeWithLabel(object):
     set_name: str = None
     username: str = None
     password: str = None
+    status: int = None
 
     def __init__(self):
         pass
@@ -736,9 +810,9 @@ class MongoNodeWithLabel(object):
         bk_nodes = []
         for node in nodes:
             bk_nodes.append({"ip": node.ip, "port": node.port, "bk_cloud_id": node.bk_cloud_id})
-        result = mongodb_password.MongoDBPassword().get_nodes_password_from_db(bk_nodes, username)
+        result = mongodb_password.MongoDBPassword().get_users_password_from_db(bk_nodes, [username])
         if result["password"] is None:
-            raise Exception("get_nodes_password_from_db fail {}".format(result["info"]))
+            raise Exception("get_users_password_from_db fail {}".format(result["info"]))
 
         pwd_dict = {}
         for row in result["password"]:

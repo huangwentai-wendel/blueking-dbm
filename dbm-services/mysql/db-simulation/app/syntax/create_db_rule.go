@@ -14,16 +14,16 @@ package syntax
 func (c CreateDBResult) Checker(mysqlVersion string) (r *CheckerResult) {
 	r = &CheckerResult{
 		ObjName:  c.DbName,
-		IsSpFunc: true,
+		IsDbName: true,
 	}
 	// 检查库名规范
-	if R.BuiltInRule.TableNameSpecification.KeyWord {
-		r.ParseBultinRisk(func() (bool, string) {
+	if R.BuiltInRule.SchemaNameSpecification.KeyWord {
+		r.ParseBuiltinRisk(func() (bool, string) {
 			return KeyWordValidator(mysqlVersion, c.DbName)
 		})
 	}
-	if R.BuiltInRule.TableNameSpecification.SpeicalChar {
-		r.ParseBultinBan(func() (bool, string) {
+	if R.BuiltInRule.SchemaNameSpecification.SpecialChar {
+		r.ParseBuiltinBan(func() (bool, string) {
 			return SpecialCharValidator(c.DbName)
 		})
 	}

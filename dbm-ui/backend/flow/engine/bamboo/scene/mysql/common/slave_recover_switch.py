@@ -7,9 +7,11 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+import copy
+import logging.config
 from dataclasses import asdict
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.constants import IP_PORT_DIVIDER, IP_PORT_DIVIDER_FOR_DNS
@@ -17,23 +19,25 @@ from backend.db_meta.enums import InstanceStatus
 from backend.db_meta.models import Cluster
 from backend.flow.engine.bamboo.scene.common.builder import SubBuilder
 from backend.flow.engine.bamboo.scene.common.get_file_list import GetFileList
+from backend.flow.engine.bamboo.scene.mysql.clone_grants_from_file import clone_grants_from_file_subflow
 from backend.flow.engine.bamboo.scene.mysql.common.cluster_entrys import get_tendb_ha_entry
-from backend.flow.plugins.components.collections.mysql.clone_user import CloneUserComponent
 from backend.flow.plugins.components.collections.mysql.dns_manage import MySQLDnsManageComponent
+from backend.flow.plugins.components.collections.mysql.mysql_check_slave_delay import MySQLCheckSlaveDelayComponent
+from backend.flow.plugins.components.collections.mysql.mysql_check_slave_delay_probe import (
+    MySQLCheckSlaveDelayProbeComponent,
+)
 from backend.flow.plugins.components.collections.mysql.mysql_rds_execute import MySQLExecuteRdsComponent
 from backend.flow.plugins.components.collections.mysql.trans_flies import TransFileComponent
 from backend.flow.utils.mysql.mysql_act_dataclass import (
+    CheckSlaveStatusKwargs,
     CreateDnsKwargs,
     DownloadMediaKwargs,
     ExecuteRdsKwargs,
-    InstanceUserCloneKwargs,
     IpDnsRecordRecycleKwargs,
     RecycleDnsRecordKwargs,
 )
 
-"""
-tendb ha 从库恢复切换
-"""
+logger = logging.getLogger("flow")
 
 
 def slave_migrate_switch_sub_flow(
@@ -42,8 +46,17 @@ def slave_migrate_switch_sub_flow(
     cluster: Cluster,
     old_slave_ip: str,
     new_slave_ip: str,
+    auto_switch_slave: bool = False,
 ):
-    """"""
+    """
+    tendb ha 从库恢复切换
+    @param root_id: root_id
+    @param ticket_data: 单据信息
+    @param cluster: 集群
+    @param old_slave_ip: 原slave ip
+    @param new_slave_ip: 新slave ip
+    @param auto_switch_slave 自动切换
+    """
     # 默认预检测连接情况、同步延时、checksum校验结果
     master = cluster.main_storage_instances()[0]
     old_slave_storage = cluster.storageinstance_set.get(
@@ -82,6 +95,35 @@ def slave_migrate_switch_sub_flow(
     #     )
     # )
     # 不做检查，而是在新从库通过rds加入一条恒为正确的记录。
+    if auto_switch_slave:
+        # 自动切换新从库
+        sub_pipeline.add_act(
+            act_name=_("探测主从延迟情况 {}").format(new_slave),
+            act_component_code=MySQLCheckSlaveDelayProbeComponent.code,
+            kwargs=asdict(
+                CheckSlaveStatusKwargs(
+                    bk_cloud_id=cluster.bk_cloud_id,
+                    instance_ip=new_slave_ip,
+                    instance_port=master.port,
+                    slave_delay_threshold=1000000,
+                    check_file_delay=1,
+                )
+            ),
+        )
+    else:
+        sub_pipeline.add_act(
+            act_name=_("检查主/新从延迟 {}").format(new_slave),
+            act_component_code=MySQLCheckSlaveDelayComponent.code,
+            kwargs=asdict(
+                CheckSlaveStatusKwargs(
+                    bk_cloud_id=cluster.bk_cloud_id,
+                    instance_ip=new_slave_ip,
+                    instance_port=master.port,
+                    slave_delay_threshold=1000000,
+                    check_file_delay=1,
+                )
+            ),
+        )
     fake_checksum_sql = """replace into infodba_schema.checksum values
     ('{}',{},'_fake_db_','_fake_tbl_',0,0,'PRIMARY',0,0,0,0,0,0,now())""".format(
         master.machine.ip, master.port
@@ -98,15 +140,18 @@ def slave_migrate_switch_sub_flow(
             )
         ),
     )
-
-    clone_data = [
-        {
-            "source": old_master,
-            "target": new_slave,
-            "bk_cloud_id": cluster.bk_cloud_id,
-        }
-    ]
+    clone_data = []
+    if old_slave_storage.is_stand_by:
+        # 只有 is_stand_by 才可以从主节点同步一致的权限 todo 后续非standby 是否从其slave组的正常节点克隆权限
+        clone_data.append(
+            {
+                "source": old_master,
+                "target": new_slave,
+                "bk_cloud_id": cluster.bk_cloud_id,
+            }
+        )
     if old_slave_storage.status == InstanceStatus.RUNNING.value:
+        logging.info("{} clone old slave privilege".format(old_slave_storage.ip_port))
         clone_data.append(
             {
                 "source": old_slave,
@@ -114,12 +159,22 @@ def slave_migrate_switch_sub_flow(
                 "bk_cloud_id": cluster.bk_cloud_id,
             }
         )
+    else:
+        logging.info("{} old slave is not running".format(old_slave_storage.ip_port))
+    logging.info(clone_data)
 
-    sub_pipeline.add_act(
-        act_name=_("克隆权限"),
-        act_component_code=CloneUserComponent.code,
-        kwargs=asdict(InstanceUserCloneKwargs(clone_data=clone_data)),
-    )
+    if len(clone_data) > 0:
+        for ele in clone_data:
+            sub_pipeline.add_sub_pipeline(
+                sub_flow=clone_grants_from_file_subflow(
+                    root_id=root_id,
+                    data=copy.deepcopy(ticket_data),
+                    bk_cloud_id=cluster.bk_cloud_id,
+                    bk_biz_id=cluster.bk_biz_id,
+                    source_address=ele["source"],
+                    dest_addresses=[new_slave],
+                )
+            )
 
     domain_map = get_tendb_ha_entry(cluster.id)
     domain_add_list = []

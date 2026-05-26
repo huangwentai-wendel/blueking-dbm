@@ -69,7 +69,7 @@
       </template>
     </BkResizeLayout>
     <template #footer>
-      <span class="mr24">
+      <span class="mr-24">
         <slot
           v-if="slots.submitTips"
           :host-list="lastHostList"
@@ -77,15 +77,16 @@
       </span>
       <span v-bk-tooltips="submitButtonDisabledInfo.tooltips">
         <BkButton
+          v-test="{ type: 'button', value: 'instanceSelectorConfirm' }"
           class="w-88"
           :disabled="submitButtonDisabledInfo.disabled"
           theme="primary"
-          @click="handleSubmit">
+          @click="handleConfirm">
           {{ t('确定') }}
         </BkButton>
       </span>
       <BkButton
-        class="ml8 w-88"
+        class="ml-8 w-88"
         @click="handleCancel">
         {{ t('取消') }}
       </BkButton>
@@ -108,7 +109,8 @@
     bk_host_id: number;
     cluster_id: number;
     cluster_name?: string;
-    cluster_type: string;
+    cluster_type: ClusterTypes;
+    cluster_type_name: string;
     create_at: string;
     db_module_id: number;
     db_module_name: string;
@@ -126,6 +128,7 @@
       db_module_id: number;
       id: number;
       immute_domain: string;
+      major_version: string;
       master_domain: string;
       name: string;
       region: string;
@@ -212,13 +215,16 @@
   import _ from 'lodash';
 
   import MongodbModel from '@services/model/mongodb/mongodb';
+  import TendbhaModel from '@services/model/mysql/tendbha';
   import TendbClusterModel from '@services/model/tendbcluster/tendbcluster';
   import { checkMongoInstances, checkMysqlInstances, checkRedisInstances } from '@services/source/instances';
   import { getMongoInstancesList, getMongoTopoList } from '@services/source/mongodb';
+  import { getMongoShard } from '@services/source/mongodbToolbox';
   import { queryClusters as queryMysqlCluster } from '@services/source/mysqlCluster';
   import { getRedisClusterList, getRedisInstances, getRedisMachineList } from '@services/source/redis';
   import {
     getHaClusterWholeList as getSqlServerHaCluster,
+    getMachineList as getSqlserverhaMachineList,
     getSqlServerInstanceList,
   } from '@services/source/sqlserveHaCluster';
   import {
@@ -248,6 +254,7 @@
   import PanelTab from './components/common/PanelTab.vue';
   import PreviewResult from './components/common/preview-result/Index.vue';
   import MongoClusterContent from './components/mongo/Index.vue';
+  import MongodbShardContent from './components/mongo-shard/Index.vue';
   import MysqlContent from './components/mysql/Index.vue';
   import RedisContent from './components/redis/Index.vue';
   import RenderRedisHost from './components/redis-host/Index.vue';
@@ -279,7 +286,7 @@
     tableConfig?: {
       columnsChecked?: string[];
       disabledRowConfig?: {
-        handler: (data: any) => boolean;
+        handler: (data: any, selected?: InstanceSelectorValues<IValue>) => boolean;
         tip?: string;
       };
       firsrColumn?: {
@@ -318,6 +325,8 @@
       | 'mongoCluster'
       | 'TendbSingleHost'
       | 'SpiderHost'
+      | 'SqlserverHaHost'
+      | 'MongodbShard'
     )[];
     disableDialogSubmitMethod?: (hostList: Array<string>) => string | boolean;
     hideManualInput?: boolean;
@@ -646,6 +655,28 @@
         },
       },
     ],
+    MongodbShard: [
+      {
+        content: MongodbShardContent,
+        id: 'MongodbShard',
+        name: t('选择分片'),
+        previewConfig: {
+          displayKey: 'shard_name',
+        },
+        tableConfig: {
+          firsrColumn: {
+            field: 'shard_name',
+            label: t('分片'),
+          },
+          getTableList: getMongoShard,
+          multiple: true,
+        },
+        topoConfig: {
+          countFunc: (item: MongodbModel) => item.shard_num,
+          getTopoList: getMongoTopoList,
+        },
+      },
+    ],
     RedisHost: [
       {
         content: RenderRedisHost,
@@ -801,6 +832,52 @@
         },
       },
     ],
+    SqlserverHaHost: [
+      {
+        content: TendbHaHostContent,
+        id: 'SqlserverHaHost',
+        name: t('SQLServer 主从'),
+        previewConfig: {
+          displayKey: 'ip',
+        },
+        tableConfig: {
+          columnsChecked: ['ip', 'cloud_area', 'alive', 'host_name', 'os_name'],
+          firsrColumn: {
+            field: 'ip',
+            label: 'IP',
+            role: 'backend_master',
+          },
+          getTableList: getSqlserverhaMachineList,
+        },
+        topoConfig: {
+          countFunc: (item: ServiceReturnType<typeof getSqlServerHaCluster>[number]) => item.masters.length,
+          getTopoList: getSqlServerHaCluster,
+        },
+      },
+      {
+        content: ManualInputHostContent,
+        id: 'manualInput',
+        manualConfig: {
+          activePanelId: 'SqlserverHaHost',
+          checkInstances: getSqlserverhaMachineList,
+          checkKey: 'ip',
+          checkType: 'ip',
+        },
+        name: t('手动输入'),
+        previewConfig: {
+          displayKey: 'ip',
+        },
+        tableConfig: {
+          columnsChecked: ['ip', 'cloud_area', 'alive', 'host_name', 'os_name'],
+          firsrColumn: {
+            field: 'ip',
+            label: 'IP',
+            role: 'backend_master',
+          },
+          getTableList: getSqlserverhaMachineList,
+        },
+      },
+    ],
     TendbClusterHost: [
       {
         content: TendbClusterHostContent,
@@ -863,11 +940,14 @@
           firsrColumn: {
             field: 'ip',
             label: t('主库主机'),
-            role: 'master',
+            role: 'backend_master',
           },
           getTableList: getTendbhaMachineList,
         },
         topoConfig: {
+          countFunc: (cluster: TendbhaModel) => {
+            return cluster.masters.length;
+          },
           getTopoList: queryMysqlCluster,
         },
       },
@@ -889,7 +969,7 @@
           firsrColumn: {
             field: 'ip',
             label: t('主库主机'),
-            role: 'master',
+            role: 'backend_master',
           },
           getTableList: getTendbhaMachineList,
         },
@@ -1021,7 +1101,7 @@
     const titleMap = Object.keys(clusterTabListMap.value).reduce(
       (results, key) => {
         Object.assign(results, {
-          [key]: clusterTabListMap.value[key][0].previewConfig?.title ?? '',
+          [key]: clusterTabListMap.value[key][0].previewConfig?.title ?? clusterTabListMap.value[key][0]?.name ?? '',
         });
         return results;
       },
@@ -1168,7 +1248,7 @@
     Object.assign(lastValues, values);
   };
 
-  const handleSubmit = () => {
+  const handleConfirm = () => {
     emits('change', lastValues);
     handleClose();
   };

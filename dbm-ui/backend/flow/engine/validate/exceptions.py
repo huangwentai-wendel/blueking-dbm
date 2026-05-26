@@ -7,7 +7,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.exceptions import AppBaseException, ErrorCode
 
@@ -20,4 +20,40 @@ class FlowValidateBaseException(AppBaseException):
 class TicketDataException(FlowValidateBaseException):
     ERROR_CODE = "001"
     MESSAGE = _("参数结构异常")
+    MESSAGE_TPL = _("{message}")
+
+
+class DisasterToleranceLevelFailedException(FlowValidateBaseException):
+    ERROR_CODE = "002"
+    MESSAGE = _("不支持这类集群容灾级别的校验")
+    MESSAGE_TPL = _("{message}")
+
+
+class CheckDisasterToleranceException(FlowValidateBaseException):
+    ERROR_CODE = "003"
+    MESSAGE = _("校验集群容灾级别不通过")
+    MESSAGE_TPL = _("{message}")
+
+
+class DuplicateClusterException(FlowValidateBaseException):
+    ERROR_CODE = "004"
+    MESSAGE = _("存在重复集群")
+    MESSAGE_TPL = _("{message}")
+
+
+class DuplicateIPException(FlowValidateBaseException):
+    ERROR_CODE = "005"
+    MESSAGE = _("存在重复IP")
+    MESSAGE_TPL = _("{message}")
+
+
+class DuplicateInsException(FlowValidateBaseException):
+    ERROR_CODE = "006"
+    MESSAGE = _("存在重复实例")
+    MESSAGE_TPL = _("{message}")
+
+
+class DuplicateClusterIDException(FlowValidateBaseException):
+    ERROR_CODE = "007"
+    MESSAGE = _("存在重复集群ID")
     MESSAGE_TPL = _("{message}")

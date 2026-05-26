@@ -10,11 +10,12 @@ specific language governing permissions and limitations under the License.
 import copy
 import logging
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.components import DRSApi
 from backend.db_meta.models import Cluster
 from backend.flow.engine.bamboo.scene.spider.common.exceptions import FailedToAssignIncrException
+from backend.flow.utils.spider.spider_bk_config import calc_spider_max_count, get_spider_version_and_charset
 
 logger = logging.getLogger("root")
 
@@ -27,7 +28,6 @@ def get_spider_master_incr(cluster: Cluster, add_spiders: list) -> list:
     new_add_spiders = copy.deepcopy(add_spiders)
     ctl_address = cluster.tendbcluster_ctl_primary_address()  # 随便拿一个spider-master接入层
 
-    logger.info("ctl address: {}".format(ctl_address))
     res = DRSApi.rpc(
         {
             "addresses": [ctl_address],
@@ -48,26 +48,76 @@ def get_spider_master_incr(cluster: Cluster, add_spiders: list) -> list:
     # 生成对比list
     tmp_list = [int(info["SPIDER_AUTO_INCREMENT_MODE_VALUE"]) for info in res[0]["cmd_results"][1]["table_data"]]
 
+    # 生成对比SPIDER_AUTO_INCREMENT_MODE_SWITCH的list
+    increment_mode_switch_list = [
+        info["SPIDER_AUTO_INCREMENT_MODE_SWITCH"] for info in res[0]["cmd_results"][1]["table_data"]
+    ]
+    # 巡检存量的spider全局自增是否统一打开/关闭
+    if len(set(increment_mode_switch_list)) > 1:
+        raise FailedToAssignIncrException(
+            message=_(f"there are several different auto_increment_mode_switch in cluster[{cluster.immute_domain}]")
+        )
+
+    # 检查存量的spider
     increment_step_list = list(
         set([int(info["SPIDER_AUTO_INCREMENT_STEP"]) for info in res[0]["cmd_results"][1]["table_data"]])
     )
     if len(increment_step_list) > 1:
-        raise FailedToAssignIncrException(message=_("there are several different self incrementing steps"))
+        raise FailedToAssignIncrException(
+            message=_(f"there are several different self incrementing steps in cluster[{cluster.immute_domain}]")
+        )
     max_spider_master_count = increment_step_list[0]
-    logger.info("get the spider_auto_increment val: {}".format(max_spider_master_count))
-    # incr_number 从1开始寻找，如果已使用则跳过，直至到未使用则赋值给对应的待加入的spider-master节点，且跳出
-    start = 0
-    for spider in new_add_spiders:
-        for incr_number in range(start + 1, max_spider_master_count + 1):
-            if incr_number not in tmp_list:
-                spider["incr_number"] = incr_number
-                break
+    logger.info("get the spider_auto_increment_step val: {}".format(max_spider_master_count))
 
-        if not spider.get("incr_number"):
-            # 如果没有分配到，则这里判断必定为空，证明这次添加spider-master已经大于到MAX_SPIDER_MASTER_COUNT预设值，需要退出
-            raise FailedToAssignIncrException(
-                message=_("The obtained incr is greater than MAX_SPIDER_MASTER_COUNT, check")
+    # 判断集群当前的spider_auto_increment_step值，与准备安装的spider节点的spider_auto_increment_step值，是否一致
+    # 判断集群当前的spider_auto_increment_mode_switch值，与准备安装的spider节点的spider_auto_increment_mode_switch值，是否一致
+    # 获取Spider版本号
+    __, spider_version = get_spider_version_and_charset(cluster.bk_biz_id, cluster.db_module_id)
+    switch_on_in_bk_config, max_spider_master_count_in_bk_config = calc_spider_max_count(
+        bk_biz_id=cluster.bk_biz_id,
+        db_version=spider_version,
+        db_module_id=cluster.db_module_id,
+        immute_domain=cluster.immute_domain,
+    )
+    # 对比bk_config配置模板，和集群实际使用的SPIDER_AUTO_INCREMENT_STEP值，是否一致
+    if max_spider_master_count != max_spider_master_count_in_bk_config:
+        raise FailedToAssignIncrException(
+            message=_(
+                f"The value of SPIDER_AUTO_INCREMENT_STEP differs between the "
+                f"cluster [{cluster.immute_domain}]:{max_spider_master_count} "
+                f"and bk-config{max_spider_master_count_in_bk_config}. Please check."
             )
-        start = spider["incr_number"]
+        )
+    # 对比bk_config配置模板，和集群实际使用的SPIDER_AUTO_INCREMENT_MODE_SWITCH值，是否一致
+    if increment_mode_switch_list[0] != switch_on_in_bk_config:
+        raise FailedToAssignIncrException(
+            message=_(
+                f"The value of SPIDER_AUTO_INCREMENT_MODE_SWITCH differs between the "
+                f"cluster [{cluster.immute_domain}]:{increment_mode_switch_list[0]} "
+                f"and bk-config{switch_on_in_bk_config}. Please check."
+            )
+        )
+    # 如果集群 SPIDER_AUTO_INCREMENT_MODE_SWITCH = OFF， 则默认节点都是传1
+    if switch_on_in_bk_config == "OFF":
+        for spider in new_add_spiders:
+            spider["incr_number"] = 1
+
+    # 如果集群 SPIDER_AUTO_INCREMENT_MODE_SWITCH = ON, 则循环去取值
+    # 验证通过后开始预分配 SPIDER_AUTO_INCREMENT_MODE_VALUE 值
+    # incr_number 从1开始寻找，如果已使用则跳过，直至到未使用则赋值给对应的待加入的spider-master节点，且跳出
+    elif switch_on_in_bk_config == "ON":
+        start = 0
+        for spider in new_add_spiders:
+            for incr_number in range(start + 1, max_spider_master_count + 1):
+                if incr_number not in tmp_list:
+                    spider["incr_number"] = incr_number
+                    break
+
+            if not spider.get("incr_number"):
+                # 如果没有分配到，则这里判断必定为空，证明这次添加spider-master已经大于到MAX_SPIDER_MASTER_COUNT预设值，需要退出
+                raise FailedToAssignIncrException(
+                    message=_("The obtained incr is greater than MAX_SPIDER_MASTER_COUNT, check")
+                )
+            start = spider["incr_number"]
 
     return new_add_spiders

@@ -16,10 +16,27 @@
       <div class="item">
         <div class="item-title">{{ t('资源规格') }}：</div>
         <div class="item-content">
-          <RenderSpec
-            :data="data.spec"
-            :hide-qps="!data.spec?.qps?.max"
-            is-ignore-counts />
+          <RenderSpec :data="data.spec" />
+        </div>
+      </div>
+      <div class="item">
+        <div class="item-title">{{ t('资源标签') }}：</div>
+        <div class="item-content">
+          <span v-if="!originData">--</span>
+          <template v-else>
+            <template v-if="data.labels.length">
+              <BkTag
+                v-for="labelItem in data.labels"
+                :key="labelItem.id">
+                {{ labelItem.value }}
+              </BkTag>
+            </template>
+            <BkTag
+              v-else
+              theme="success">
+              {{ t('通用无标签') }}
+            </BkTag>
+          </template>
         </div>
       </div>
       <div class="item">
@@ -60,8 +77,10 @@
   </div>
 </template>
 <script lang="ts" setup>
+  import type { ComponentProps } from 'vue-component-type-helpers';
   import { useI18n } from 'vue-i18n';
 
+  import ResourceTagSelector from '@views/db-manage/common/apply-items/ResourceTagSelector.vue';
   import ValueDiff from '@views/db-manage/common/value-diff/Index.vue';
 
   import RenderSpec from './render-spec/Index.vue';
@@ -71,6 +90,7 @@
       capacity: number;
       clusterShardNum: number;
       groupNum: number;
+      labels: ComponentProps<typeof ResourceTagSelector>['modelValue'];
       spec: any;
     };
     originData?: Props['data'];

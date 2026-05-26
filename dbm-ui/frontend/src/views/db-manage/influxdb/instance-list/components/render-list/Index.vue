@@ -40,17 +40,12 @@
           {{ t('重启') }}
         </BkButton>
       </span>
-      <span
-        v-bk-tooltips="{ content: t('请选择实例'), disabled: hasSelectedInstances }"
-        class="ml-8">
-        <BkButton
-          :disabled="!hasSelectedInstances"
-          @click="handleShowReplace()">
-          {{ t('替换') }}
-        </BkButton>
-      </span>
       <BkDropdown
         :disabled="!hasSelectedInstances"
+        :popover-options="{
+          clickContentAutoHide: true,
+        }"
+        trigger="click"
         @hide="() => (isShowGroupMove = false)"
         @show="() => (isShowGroupMove = true)">
         <span
@@ -80,6 +75,10 @@
         </template>
       </BkDropdown>
       <BkDropdown
+        :popover-options="{
+          clickContentAutoHide: true,
+        }"
+        trigger="click"
         @hide="() => (isCopyDropdown = false)"
         @show="() => (isCopyDropdown = true)">
         <BkButton
@@ -135,16 +134,6 @@
       @select-all="handleSelectAll"
       @setting-change="updateTableSettings" />
   </div>
-  <DbSideslider
-    v-model:is-show="isShowReplace"
-    :disabled-confirm="operationNodeList.length === 0"
-    :title="t('InfluxDB实例替换')"
-    :width="960">
-    <ClusterReplace
-      :node-list="operationNodeList"
-      @remove-node="handleRemoveNodeSelect"
-      @succeeded="handleReplaceSucceeded" />
-  </DbSideslider>
 </template>
 
 <script setup lang="tsx">
@@ -164,7 +153,7 @@
 
   import { useGlobalBizs } from '@stores';
 
-  import { ClusterTypes, UserPersonalSettings } from '@common/const';
+  import { ClusterTypes, TicketTypes, UserPersonalSettings } from '@common/const';
 
   import DbTable from '@components/db-table/index.vue';
   import TextOverflowLayout from '@components/text-overflow-layout/Index.vue';
@@ -184,8 +173,6 @@
   } from '@utils';
 
   import { useTimeoutPoll } from '@vueuse/core';
-
-  import ClusterReplace from './components/Replace.vue';
 
   type InfluxDBGroupItem = ServiceReturnType<typeof getGroupList>['results'][number];
 
@@ -268,8 +255,6 @@
   const isInit = ref(true);
   const isShowGroupMove = ref(false);
   const isCopyDropdown = ref(false);
-  const isShowReplace = ref(false);
-  const operationNodeList = shallowRef<Array<InfluxDBInstanceModel>>([]);
   const groupList = shallowRef<InfluxDBGroupItem[]>([]);
   const batchSelectInstances = shallowRef<Record<number, InfluxDBInstanceModel>>({});
   const tableDataActionLoadingMap = shallowRef<Record<number, boolean>>({});
@@ -347,6 +332,9 @@
               ),
               default: () => (
                 <auth-router-link
+                  action-id='influxdb_view'
+                  permission={data.permission.influxdb_view}
+                  resource={data.id}
                   to={{
                     name: 'InfluxDBInstDetails',
                     params: {
@@ -355,10 +343,7 @@
                     query: {
                       from: route.name as string,
                     },
-                  }}
-                  action-id='influxdb_view'
-                  permission={data.permission.influxdb_view}
-                  resource={data.id}>
+                  }}>
                   {data.instance_address}
                 </auth-router-link>
               ),
@@ -417,28 +402,14 @@
               <>
                 <OperationBtnStatusTips data={data}>
                   <auth-button
-                    action-id='influxdb_replace'
-                    class='mr-8'
-                    disabled={data.operationDisabled}
-                    loading={tableDataActionLoadingMap.value[data?.id]}
-                    permission={data.permission.influxdb_replace}
-                    resource={data.id}
-                    theme='primary'
-                    text
-                    onClick={() => handleShowReplace(data)}>
-                    {t('替换')}
-                  </auth-button>
-                </OperationBtnStatusTips>
-                <OperationBtnStatusTips data={data}>
-                  <auth-button
                     action-id='influxdb_reboot'
                     class='mr-8'
                     disabled={data.operationDisabled}
                     loading={tableDataActionLoadingMap.value[data?.id]}
                     permission={data.permission.influxdb_reboot}
                     resource={data.id}
-                    theme='primary'
                     text
+                    theme='primary'
                     onClick={() => handleRestart([data])}>
                     {t('重启')}
                   </auth-button>
@@ -451,8 +422,8 @@
                     loading={tableDataActionLoadingMap.value[data?.id]}
                     permission={data.permission.influxdb_enable_disable}
                     resource={data.id}
-                    theme='primary'
                     text
+                    theme='primary'
                     onClick={() => handlDisabled(data)}>
                     {t('禁用')}
                   </auth-button>
@@ -470,8 +441,8 @@
                   loading={tableDataActionLoadingMap.value[data?.id]}
                   permission={data.permission.influxdb_enable_disable}
                   resource={data.id}
-                  theme='primary'
                   text
+                  theme='primary'
                   onClick={() => handleEnable(data)}>
                   {t('启用')}
                 </auth-button>
@@ -484,8 +455,8 @@
                   loading={tableDataActionLoadingMap.value[data?.id]}
                   permission={data.permission.influxdb_destroy}
                   resource={data.id}
-                  theme='primary'
                   text
+                  theme='primary'
                   onClick={() => handlDelete(data)}>
                   {t('删除')}
                 </auth-button>
@@ -652,22 +623,6 @@
     execCopy(list.join(','), t('复制成功，共n条', { n: list.length }));
   };
 
-  // 取消节点的选中状态
-  const handleRemoveNodeSelect = (instanceId: number) => {
-    const checkedMap = { ...batchSelectInstances.value };
-    delete checkedMap[instanceId];
-    batchSelectInstances.value = checkedMap;
-
-    const index = operationNodeList.value.findIndex((item) => item.id === instanceId);
-    if (index >= 0) {
-      operationNodeList.value.splice(index, 1);
-    }
-
-    if (Object.values(checkedMap).length === 0) {
-      tableRef.value!.clearSelected();
-    }
-  };
-
   // 选择单台
   const handleSelect = (data: { checked: boolean; row: InfluxDBInstanceModel }) => {
     const selectedMap = { ...batchSelectInstances.value };
@@ -723,15 +678,6 @@
       eventBus.emit('fetch-group-list');
       tableRef.value!.clearSelected();
     });
-  };
-
-  const handleShowReplace = (data?: InfluxDBInstanceModel) => {
-    operationNodeList.value = data ? [data] : Object.values(batchSelectInstances.value);
-    isShowReplace.value = true;
-  };
-
-  const handleReplaceSucceeded = () => {
-    tableRef.value!.clearSelected();
   };
 
   const handleBatchRestart = () => {
@@ -891,7 +837,7 @@
    */
   const handleApply = () => {
     router.push({
-      name: 'SelfServiceApplyInfluxDB',
+      name: TicketTypes.INFLUXDB_APPLY,
       query: {
         bizId: currentBizId,
         from: route.name as string,

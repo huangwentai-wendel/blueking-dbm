@@ -963,10 +963,14 @@ func (task *RedisInsRecoverTask) RestoreFullbackup() error {
 	}
 	defer redisCli.Close()
 
-	task.FullBackup.RestoreBackup(task.NeWTempIP, task.NewTmpPort, task.NewTmpPassword)
+	restoreErr := task.FullBackup.RestoreBackup(task.NeWTempIP, task.NewTmpPort, task.NewTmpPassword)
+	if restoreErr != nil {
+		task.Err = restoreErr
+		return restoreErr
+	}
 	if task.FullBackup.Err != nil {
 		task.Err = task.FullBackup.Err
-		return err
+		return task.FullBackup.Err
 	}
 	msg = fmt.Sprintf("master:%s导入全备完成", redisAddr)
 	task.runtime.Logger.Info(msg)
@@ -1311,7 +1315,7 @@ func (task *RedisInsRecoverTask) getNeWTempIPClusterNodes() error {
 	logCmd := fmt.Sprintf("cd %s && redis-cli -h %s -p %d -a xxxx cluster nodes > cluster_nodes.txt",
 		task.RecoverDir, task.NeWTempIP, task.NewTmpPort)
 	task.runtime.Logger.Info("获取cluster nodes信息:%s", logCmd)
-	ret01, err := util.RunLocalCmd("bash", []string{"-c", cmd}, "", nil, 600*time.Second)
+	ret01, err := util.RunLocalCmdReplacePkey("bash", []string{"-c", cmd}, password, "", nil, 600*time.Second)
 	if err != nil {
 		task.runtime.Logger.Error(fmt.Sprintf("获取cluster nodes信息失败,详情:%v", err))
 		return err

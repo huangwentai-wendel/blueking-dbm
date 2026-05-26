@@ -1,20 +1,22 @@
 <template>
-  <BkTableColumn
+  <TableColumn
     class-name="cluster-list-operation-column"
+    col-key="row-operation"
     fixed="left"
-    label=" "
-    :resize="false"
+    :resizable="false"
+    title=" "
     :width="30">
-    <template #default="{ data, rowIndex }: { data: IRowData; rowIndex: number }">
+    <template #default="{ row, rowIndex }: { row: IRowData; rowIndex: number }">
       <OperationMenu
+        ref="operationMenuRef"
         :style="{
-          display: !currentClusterId ? (rowIndex === 0 ? 'flex' : '') : currentClusterId === data.id ? 'flex' : '',
+          display: !currentClusterId ? (rowIndex === 0 ? 'flex' : '') : currentClusterId === row.id ? 'flex' : '',
         }"
-        @show="() => handleShow(data)">
-        <slot v-bind="{ data }" />
+        @show="() => handleShow(row)">
+        <slot v-bind="{ data: row }" />
       </OperationMenu>
     </template>
-  </BkTableColumn>
+  </TableColumn>
 </template>
 <script setup lang="ts" generic="T extends ISupportClusterType">
   import { useRoute } from 'vue-router';
@@ -31,6 +33,10 @@
     default: (params: { data: ClusterModel<T> }) => void;
   }
 
+  export interface Exposes {
+    hide: () => void;
+  }
+
   type IRowData = ClusterModel<T>;
 
   defineProps<Props<T>>();
@@ -39,6 +45,7 @@
 
   const route = useRoute();
 
+  const operationMenuRef = ref<InstanceType<typeof OperationMenu>>();
   const currentClusterId = ref(0);
 
   watch(
@@ -62,11 +69,15 @@
   onBeforeUnmount(() => {
     currentClusterId.value = 0;
   });
+
+  defineExpose<Exposes>({
+    hide() {
+      operationMenuRef.value?.hide();
+    },
+  });
 </script>
 <style lang="less">
   td.cluster-list-operation-column {
-    .vxe-cell {
-      padding: 0 !important;
-    }
+    padding: 0 !important;
   }
 </style>

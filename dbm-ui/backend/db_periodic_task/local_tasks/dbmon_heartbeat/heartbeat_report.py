@@ -15,7 +15,7 @@ from datetime import timedelta
 
 from django.db.models import Q
 from django.utils import timezone
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend import env
 from backend.components import BKMonitorV3Api
@@ -25,7 +25,7 @@ from backend.constants import IP_PORT_DIVIDER
 from backend.db_meta import api
 from backend.db_meta.enums import ClusterType
 from backend.db_meta.models import AppCache, Cluster
-from backend.db_periodic_task.local_tasks.db_meta.constants import QUERY_TEMPLATE, UNIFY_QUERY_PARAMS
+from backend.db_monitor.constants import QUERY_TEMPLATE, UNIFY_QUERY_PARAMS
 from backend.db_report.enums import DbmonHeartbeatReportSubType
 from backend.db_report.models import DbmonHeartbeatReport
 from backend.db_services.redis.util import is_predixy_proxy_type, is_twemproxy_proxy_type

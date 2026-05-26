@@ -1,5 +1,6 @@
 <template>
   <BkFormItem
+    v-test="{ type: 'form', value: 'backupSource' }"
     :label="t('备份源')"
     property="backupSource"
     required>

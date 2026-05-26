@@ -11,6 +11,7 @@ specific language governing permissions and limitations under the License.
 import copy
 import datetime
 import logging
+import time
 from collections import defaultdict
 from datetime import timedelta
 
@@ -22,46 +23,76 @@ from backend.components import BKMonitorV3Api
 from backend.db_meta.enums import ClusterType
 from backend.db_meta.models import Cluster
 from backend.db_periodic_task.local_tasks.db_meta.constants import UNIFY_QUERY_PARAMS
-from backend.db_periodic_task.local_tasks.mongodb_tasks.report_op import addr, create_failed_record, dev_debug
+from backend.db_periodic_task.local_tasks.mongodb_tasks.report_op import ClusterReport, RecordBatchOps, addr, dev_debug
+from backend.db_report.enums import ReportStateType
 from backend.db_report.enums.mongodb_check_sub_type import MongodbExporterCheckSubType
-from backend.db_report.models.monogdb_check_report import MongodbBackupCheckReport
+from backend.db_report.repo.task_record_repo import get_report_day_from_time
 from backend.flow.utils.mongodb.mongodb_repo import MongoDBCluster, MongoRepository
 
 logger = logging.getLogger("root")
 
 
 class CheckMongodbUpMetricTask:
-    def __init__(self):
-        pass
+    """检查mongodb_up指标, 每个节点的mongodb_up指标值为1, 否则认为异常"""
 
-    def start(self):
+    check_type: str
+
+    def __init__(self):
+        self.check_type = MongodbExporterCheckSubType.Up.value
+
+    def start(self, report_day: int = None, batch_size: int = 20) -> tuple[int, int, int, int]:
         """
         replicaset, sharded cluster 2种架构：
         1, list all cluster
         2, filter failed, write to db
         """
-
-        """
-        删除时间大于60天的记录,全备份和binlog都是同一张表，这里操作就好
-        """
-        failed_records = []
-        MongodbBackupCheckReport.objects.filter(create_at__lte=timezone.now() - timedelta(days=60)).delete()
+        if report_day is None:
+            report_day = get_report_day_from_time(timezone.now())
+        record_batch_ops = RecordBatchOps(self.check_type, report_day)
+        deleted_count = record_batch_ops.delete_old_record(360)
+        logger.info(
+            f"CheckMongodbUpMetricTask report_day: {report_day} "
+            f"sub_type: {self.check_type} "
+            f"deleted_count: {deleted_count}"
+        )
+        deleted_count = record_batch_ops.delete_today_record()
+        logger.info(
+            f"CheckMongodbUpMetricTask report_day: {report_day} "
+            f"sub_type: {self.check_type} "
+            f"deleted_count: {deleted_count}"
+        )
 
         # 构建查询条件: 集群创建时间大于1小时
         query = Q(cluster_type__in=[ClusterType.MongoShardedCluster, ClusterType.MongoReplicaSet]) & Q(
             create_at__lt=timezone.now() - timedelta(hours=1)
         )
-        # 这里的cluster_list是一个QuerySet对象，包含了所有符合条件的Cluster对象
         cluster_list = Cluster.objects.filter(query)
         logger.info(cluster_list.query)
-
-        for c in cluster_list:
-            cluster = MongoRepository.fetch_one_cluster(with_tags=True, id=c.id)
-            rows = self.check_one(cluster)
-            failed_records.extend(rows)
-
-        # 批量插入备份失败记录
-        MongodbBackupCheckReport.objects.bulk_create(failed_records)
+        total_num = 0
+        success_num = 0
+        warning_num = 0
+        abnormal_num = 0
+        for i in range(0, len(cluster_list), batch_size):
+            for c in cluster_list[i : i + batch_size]:
+                cluster = MongoRepository.fetch_one_cluster(with_tags=True, id=c.id)
+                rows = self.check_cluster(cluster, report_day)
+                total_num += 1
+                if rows:
+                    if rows[0].state == ReportStateType.NORMAL.value:
+                        success_num += 1
+                    elif rows[0].state == ReportStateType.WARNING.value:
+                        warning_num += 1
+                    elif rows[0].state == ReportStateType.ABNORMAL.value:
+                        abnormal_num += 1
+                    for record in rows:
+                        record_batch_ops.append(record)
+            record_batch_ops.bulk_create()
+        logger.info(
+            f"CheckMongodbUpMetricTask report_day: {report_day} "
+            f"sub_type: {self.check_type} "
+            f"total_num: {total_num}, success_num: {success_num}, warning_num: {warning_num}, abnormal_num: {abnormal_num}"
+        )
+        return total_num, success_num, warning_num, abnormal_num
 
     def is_skip_check(self, cluster: MongoDBCluster) -> tuple[bool, str]:
         """
@@ -75,7 +106,25 @@ class CheckMongodbUpMetricTask:
             return True, "skipped by temporary:{}".format(v)
         return False, ""
 
-    def check_one(self, cluster: MongoDBCluster):
+    def check_cluster(self, cluster: MongoDBCluster, report_day: int):
+        """
+        执行_check_cluster_inner, 如果异常，Sleep 10秒后重试，最多试3次
+        如果重试3次都失败，则返回异常记录
+        """
+        last_error = None
+        for i in range(3):
+            try:
+                records = self._do_check_cluster_inner(cluster, report_day)
+                if records is not None:
+                    return records
+            except Exception as e:
+                logger.error(f"check_cluster error: {e}, retry {i + 1} times, sleep {i * 3 + 1} seconds")
+                last_error = e
+                time.sleep(i * 3 + 1)
+        cluster_report = ClusterReport(cluster, report_day, self.check_type)
+        return cluster_report.make_error_record(f"system error after 3 times retry: {last_error}")
+
+    def _do_check_cluster_inner(self, cluster: MongoDBCluster, report_day: int):
         """
         1. 获得所有的mongodb_up的metric.
         2. 对比instance, instance_role 是否一致
@@ -83,73 +132,42 @@ class CheckMongodbUpMetricTask:
             1) metric not found
             2) instance_role not match
             3) value != 1
-
         """
-        failed_records = []
-        mongodb_up = MongodbExporterCheckSubType.Up.value
-
+        cluster_report = ClusterReport(cluster, report_day, self.check_type)
         skipped, reason = self.is_skip_check(cluster)
         if skipped:
             dev_debug(f"=== check_one {cluster.cluster_id} {cluster.immute_domain} {reason} === ")
-            failed_records.append(create_failed_record(cluster, "all", "all", True, reason, mongodb_up))
-            return failed_records
+            return cluster_report.make_skip_record(reason)
 
-        metric_val = fetch_metric_by_cluster(cluster.immute_domain)
         all_node = get_all_nodes(cluster)
         if len(all_node) == 0:
-            # 可能已下架
-            return failed_records
+            cluster_report.append(ReportStateType.ABNORMAL.value, "all", "all", "no node")
+            return cluster_report.make_records()
 
+        metric_val = fetch_metric_by_cluster(cluster.immute_domain)
         if metric_val is None:
-            failed_records.append(
-                create_failed_record(
-                    c=cluster,
-                    shard="",
-                    instance="all-node",
-                    status=0,
-                    msg="fetch metric api error",
-                    subtype=mongodb_up,
-                )
-            )
-            return failed_records
-
-        if len(metric_val) == 0:
-            failed_records.append(
-                create_failed_record(
-                    c=cluster, shard="", instance="all-node", status=0, msg="metric not found", subtype=mongodb_up
-                )
-            )
-            return failed_records
-
+            metric_val = {}
         for node in all_node:
+            msg = "ok"
             item = metric_val.get(addr(node))
             if item is None:
                 msg = "metric not found"
+                state = ReportStateType.ABNORMAL.value
             elif item["value"] != 1:
                 msg = "metric value not 1 ({})".format(item["value"])
+                state = ReportStateType.ABNORMAL.value
             else:
                 msg = "ok"
+                state = ReportStateType.NORMAL.value
 
-            if msg:
-                failed_records.append(
-                    create_failed_record(
-                        c=cluster,
-                        shard=node.set_name,
-                        instance=addr(node),
-                        status=0 if msg != "ok" else 1,
-                        msg=msg,
-                        subtype=mongodb_up,
-                    )
-                )
+            cluster_report.append(state, node.set_name, addr(node), msg)
 
-        return failed_records
+        return cluster_report.make_records()
 
 
 def get_all_nodes(cluster: MongoDBCluster) -> list:
     """
     获取所有节点的ip和端口
-    :param cluster:
-    :return:
     """
     nodes = []
     for shard in cluster.get_shards(with_config=True, sort_by_set_name=True):
@@ -196,21 +214,30 @@ def fetch_metric_by_cluster(cluster_domain):
     metric_result = defaultdict(dict)
     try:
         out = BKMonitorV3Api.unify_query(params, use_admin=True)
-        series = out["series"]
+        series = out.get("series", [])
     except Exception as e:
         logger.error("query metric error: {}".format(e))
         return None
     dev_debug("cluster_domain: {} series: {}".format(cluster_domain, series))
     for item in series:
         logger.info("cluster_domain: {} item: {}".format(cluster_domain, item))
-        ip_port = item["dimensions"]["bk_target_ip"] + ":" + str(item["dimensions"]["instance_port"])
-        logger.info("cluster_domain: {} ip_port: {}".format(cluster_domain, ip_port))
-        metric_result[ip_port] = {
-            "instance": ip_port,
-            "instance_role": item["dimensions"]["instance_role"],
-            "instance_port": item["dimensions"]["instance_port"],
-            "bk_target_ip": item["dimensions"]["bk_target_ip"],
-            "cluster_domain": item["dimensions"]["cluster_domain"],
-            "value": item["datapoints"][0][0],
-        }
+        try:
+            dimensions = item.get("dimensions", {})
+            datapoints = item.get("datapoints", [])
+            if not datapoints:
+                logger.warning("cluster_domain: {} item has empty datapoints: {}".format(cluster_domain, item))
+                continue
+            ip_port = dimensions.get("bk_target_ip", "") + ":" + str(dimensions.get("instance_port", ""))
+            logger.info("cluster_domain: {} ip_port: {}".format(cluster_domain, ip_port))
+            metric_result[ip_port] = {
+                "instance": ip_port,
+                "instance_role": dimensions.get("instance_role", ""),
+                "instance_port": dimensions.get("instance_port", ""),
+                "bk_target_ip": dimensions.get("bk_target_ip", ""),
+                "cluster_domain": dimensions.get("cluster_domain", ""),
+                "value": datapoints[0][0],
+            }
+        except (KeyError, IndexError, TypeError) as e:
+            logger.error("cluster_domain: {} parse item error: {}, item: {}".format(cluster_domain, e, item))
+            continue
     return metric_result

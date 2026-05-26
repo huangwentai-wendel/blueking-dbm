@@ -9,7 +9,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend import env
 
@@ -20,9 +20,26 @@ from ..proxy_api import ProxyAPI
 class _DRSApi(object):
     MODULE = _("DB 远程服务")
     BASE_DOMAIN = DRS_APIGW_DOMAIN
-    # DRS长耗时超时时间为1h TODO: 后续长耗时，改造到下发dbactuator执行更合理
-    DRS_TIMEOUT = 60 * 60
+    # DRS长耗时超时时间为6h TODO: 后续长耗时，改造到下发dbactuator执行更合理
+    DRS_TIMEOUT = 6 * 60 * 60
     DRS_SHORT_TIMEOUT = 10
+
+    # SQLServer RPC 默认 connect_timeout（秒）。
+    # DRS 后端默认值是 2s，跨云/跨地域链路偶发 "context deadline exceeded"，
+    # 这里在客户端侧统一抬高，调用方仍可通过 params["connect_timeout"] 覆盖。
+    SQLSERVER_DEFAULT_CONNECT_TIMEOUT = 5
+
+    @classmethod
+    def _inject_sqlserver_connect_timeout(cls, params):
+        """
+        SQLServer RPC 的 before_request 钩子：当调用方未显式传 connect_timeout
+        （或传了非正值）时，补上统一的默认值。
+        """
+        if not isinstance(params, dict):
+            return params
+        if int(params.get("connect_timeout") or 0) <= 0:
+            params["connect_timeout"] = cls.SQLSERVER_DEFAULT_CONNECT_TIMEOUT
+        return params
 
     def __init__(self):
         ssl_flag = True
@@ -41,6 +58,26 @@ class _DRSApi(object):
             default_timeout=self.DRS_TIMEOUT,
         )
 
+        self.v2_mysql_rpc = ProxyAPI(
+            method="POST",
+            base=self.BASE_DOMAIN,
+            url="v2/mysql/rpc",
+            module=self.MODULE,
+            ssl=ssl_flag,
+            description=_("MySQL V2 远程执行"),
+            default_timeout=self.DRS_TIMEOUT,
+        )
+
+        self.v2_mysql_ws = ProxyAPI(
+            method="POST",
+            base=self.BASE_DOMAIN,
+            url="v2/mysql/ws",
+            module=self.MODULE,
+            ssl=ssl_flag,
+            description=_("MySQL V2 远程执行"),
+            default_timeout=self.DRS_TIMEOUT,
+        )
+
         self.short_rpc = ProxyAPI(
             method="POST",
             base=self.BASE_DOMAIN,
@@ -52,10 +89,31 @@ class _DRSApi(object):
             max_retry_times=1,
         )
 
+        self.v2_short_rpc = ProxyAPI(
+            method="POST",
+            base=self.BASE_DOMAIN,
+            url="v2/mysql/rpc",
+            module=self.MODULE,
+            ssl=ssl_flag,
+            description=_("DB 远程执行(短耗时)"),
+            default_timeout=self.DRS_SHORT_TIMEOUT,
+            max_retry_times=1,
+        )
+
         self.proxyrpc = ProxyAPI(
             method="POST",
             base=self.BASE_DOMAIN,
             url="proxy-admin/rpc",
+            module=self.MODULE,
+            ssl=ssl_flag,
+            description=_("DB PROXY远程执行"),
+            default_timeout=self.DRS_TIMEOUT,
+        )
+
+        self.v2_proxyrpc = ProxyAPI(
+            method="POST",
+            base=self.BASE_DOMAIN,
+            url="v2/proxy-admin/rpc",
             module=self.MODULE,
             ssl=ssl_flag,
             description=_("DB PROXY远程执行"),
@@ -88,6 +146,7 @@ class _DRSApi(object):
             module=self.MODULE,
             ssl=ssl_flag,
             description=_("sqlserver 远程执行"),
+            before_request=self._inject_sqlserver_connect_timeout,
         )
 
         self.sqlserver_data_read_rpc = ProxyAPI(
@@ -97,6 +156,7 @@ class _DRSApi(object):
             module=self.MODULE,
             ssl=ssl_flag,
             description=_("sqlserver 远程执行(业务库数据只读账号)"),
+            before_request=self._inject_sqlserver_connect_timeout,
         )
 
         self.sqlserver_sys_read_rpc = ProxyAPI(
@@ -106,12 +166,22 @@ class _DRSApi(object):
             module=self.MODULE,
             ssl=ssl_flag,
             description=_("sqlserver 远程执行(业务库数据只读账号)"),
+            before_request=self._inject_sqlserver_connect_timeout,
         )
 
         self.webconsole_rpc = ProxyAPI(
             method="POST",
             base=self.BASE_DOMAIN,
             url="webconsole/rpc",
+            module=self.MODULE,
+            ssl=ssl_flag,
+            description=_("webconsole 远程执行(只读账号)"),
+        )
+
+        self.v2_webconsole_rpc = ProxyAPI(
+            method="POST",
+            base=self.BASE_DOMAIN,
+            url="v2/webconsole/rpc",
             module=self.MODULE,
             ssl=ssl_flag,
             description=_("webconsole 远程执行(只读账号)"),
@@ -139,6 +209,17 @@ class _DRSApi(object):
             module=self.MODULE,
             ssl=ssl_flag,
             description=_("mysql rpc 复杂接口"),
+            default_timeout=60 * 3,
+        )
+
+        self.v2_mysql_complex_rpc = ProxyAPI(
+            method="POST",
+            base=self.BASE_DOMAIN,
+            url="v2/mysql/complex-rpc",
+            module=self.MODULE,
+            ssl=ssl_flag,
+            description=_("mysql rpc 复杂接口"),
+            default_timeout=60 * 3,
         )
 
         self.mongodb_rpc = ProxyAPI(

@@ -17,6 +17,7 @@ import openpyxl
 from django.http.response import HttpResponse, StreamingHttpResponse
 from django.utils.encoding import escape_uri_path
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.writer.excel import save_virtual_workbook
@@ -26,6 +27,18 @@ class ExcelHandler:
     """
     封装常用的excel处理函数
     """
+
+    @classmethod
+    def _clean_illegal_char(cls, value: Any) -> str:
+        """
+        清理 Excel 不支持的非法字符，将非法字符替换为空字符串
+        :param value: 原始值（可以是任何类型）
+        :return: 清理后的字符串
+        """
+        if value is None:
+            return ""
+        cleaned_value = ILLEGAL_CHARACTERS_RE.sub("", str(value))
+        return cleaned_value
 
     @classmethod
     def _adapt_sheet_weight_height(cls, sheet: Worksheet, first_header_row: int = 1):
@@ -46,9 +59,8 @@ class ExcelHandler:
                 # 自动调整行高度
                 cell = sheet.cell(row, col)
                 cell.alignment = Alignment(wrapText=True)
-
-                cell_str_len_list = [len(cell_str.encode("gbk")) for cell_str in str(cell.value).split("\n")]
-                max_col_dimensions[col] = max(max_col_dimensions[col], max(cell_str_len_list) * 1.3)
+                cell_len_list = [len(val.encode("gbk", errors="ignore")) for val in str(cell.value).split("\n")]
+                max_col_dimensions[col] = max(max_col_dimensions[col], max(cell_len_list) * 1.3)
 
         # 自动调整列宽度
         for col in range(1, col_num + 1):
@@ -94,25 +106,33 @@ class ExcelHandler:
         return matrix_data
 
     @classmethod
-    def serialize(
+    def serialize_handler(
         cls,
         data_dict__list: List[Dict],
+        wb: Workbook,
+        sheet: Worksheet,
         template: str = None,
         headers: List = None,
         header_style: List = None,
         match_header: bool = False,
-    ) -> Workbook:
+        extra_headers: List[str] = None,
+        style_ref_col: int = 2,
+        auto_fit: bool = False,
+    ):
         """
-        - 将数据字典序列化为excel对象
+        - 处理excel对象数据写入单元格
         :param data_dict__list: 数据字典
+        :param wb: excel对象
+        :param sheet: excel工作表
         :param template: excel模板路径(优先以模板的头部样式作为excel的头部)
         :param headers: excel数据头 [{"id": "header_id", "name": "header_name"}]
         :param header_style: excel的头部样式(颜色)
         :param match_header: 数据是否匹配表头，如果为True，则根据 header 严格匹配列名，若不存在，则在该 cell 填充空
+        :param extra_headers: 需要在模板表头末尾追加的额外列名列表（仅在使用template时生效），自动复制参考列的样式
+        :param style_ref_col: 追加列时用于复制样式的参考列号（1-based），默认为2
+        :param auto_fit: 是否自适应调整行高和列宽，默认为False
         """
 
-        wb: Workbook = Workbook()
-        sheet: Worksheet = wb.active
         first_data_row: int = 2
 
         if template:
@@ -120,11 +140,27 @@ class ExcelHandler:
             first_data_row = 3
             wb = openpyxl.load_workbook(template)
             sheet = wb.active
+            headers = [cell.value for cell in sheet[first_data_row - 1]]
+
+            # 在模板表头末尾追加额外列，并复制参考列的样式
+            if extra_headers:
+                ref_cell = sheet.cell(row=first_data_row - 1, column=style_ref_col)
+                extra_col_start = len(headers) + 1
+                for i, extra_header in enumerate(extra_headers):
+                    col_idx = extra_col_start + i
+                    new_cell = sheet.cell(row=first_data_row - 1, column=col_idx, value=extra_header)
+                    if ref_cell.font:
+                        new_cell.font = ref_cell.font.copy()
+                    if ref_cell.fill:
+                        new_cell.fill = ref_cell.fill.copy()
+                    if ref_cell.alignment:
+                        new_cell.alignment = ref_cell.alignment.copy()
+                    headers.append(extra_header)
         elif headers:
             # 如果没有template，则根据给定的header和header颜色来设置头部和样式
             for col, header in enumerate(headers):
                 header = header if isinstance(header, str) else header["name"]
-                cell = sheet.cell(1, col + 1, str(header))
+                cell = sheet.cell(1, col + 1, cls._clean_illegal_char(header))
                 if header_style:
                     cell.fill = PatternFill("solid", fgColor=header_style[header])
 
@@ -137,15 +173,90 @@ class ExcelHandler:
                     if header_id not in data_dict:
                         sheet.cell(row + first_data_row, col + 1).value = ""
                     else:
-                        sheet.cell(row + first_data_row, col + 1, str(data_dict[header_id]))
+                        sheet.cell(row + first_data_row, col + 1, cls._clean_illegal_char(data_dict[header_id]))
             else:
                 for col, value in enumerate(list(data_dict.values())):
-                    sheet.cell(row + first_data_row, col + 1, str(value))
+                    sheet.cell(row + first_data_row, col + 1, cls._clean_illegal_char(value))
 
         # 自适应设置行高和列宽
-        cls._adapt_sheet_weight_height(sheet=sheet, first_header_row=first_data_row - 1)
+        if auto_fit:
+            cls._adapt_sheet_weight_height(sheet=sheet, first_header_row=first_data_row - 1)
+        return wb
+
+    @classmethod
+    def serialize(
+        cls,
+        data_dict__list: List[Dict],
+        template: str = None,
+        headers: List = None,
+        header_style: List = None,
+        match_header: bool = False,
+        sheet_name: str = None,
+        extra_headers: List[str] = None,
+        style_ref_col: int = 2,
+        auto_fit: bool = False,
+    ) -> Workbook:
+        """
+        - 将数据字典序列化为excel对象
+        :param data_dict__list: 数据字典
+        :param template: excel模板路径(优先以模板的头部样式作为excel的头部)
+        :param headers: excel数据头 [{"id": "header_id", "name": "header_name"}]
+        :param header_style: excel的头部样式(颜色)
+        :param match_header: 数据是否匹配表头，如果为True，则根据 header 严格匹配列名，若不存在，则在该 cell 填充空
+        :param extra_headers: 需要在模板表头末尾追加的额外列名列表（仅在使用template时生效）
+        :param style_ref_col: 追加列时用于复制样式的参考列号（1-based），默认为2
+        :param auto_fit: 是否自适应调整行高和列宽，默认为False
+        """
+
+        wb: Workbook = Workbook()
+        sheet: Worksheet = wb.active
+        if sheet_name:
+            sheet.title = sheet_name
+        wb = cls.serialize_handler(
+            data_dict__list,
+            wb,
+            sheet,
+            template,
+            headers,
+            header_style,
+            match_header,
+            extra_headers,
+            style_ref_col,
+            auto_fit,
+        )
 
         return wb
+
+    @classmethod
+    def add_sheet(
+        cls,
+        wb: Workbook,
+        sheet_name: str,
+        data_dict__list: List[Dict],
+        template: str = None,
+        headers: List = None,
+        header_style: List = None,
+        match_header: bool = False,
+        extra_headers: List[str] = None,
+        style_ref_col: int = 2,
+    ):
+        """
+        - 将excel对象追加新的sheet
+        :param wb: excel对象
+        :param sheet_name: sheet名
+        :param data_dict__list: 数据字典
+        :param template: excel模板路径(优先以模板的头部样式作为excel的头部)
+        :param headers: excel数据头 [{"id": "header_id", "name": "header_name"}]
+        :param header_style: excel的头部样式(颜色)
+        :param match_header: 数据是否匹配表头，如果为True，则根据 header 严格匹配列名，若不存在，则在该 cell 填充空
+        :param extra_headers: 需要在模板表头末尾追加的额外列名列表（仅在使用template时生效）
+        :param style_ref_col: 追加列时用于复制样式的参考列号（1-based），默认为2
+        """
+
+        sheet: Worksheet = wb.create_sheet(title=sheet_name)
+        cls.serialize_handler(
+            data_dict__list, wb, sheet, template, headers, header_style, match_header, extra_headers, style_ref_col
+        )
 
     @classmethod
     def response(cls, wb: Workbook, excel_name: str) -> HttpResponse:
@@ -168,3 +279,39 @@ class ExcelHandler:
     def stream_response(cls, wb: Workbook, excel_name: str) -> StreamingHttpResponse:
         # TODO 如果excel文件过大，需采用流式返回，待实现
         raise NotImplementedError
+
+    @classmethod
+    def paser_rows(
+        cls,
+        excel: BytesIO,
+        header_row: int = 0,
+        row_nums: List[int] = None,
+        sheet_name: str = "",
+    ) -> List[Dict]:
+        """
+        从excel文件中按指定行号提取数据行，返回的每条数据中包含 _row_num 字段标识原始Excel行号。
+        :param excel: excel二进制文件
+        :param header_row: 表头所在行索引（0-based，即 excel_rows 列表中的索引）
+        :param row_nums: 需要提取的Excel行号列表（1-based），为None时提取所有数据行
+        :param sheet_name: sheet的名称，为空时使用active sheet
+        :return: 数据字典列表，每条数据包含 _row_num 字段
+        """
+        if not sheet_name:
+            excel_rows = list(openpyxl.load_workbook(excel).active.rows)
+        else:
+            excel_rows = list(openpyxl.load_workbook(excel)[sheet_name].rows)
+
+        header_list = [header.value for header in excel_rows[header_row]]
+        excel_data_dict__list = []
+
+        for idx, content_row in enumerate(excel_rows[header_row + 1 :]):
+            # Excel行号 = header_row(0-based索引) + 1(转为1-based) + 1(跳过表头行) + idx
+            excel_row_num = header_row + 2 + idx
+            if row_nums is not None and excel_row_num not in row_nums:
+                continue
+            content_list = [str(content.value) for content in content_row]
+            row_data = dict(zip(header_list, content_list))
+            row_data["_row_num"] = excel_row_num
+            excel_data_dict__list.append(row_data)
+
+        return excel_data_dict__list

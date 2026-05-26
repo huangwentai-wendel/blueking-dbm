@@ -6,12 +6,10 @@ export interface ClusterListNode {
   bk_sub_zone: string;
   instance: string;
   ip: string;
-
   name: string;
   phase: string;
   port: number;
   spec_config: {
-    capacity: number;
     count: number;
     cpu: {
       max: number;
@@ -19,7 +17,6 @@ export interface ClusterListNode {
     };
     device_class: string[];
     id: number;
-    machine_pair: number;
     mem: {
       max: number;
       min: number;
@@ -30,8 +27,10 @@ export interface ClusterListNode {
       min: number;
     };
     storage_spec: {
+      max: number;
+      min: number;
       mount_point: string;
-      size: number;
+      size?: number;
       type: string;
     }[];
   };

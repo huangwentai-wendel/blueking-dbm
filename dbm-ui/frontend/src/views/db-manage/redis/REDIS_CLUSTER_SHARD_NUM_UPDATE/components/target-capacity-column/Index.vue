@@ -38,9 +38,26 @@
           <div class="item-title">{{ t('Proxy 规格') }}：</div>
           <div class="item-content">
             <RenderSpec
+              v-if="targetProxySpecInfo"
               :data="targetProxySpecInfo"
-              :hide-qps="!targetProxySpecInfo?.qps.max"
               is-ignore-counts />
+          </div>
+        </div>
+        <div class="info-item">
+          <div class="item-title">{{ t('资源标签') }}：</div>
+          <div class="item-content">
+            <template v-if="modelValue.proxy.labels.length">
+              <BkTag
+                v-for="labelItem in modelValue.proxy.labels"
+                :key="labelItem.id">
+                {{ labelItem.value }}
+              </BkTag>
+            </template>
+            <BkTag
+              v-else
+              theme="success">
+              {{ t('通用无标签') }}
+            </BkTag>
           </div>
         </div>
         <div class="info-item">
@@ -67,9 +84,26 @@
           <div class="item-title">{{ t('后端存储规格') }}：</div>
           <div class="item-content">
             <RenderSpec
+              v-if="targetBackendSpecInfo"
               :data="targetBackendSpecInfo"
-              :hide-qps="!targetBackendSpecInfo?.qps.max"
               is-ignore-counts />
+          </div>
+        </div>
+        <div class="info-item">
+          <div class="item-title">{{ t('资源标签') }}：</div>
+          <div class="item-content">
+            <template v-if="modelValue.backend_group.labels.length">
+              <BkTag
+                v-for="labelItem in modelValue.backend_group.labels"
+                :key="labelItem.id">
+                {{ labelItem.value }}
+              </BkTag>
+            </template>
+            <BkTag
+              v-else
+              theme="success">
+              {{ t('通用无标签') }}
+            </BkTag>
           </div>
         </div>
         <div class="info-item">
@@ -133,8 +167,9 @@
 
   import RedisModel from '@services/model/redis/redis';
 
-  import RenderSpec from '@components/render-table/columns/spec-display/Index.vue';
+  import RenderSpec from '@components/spec-display/Index.vue';
 
+  import ResourceTagSelector from '@views/db-manage/common/apply-items/ResourceTagSelector.vue';
   import ClusterCapacityUsageRate from '@views/db-manage/common/cluster-capacity-usage-rate/Index.vue';
   import ValueDiff from '@views/db-manage/common/value-diff/Index.vue';
 
@@ -169,6 +204,7 @@
     backend_group: {
       count: string | number;
       id: number;
+      labels: ComponentProps<typeof ResourceTagSelector>['modelValue'];
     };
     capacity: number;
     cluster_shard_num: number;
@@ -176,6 +212,7 @@
     proxy: {
       count: number;
       id: number;
+      labels: ComponentProps<typeof ResourceTagSelector>['modelValue'];
     };
   }>({
     required: true,
@@ -257,6 +294,7 @@
       backend_group: {
         count: choosedObj.backend_spec?.count,
         id: choosedObj.backend_spec?.id,
+        labels: choosedObj.backend_spec.labels,
       },
       capacity: capacity.current,
       cluster_shard_num: choosedObj.cluster_shard_num,
@@ -264,6 +302,7 @@
       proxy: {
         count: choosedObj.proxy_spec?.count,
         id: choosedObj.proxy_spec?.id,
+        labels: choosedObj.proxy_spec.labels,
       },
     });
     targetProxySpecInfo.value = choosedObj.proxy_spec;

@@ -3,7 +3,6 @@ package dbmonheartbeat
 
 import (
 	"dbm-services/mongodb/db-tools/dbmon/cmd/basejob"
-	"dbm-services/mongodb/db-tools/dbmon/cmd/mongojob"
 	"dbm-services/mongodb/db-tools/mongo-toolkit-go/pkg/buildinfo"
 	"fmt"
 	"runtime"
@@ -65,18 +64,21 @@ func (job *Job) Run() {
 		return
 	}
 
+	// sendHeartBeat. 发送心跳. 会带第一个实例的维度信息.
+	// 如果发送失败, 则返回错误, 并记录命令日志
+	// 如果发送成功, 则记录成功日志.
 	err := job.sendHeartBeat(&job.MyConf.BkMonitorBeat, &job.MyConf.Servers[0])
 	if err != nil {
 		job.Logger.Warn(fmt.Sprintf("SendHeartBeat return err %s", err.Error()),
 			zap.Uint64("loopTimes", job.LoopTimes))
 	} else {
-		job.Logger.Info("done", zap.Uint64("loopTimes", job.LoopTimes))
+		job.Logger.Info("sendHeartBeat done", zap.Uint64("loopTimes", job.LoopTimes))
 	}
 }
 
 // sendHeartBeat 发送心跳 会带第一个实例的维度信息
 func (job *Job) sendHeartBeat(conf *config.BkMonitorBeatConfig, serverConf *config.ConfServerItem) error {
-	msgH, err := mongojob.GetBkMonitorBeatSender(conf, serverConf)
+	msgH, err := config.GetBkMonitorBeatSender(conf, serverConf)
 	if err != nil {
 		return err
 	}

@@ -16,10 +16,11 @@
     :append-rules="rules"
     field="cluster.master_domain"
     fixed="left"
-    :label="t('目标集群')"
+    :label="label"
     :loading="loading"
-    :min-width="200"
-    required>
+    :min-width="minWidth"
+    required
+    :rowspan="rowspan">
     <template #headAppend>
       <span
         v-bk-tooltips="t('批量选择')"
@@ -36,30 +37,34 @@
   <ClusterSelector
     v-model:is-show="showSelector"
     :cluster-types="[ClusterTypes.TENDBCLUSTER]"
-    :selected="selected"
+    :selected="selectedClusters"
     :support-offline-data="supportOfflineData"
     :tab-list-config="tabListConfig"
     @change="handleSelectorChange" />
 </template>
 <script lang="ts" setup>
-  import { useI18n } from 'vue-i18n';
   import { useRequest } from 'vue-request';
 
   import TendbClusterModel from '@services/model/tendbcluster/tendbcluster';
-  import { getTendbClusterList } from '@services/source/tendbcluster';
+  import { filterClusters } from '@services/source/dbbase';
 
-  import { ClusterTypes } from '@common/const';
+  import { ClusterTypes, DBTypes } from '@common/const';
   import { domainRegex } from '@common/regex';
 
   import ClusterSelector, { type TabConfig } from '@components/cluster-selector/Index.vue';
+
+  import { t } from '@/locales/index';
 
   interface Props {
     /**
      * @description 是否允许重复选择集群
      * @default false
      */
-    allowsDuplicates?: boolean;
-    selected: Record<ClusterTypes.TENDBCLUSTER, TendbClusterModel[]>;
+    allowRepeat?: boolean;
+    label?: string;
+    minWidth?: number;
+    rowspan?: number;
+    selected: TendbClusterModel[];
     /**
      * @description 是否支持离线数据
      * @default false
@@ -68,57 +73,86 @@
     tabListConfig?: Record<ClusterTypes.TENDBCLUSTER, TabConfig>;
   }
 
-  type Emits = (e: 'batch-edit', list: TendbClusterModel[]) => void;
-
-  interface Exposes {
-    fetch: typeof queryCluster;
+  interface Emits {
+    (e: 'batch-edit', list: TendbClusterModel[]): void;
+    (e: 'request-success'): void;
   }
 
   const props = withDefaults(defineProps<Props>(), {
-    allowsDuplicates: false,
+    allowRepeat: false,
+    label: t('目标集群'),
+    minWidth: 350,
+    rowspan: 1,
     supportOfflineData: false,
     tabListConfig: () => ({}) as Record<ClusterTypes.TENDBCLUSTER, TabConfig>,
   });
 
   const emits = defineEmits<Emits>();
 
-  const modelValue = defineModel<TendbClusterModel>({
+  const modelValue = defineModel<
+    {
+      city?: string;
+      spec_ids?: number[];
+      subzones?: string;
+    } & TendbClusterModel
+  >({
     required: true,
   });
 
-  const { t } = useI18n();
-
   const showSelector = ref(false);
+  const selectedClusters = computed<Record<string, TendbClusterModel[]>>(() => ({
+    [ClusterTypes.TENDBCLUSTER]: props.selected,
+  }));
 
   const rules = [
     {
       message: t('集群域名格式不正确'),
-      trigger: 'blur',
-      validator: (value: string) => domainRegex.test(value),
+      trigger: 'change',
+      validator: (value: string) => !value || domainRegex.test(value),
     },
     {
       message: t('目标集群重复'),
-      trigger: 'blur',
-      validator: (value: string) => {
-        if (props.allowsDuplicates) {
-          return true;
-        }
-        return props.selected[ClusterTypes.TENDBCLUSTER].filter((item) => item.master_domain === value).length < 2;
-      },
+      trigger: 'change',
+      validator: (value: string) =>
+        props.allowRepeat || !value || props.selected.filter((item) => item.master_domain === value).length < 2,
     },
     {
       message: t('目标集群不存在'),
       trigger: 'blur',
-      validator: () => Boolean(modelValue.value.id),
+      validator: (value: string) => !value || Boolean(modelValue.value.id),
     },
   ];
 
-  const { loading, runAsync: queryCluster } = useRequest(getTendbClusterList, {
+  const { loading, runAsync: queryCluster } = useRequest(filterClusters<TendbClusterModel>, {
     manual: true,
     onSuccess(data) {
-      const [cluster] = data.results;
-      if (cluster) {
-        modelValue.value = cluster;
+      const [currentCluster] = data;
+      if (currentCluster) {
+        const spedIdsSet = new Set<number>();
+        const citiesSet = new Set<string>();
+        const subzonesSet = new Set<string>();
+        data.forEach((item) => {
+          // 规格ID
+          if (item.cluster_spec?.spec_id) {
+            spedIdsSet.add(item.cluster_spec.spec_id);
+          }
+
+          // 地域信息
+          if (item.region && item.region !== 'default') {
+            citiesSet.add(item.region);
+          }
+
+          // 园区信息
+          (item?.cluster_subzones || []).forEach((zone) => {
+            subzonesSet.add(zone);
+          });
+        });
+        modelValue.value = Object.assign({}, currentCluster, {
+          city: Array.from(citiesSet).join(','),
+          spec_ids: Array.from(spedIdsSet),
+          subzones: Array.from(subzonesSet).join(','),
+        });
+        emits('request-success');
       }
     },
   });
@@ -128,22 +162,39 @@
   };
 
   const handleChange = (value: string) => {
-    modelValue.value.id = 0;
-    modelValue.value.master_domain = value;
-    if (value) {
-      queryCluster({
-        exact_domain: value,
-      });
-    }
+    modelValue.value = Object.assign(
+      {
+        id: 0,
+        master_domain: value,
+      } as TendbClusterModel,
+      {
+        city: '',
+        spec_ids: [],
+        subzones: '',
+      },
+    );
   };
 
   const handleSelectorChange = (selected: Record<string, TendbClusterModel[]>) => {
-    emits('batch-edit', selected[ClusterTypes.TENDBCLUSTER]);
+    emits('batch-edit', selected[ClusterTypes.TENDBCLUSTER]!);
   };
 
-  defineExpose<Exposes>({
-    fetch: queryCluster,
-  });
+  watch(
+    modelValue,
+    () => {
+      if (modelValue.value.master_domain && !modelValue.value.id) {
+        queryCluster({
+          bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
+          cluster_type: ClusterTypes.TENDBCLUSTER,
+          db_type: DBTypes.TENDBCLUSTER,
+          exact_domain: modelValue.value.master_domain,
+        });
+      }
+    },
+    {
+      immediate: true,
+    },
+  );
 </script>
 <style lang="less" scoped>
   .batch-host-select {

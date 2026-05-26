@@ -17,34 +17,21 @@ import DutyRuleModel from '@services/model/monitor/duty-rule';
 import MonitorPolicyModel from '@services/model/monitor/monitor-policy';
 import type { ListBase } from '@services/types';
 
+import type { DBTypes } from '@common/const';
+
 interface UpdatePolicyParams {
-  custom_conditions: {
-    condition: string;
-    dimension_name: string;
-    key: string;
-    method: string;
-    value: string[];
-  }[];
+  agg_info: MonitorPolicyModel['agg_info'];
+  custom_conditions: MonitorPolicyModel['custom_conditions'];
+  detects_config: MonitorPolicyModel['detects_config'];
+  get_data_time?: string;
+  is_enabled: boolean;
+  no_data_config: MonitorPolicyModel['no_data_config'];
+  notify_config: MonitorPolicyModel['notify_config'];
   notify_groups: number[];
   notify_rules: string[];
-  targets: {
-    level: string;
-    rule: {
-      key: string;
-      value: string[];
-    };
-  }[];
-  test_rules: {
-    config: [
-      {
-        method: string;
-        threshold: number;
-      },
-    ][];
-    level: number;
-    type: string;
-    unit_prefix: string;
-  }[];
+  policy_tag: MonitorPolicyModel['policy_tag'];
+  targets: MonitorPolicyModel['targets'];
+  test_rules: MonitorPolicyModel['test_rules'];
 }
 
 interface CreateCycleDutyRuleParams {
@@ -70,26 +57,6 @@ interface CreateCustomDutyRuleParams extends Omit<CreateCycleDutyRuleParams, 'du
     members: string[];
     work_times: string[];
   }[];
-}
-
-interface DutyNoticeConfig {
-  person_duty: {
-    enable: boolean;
-    send_at: {
-      num: number;
-      unit: string;
-    };
-  };
-  schedule_table: {
-    enable: boolean;
-    qywx_id: string;
-    send_at: {
-      freq: string;
-      freq_values: number[];
-      time: string;
-    };
-    send_day: number;
-  };
 }
 
 interface AlarmGroupItem {
@@ -128,6 +95,7 @@ export const queryMonitorPolicyList = (
   params: {
     bk_biz_id?: number;
     db_type?: string;
+    id?: number;
     limit?: number;
     name?: string;
     notify_groups?: string;
@@ -150,7 +118,7 @@ export const queryMonitorPolicyList = (
   }));
 
 // 更新策略
-export const updatePolicy = (id: number, params: UpdatePolicyParams) =>
+export const updatePolicy = (id: number, params: { name?: string } & UpdatePolicyParams) =>
   http.post<{
     bkm_id: number;
     local_id: number;
@@ -158,10 +126,12 @@ export const updatePolicy = (id: number, params: UpdatePolicyParams) =>
 
 // 批量更新策略告警组
 export const batchUpdateNotifyGroup = (params: {
+  bk_biz_id: number;
   notify_groups: {
     groups: number[];
     policy_id: number;
   }[];
+  voice_notice?: string;
 }) => http.post(`/apis/monitor/policy/batch_update_notify_group/`, params);
 
 // 克隆策略
@@ -181,7 +151,8 @@ export const clonePolicy = (
 export const enablePolicy = (params: { id: number }) => http.post<boolean>(`${path}/policy/${params.id}/enable/`);
 
 // 停用策略
-export const disablePolicy = (params: { id: number }) => http.post<boolean>(`${path}/policy/${params.id}/disable/`);
+export const disablePolicy = (params: { get_data_time?: string; id: number }) =>
+  http.post<boolean>(`${path}/policy/${params.id}/disable/`);
 
 // 恢复默认策略
 export const resetPolicy = (params: { id: number }) => http.post<void>(`${path}/policy/${params.id}/reset`);
@@ -189,6 +160,9 @@ export const resetPolicy = (params: { id: number }) => http.post<void>(`${path}/
 // 删除策略
 export const deletePolicy = (params: { id: number }) =>
   http.delete<null | Record<string, any>>(`${path}/policy/${params.id}/`);
+
+// 批量删除策略
+export const patchDeletePolicy = (params: { ids: number[] }) => http.post(`${path}/policy/patch_destroy/`, params);
 
 // 根据db类型查询集群列表
 export const getClusterList = (params: { bk_biz_id: number; dbtype?: string }) =>
@@ -251,15 +225,33 @@ export const updatePartialDutyRule = (
 // 删除轮值规则
 export const deleteDutyRule = (params: { id: number }) => http.delete<void>(`${path}/duty_rule/${params.id}/`);
 
-// 查询轮值通知配置
-export const getDutyNoticeConfig = () => http.get<DutyNoticeConfig>('/apis/conf/system_settings/duty_notice_config/');
-
-// 更新轮值通知配置
-export const updateDutyNoticeConfig = (params: DutyNoticeConfig) =>
-  http.post<DutyNoticeConfig>('/apis/conf/system_settings/update_duty_notice_config/', params);
-
 // 查询轮值优先级列表
 export const getPriorityDistinct = () => http.get<number[]>(`${path}/duty_rule/priority_distinct/`);
+
+interface DutyNoticeConfig {
+  after: number;
+  channels: Record<string, boolean | string>;
+  cron: {
+    day_of_month: string;
+    day_of_week: string;
+    hour: string;
+    minute: string;
+  };
+  enabled: boolean;
+}
+
+export const getDutyNoticeConfig = () =>
+  http.get<{
+    [dbType: string]: DutyNoticeConfig;
+  }>(`${path}/duty_rule/duty_notice_config/`);
+
+// 更新轮值排班表
+export const updateDutyNoticeConfig = (params: { db_type: DBTypes } & DutyNoticeConfig) =>
+  http.post(`${path}/duty_rule/update_duty_notice_config/`, params);
+
+// 立即发送轮值排班表
+export const sendDutyNoticeSchedule = (params: { db_type: DBTypes }) =>
+  http.post(`${path}/duty_rule/send_duty_notice_schedule/`, params);
 
 // 新增告警屏蔽
 export const createAlarmShield = (params: {
@@ -410,3 +402,56 @@ export const getPolicyList = (params: {
       }[]
     >
   >(`${path}/policy/`, params);
+
+// 获取策略判断条件的无数据配置
+export const searchAlarmStrategy = (params: { monitor_policy_id: number }) =>
+  http.get<{
+    agg_dimension: string[];
+    data_source_list: {
+      data_source_label: string;
+      data_type_label: string;
+    }[];
+    metric_list: {
+      bk_biz_id: number;
+      collect_interval: number;
+      data_label: string;
+      data_source_label: string;
+      data_target: string;
+      data_type_label: string;
+      default_condition: any[];
+      default_dimensions: string[];
+      default_trigger_config: {
+        check_window: number;
+        count: number;
+      };
+      description: string;
+      dimensions: {
+        id: string;
+        is_dimension: boolean;
+        name: string;
+        type: string;
+      }[];
+      disabled: boolean;
+      extend_fields: Record<string, any>;
+      id: number;
+      metric_field: string;
+      metric_field_name: string;
+      metric_id: string;
+      name: string;
+      promql_metric: string;
+      readable_name: string;
+      related_id: string;
+      related_name: string;
+      remarks: any[];
+      result_table_id: string;
+      result_table_label: string;
+      result_table_label_name: string;
+      result_table_name: string;
+      time_field: string;
+      unit: string;
+      use_frequency: number;
+    }[];
+  }>(`${path}/policy/search_alarm_strategy/`, params);
+
+// 全局策略恢复初始值
+export const resetGlobalStrategy = (params: { policy_id: number }) => http.post(`${path}/policy/reset/`, params);

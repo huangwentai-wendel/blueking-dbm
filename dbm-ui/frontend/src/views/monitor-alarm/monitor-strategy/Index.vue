@@ -12,23 +12,27 @@
 -->
 
 <template>
-  <DbTab v-model:active="activeTab" />
-  <div class="monitor-strategy-content">
+  <DbTabForBiz v-model="activeTab" />
+  <div
+    v-if="activeTab"
+    class="monitor-strategy-content">
     <RenderContent
       :key="activeTab"
-      :active-db-type="activeTab" />
+      :db-type="activeTab" />
   </div>
 </template>
 <script setup lang="ts">
   import { useRoute } from 'vue-router';
 
-  import DbTab from '@components/db-tab/Index.vue';
+  import { DBTypes } from '@common/const';
+
+  import DbTabForBiz from '@components/db-tab-for-biz/Index.vue';
 
   import RenderContent from './components/content/Index.vue';
 
   const route = useRoute();
 
-  const activeTab = ref<string>(route.query.db_type as string);
+  const activeTab = ref(route.query.db_type as DBTypes);
 </script>
 <style lang="less">
   .monitor-strategy-content {

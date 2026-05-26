@@ -1,8 +1,10 @@
 import type { HostInfo } from '@services/types';
 
-import type { DetailBase, SpecInfo } from '../common';
+import type { ApplySpecInfo, DetailBase } from '../common';
 
 export interface Apply extends DetailBase {
+  bk_cloud_id: number;
+  bk_cloud_name: string;
   city_code: string;
   cluster_alias: string;
   cluster_name: string;
@@ -22,8 +24,8 @@ export interface Apply extends DetailBase {
   port: number;
   replication_num: number;
   resource_spec: {
-    broker: SpecInfo;
-    zookeeper: SpecInfo;
+    broker: ApplySpecInfo;
+    zookeeper: ApplySpecInfo;
   };
   retention_bytes: number;
   retention_hours: number;

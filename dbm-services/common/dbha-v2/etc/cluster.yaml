@@ -1,0 +1,123 @@
+# mysql cluster
+mysqlClusters:
+  - domain: "testdb.dbha-test1.hz.db"
+    domainSlave: "testdr.dbha-test1.hz.db"
+    bkBizId: 1
+    proxy: 
+      - host: xxx.xxx.xxx.1
+        port: 3306
+        adminPort: 4306
+      - host: xxx.xxx.xxx.2
+        port: 3306
+        adminPort: 4306
+    
+    master:
+      host: xxx.xxx.xxx.3
+      port: 3306
+    
+    slave:
+      - host: xxx.xxx.xxx.4
+        port: 3306
+      - host: xxx.xxx.xxx.5
+        port: 3306
+
+# tenDB cluster
+tenDBClusters:
+  - domain: "spider.dbha-test1.hz.db"
+    domainSlave: "spider-slave.dbha-test1.hz.db"
+    bkBizId: 1
+    spider:
+      - serverName: SPIDER0
+        host: test-tspider0
+        user: xxx
+        password: xxx
+        port: 3306
+      - serverName: SPIDER1
+        host: test-tspider1
+        user: xxx
+        password: xxx
+        port: 3306
+
+    spiderSlave:
+      - serverName: SPIDER_SLAVE0
+        host: test-tspider_slave0
+        user: xxx
+        password: xxx
+        port: 3306
+
+    ctlMaster:
+      serverName: TDBCTL0
+      host: test-tdbctl0
+      user: xxx
+      password: xxx
+      port: 3306
+
+    ctlSlave:
+      - serverName: TDBCTL1
+        host: test-tdbctl1
+        user: xxx
+        password: xxx
+        port: 3306
+
+    remoteMaster:
+      - serverName: SPT0
+        host: test-tendb-spt0
+        user: xxx
+        password: xxx
+        port: 3306
+      - serverName: SPT1
+        host: test-tendb-spt1
+        user: xxx
+        password: xxx
+        port: 3306
+
+    remoteSlave:
+      - serverName: SPT_SLAVE0
+        host: test-tendb-spt_slave0
+        user: xxx
+        password: xxx
+        port: 3306
+        masterHost: test-tendb-spt0
+        masterPort: 3306
+      - serverName: SPT_SLAVE1
+        host: test-tendb-spt_slave1
+        user: xxx
+        password: xxx
+        port: 3306
+        masterHost: test-tendb-spt1
+        masterPort: 3306
+
+dbmServices:
+  dbmApiMetadata:
+    api: http://127.0.0.1:80/apis/proxypass/dbmeta/dbha/instances/
+    timeout: 10s
+    token: "xxx"
+
+  dbmApiUpdateStatus:
+    api: http://127.0.0.1:80/apis/proxypass/dbmeta/dbha/update_status/
+    timeout: 10s
+    token: "xxx"
+
+  dbmApiSwapMysqlRole:
+    api: http://127.0.0.1:80/apis/proxypass/dbmeta/dbha/swap_role/
+    timeout: 10s
+    token: "xxx"
+  
+  dbmApiDomainGet:
+    api: http://127.0.0.1:80/apis/proxypass/dns/domain/get/
+    timeout: 10s
+    token: ""
+  
+  dbmApiDomainPut:
+    api: http://127.0.0.1:80/apis/proxypass/dns/domain/put/
+    timeout: 10s
+    token: ""
+
+authInfo:
+  user: "mysql"
+  password: "xxx"
+  proxyUser: "proxy"
+  proxyPassword: "xxx"
+  replUser: "repl"
+  replPassword: "xxx"
+    

@@ -23,14 +23,11 @@
                   <template #header>
                     <div class="resource-header">
                       <span>{{ groupItem.groupName }}</span>
-                      <span>({{ groupItem.count }})</span>
-                      <BkButton
-                        class="ml-4"
-                        text
-                        theme="primary"
-                        @click="(event: Event) => handleCopyIp(groupItem, event)">
-                        <DbIcon type="copy" />
-                      </BkButton>
+                      <span>{{ t('（共 n 个）', [groupItem.count]) }}</span>
+                      <DbIcon
+                        class="copy-icon"
+                        type="copy"
+                        @click="(event: Event) => handleCopyIp(groupItem, event)" />
                       <DbIcon
                         class="resource-colllapse-flag"
                         type="right-big" />
@@ -95,11 +92,11 @@
   watchEffect(() => {
     const nodes = props.ticketDetail.details.nodes;
     renderGroupData.value = Object.keys(nodes).map((nodeName) => {
-      const nodeDataList = nodes[nodeName];
+      const nodeDataList = nodes[nodeName]!;
       const groupName = _.trim(nodeName.replace(/\d/g, '').split(/_+/).join('_'), '_');
-      if (nodeDataList[0].ip) {
+      if (nodeDataList[0]!.ip) {
         return {
-          count: nodes[nodeName].length,
+          count: nodes[nodeName]!.length,
           data: nodes[nodeName] as IResouce[],
           groupName,
           list: [],
@@ -108,7 +105,7 @@
       const multDataList = (nodeDataList as Record<string, IResouce>[]).map((item) => {
         return Object.keys(item).map((nodeKey) => ({
           tag: nodeKey,
-          ...item[nodeKey],
+          ...item[nodeKey]!,
         }));
       });
       return {
@@ -183,6 +180,17 @@
       user-select: none;
       align-items: center;
       align-content: center;
+
+      .copy-icon {
+        margin-top: 2px;
+        font-size: 14px;
+        color: #979ba5;
+        cursor: pointer;
+
+        &:hover {
+          color: #3a84ff;
+        }
+      }
 
       .resource-colllapse-flag {
         margin-left: auto;

@@ -9,7 +9,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from ..base import BaseApi
 from ..domains import MYSQL_SIMULATION_DOMAIN
@@ -24,6 +24,17 @@ class _SQLSimulationApi(BaseApi):
             method="POST",
             url="/syntax/check/file",
             description=_("sql语法检查"),
+        )
+        # 使用示例：
+        # {
+        #     "cluster_type": "mysql",
+        #     "versions": ["5.7"],
+        #     "sqls": ["create database `test001`  "]
+        # }
+        self.syntax_check_sql = self.generate_data_api(
+            method="POST",
+            url="/syntax/check/sql",
+            description=_("sql string 语法检查"),
         )
         self.mysql_simulation = self.generate_data_api(
             method="POST",

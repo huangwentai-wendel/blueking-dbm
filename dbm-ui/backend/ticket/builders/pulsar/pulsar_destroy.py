@@ -11,12 +11,11 @@ See the License for the specific language governing permissions and limitations 
 
 import logging
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.db_meta.enums import ClusterPhase
 from backend.flow.engine.controller.pulsar import PulsarController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import HostRecycleSerializer
 from backend.ticket.builders.common.bigdata import BasePulsarTicketFlowBuilder, BigDataTakeDownDetailSerializer
 from backend.ticket.constants import TicketType
 
@@ -24,7 +23,7 @@ logger = logging.getLogger("root")
 
 
 class PulsarDestroyDetailSerializer(BigDataTakeDownDetailSerializer):
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.DEFAULT)
+    pass
 
 
 class PulsarDestroyFlowParamBuilder(builders.FlowParamBuilder):

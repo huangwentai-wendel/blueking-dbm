@@ -69,22 +69,19 @@ func (x *Xtrabackup) stopAndClean(backup bool) error {
 	return nil
 }
 
-// repairAndStart 以下所有步骤必须可重试
-func (x *Xtrabackup) repairAndStart() (err error) {
-	logger.Info("decompress xtrabackup meta files again")
-	if err := x.DecompressMetaFile(); err != nil {
-		return err
-	}
-	logger.Info("change datadir owner user and group")
-	// 调整目录属主
-	if err = x.changeDirOwner(); err != nil {
-		return err
-	}
+// SetMyCnf 设置 myCnf，供外部（如 restore-dr-after）使用
+func (x *Xtrabackup) SetMyCnf(cnf *util.CnfFile) {
+	x.myCnf = cnf
+}
+
+// repairSysAndStart 以下所有步骤必须可重试
+func (x *Xtrabackup) repairSysAndStart() (err error) {
 	logger.Info("repair myisam tables for sys mysql db (offline)")
 	// 修复MyIsam表，系统库表优先修复
 	if err := x.RepairMyisamTablesForMysqldb(); err != nil {
 		return err
 	}
+
 	logger.Info("start local mysqld with --skip-grant-tables --skip-slave-start")
 	// 启动mysql-修复权限
 	startParam := computil.StartMySQLParam{
@@ -132,11 +129,6 @@ func (x *Xtrabackup) repairAndStart() (err error) {
 		}
 	}
 
-	logger.Info("repair other user privileges")
-	// 修复权限
-	if err := x.RepairPrivileges(); err != nil {
-		return errors.WithMessage(err, "RepairPrivileges")
-	}
 	x.dbWorker.Stop()
 
 	logger.Info("restart local mysqld %d", x.TgtInstance.Port)
@@ -165,11 +157,6 @@ func (x *Xtrabackup) repairAndStart() (err error) {
 		if _, err = x.dbWorker.ExecMore(adminInitSqls); err != nil {
 			logger.Warn("fail to reset user %s", x.TgtInstance.User)
 		}
-	}
-
-	logger.Info("repair myisam tables for non-system")
-	if err := x.RepairNonSysMyIsamTables(); err != nil {
-		return err
 	}
 	return nil
 }
@@ -203,8 +190,8 @@ func (x *Xtrabackup) importData() error {
 	return nil
 }
 
-// changeDirOwner change datadir owner user and group
-func (x *Xtrabackup) changeDirOwner() error {
+// ChangeDirOwner change datadir owner user and group
+func (x *Xtrabackup) ChangeDirOwner() error {
 	dirs := []string{
 		"datadir",
 		"innodb_log_group_home_dir",
@@ -217,7 +204,7 @@ func (x *Xtrabackup) changeDirOwner() error {
 		"tokudb_log_dir",
 		"tokudb_data_dir",
 	}
-	return x.ChangeDirOwner(dirs)
+	return x.changeDirOwner(dirs)
 }
 
 // DecompressMetaFile decompress .pq file and output same file name without suffix

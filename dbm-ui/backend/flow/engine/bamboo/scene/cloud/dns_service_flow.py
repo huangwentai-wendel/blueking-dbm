@@ -13,7 +13,7 @@ from dataclasses import asdict
 from typing import Dict, List, Union
 
 from bamboo_engine.builder import SubProcess
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.flow.engine.bamboo.scene.cloud.base_service_flow import CloudBaseServiceFlow
 from backend.flow.engine.bamboo.scene.common.builder import Builder, SubBuilder
@@ -49,7 +49,7 @@ class CloudDNSServiceFlow(CloudBaseServiceFlow):
             )
 
         # 灰度部署的场景在重装会用到，每次按1/2的数量进行重启
-        ratio = 2 if grayscale else 1
+        ratio = 2 if grayscale and len(sub_dns_pipeline_list) > 1 else 1
         dns_pipeline = self.deploy_batch_service_flow(
             sub_pipeline_list=sub_dns_pipeline_list, pipeline=dns_pipeline, name=_("部署dns服务"), ratio=ratio
         )

@@ -1,41 +1,54 @@
 package kafkautil
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
-	"text/template"
+	"strconv"
+	"strings"
 )
 
 // TemplateData struct to hold the data for template rendering
 type TemplateData struct {
-	NumNetWorkThreads        int
-	LogRetentionHours        int
-	DefaultReplicationFactor int
-	NumPartitions            int
-	NumIOThreads             int
-	NumReplicaFetchers       int
-	LogDirs                  string
-	Listeners                string
-	ZookeeperConnect         string
-	LogRetentionBytes        int
+	NumNetWorkThreads                int
+	LogRetentionHours                int
+	DefaultReplicationFactor         int
+	NumPartitions                    int
+	NumIOThreads                     int
+	NumReplicaFetchers               int
+	LogDirs                          string
+	Listeners                        string
+	ZookeeperConnect                 string
+	LogRetentionBytes                int
+	BrokerRack                       string
+	ControllerQuorumBootstrapServers string
+	NodeId                           int
+	ProcessRoles                     string
+	UpperProcessRoles                string
 }
 
+// renderTemplate replaces known placeholders in value using a fixed whitelist.
+// This avoids text/template injection risks while preserving the original substitution behavior.
 func renderTemplate(value string, data TemplateData) (string, error) {
-	tmpl, err := template.New("config").Parse(value)
-	if err != nil {
-		return "", err
-	}
-
-	var renderedValue bytes.Buffer
-	err = tmpl.Execute(&renderedValue, data)
-	if err != nil {
-		return "", err
-	}
-
-	return renderedValue.String(), nil
+	r := strings.NewReplacer(
+		"{{.NumNetWorkThreads}}", strconv.Itoa(data.NumNetWorkThreads),
+		"{{.LogRetentionHours}}", strconv.Itoa(data.LogRetentionHours),
+		"{{.DefaultReplicationFactor}}", strconv.Itoa(data.DefaultReplicationFactor),
+		"{{.NumPartitions}}", strconv.Itoa(data.NumPartitions),
+		"{{.NumIOThreads}}", strconv.Itoa(data.NumIOThreads),
+		"{{.NumReplicaFetchers}}", strconv.Itoa(data.NumReplicaFetchers),
+		"{{.LogRetentionBytes}}", strconv.Itoa(data.LogRetentionBytes),
+		"{{.NodeId}}", strconv.Itoa(data.NodeId),
+		"{{.LogDirs}}", data.LogDirs,
+		"{{.Listeners}}", data.Listeners,
+		"{{.ZookeeperConnect}}", data.ZookeeperConnect,
+		"{{.BrokerRack}}", data.BrokerRack,
+		"{{.ControllerQuorumBootstrapServers}}", data.ControllerQuorumBootstrapServers,
+		"{{.ProcessRoles}}", data.ProcessRoles,
+		"{{.UpperProcessRoles}}", data.UpperProcessRoles,
+	)
+	return r.Replace(value), nil
 }
 
 // CreateServerPropertiesFile creates the server.properties file from the given JSON data

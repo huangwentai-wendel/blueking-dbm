@@ -10,7 +10,7 @@ specific language governing permissions and limitations under the License.
 """
 from typing import Any, Dict
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -53,7 +53,8 @@ class JobApiProxyPassViewSet(BaseProxyPassViewSet):
     def fast_execute_script(self, request):
         validated_data = self.params_validate(self.get_serializer_class())
         job_payloads: Dict[str, Any] = {
-            "bk_biz_id": env.JOB_BLUEKING_BIZ_ID,
+            "bk_scope_type": "biz_set",
+            "bk_scope_id": env.JOB_BLUEKING_BIZ_ID,
             "task_name": _("DBM 快速脚本执行"),
             "script_content": base64_encode(validated_data["script_content"]),
             "script_language": validated_data["script_language"],
@@ -80,7 +81,8 @@ class JobApiProxyPassViewSet(BaseProxyPassViewSet):
     def get_job_instance_status(self, request):
         validated_data = self.params_validate(self.get_serializer_class())
         job_status_payloads: Dict[str, Any] = {
-            "bk_biz_id": env.JOB_BLUEKING_BIZ_ID,
+            "bk_scope_type": "biz_set",
+            "bk_scope_id": env.JOB_BLUEKING_BIZ_ID,
             "job_instance_id": validated_data["job_instance_id"],
             "return_ip_result": True,
         }
@@ -102,7 +104,8 @@ class JobApiProxyPassViewSet(BaseProxyPassViewSet):
     def get_job_instance_ip_log(self, request):
         validated_data = self.params_validate(self.get_serializer_class())
         job_log_payloads: Dict[str, Any] = {
-            "bk_biz_id": env.JOB_BLUEKING_BIZ_ID,
+            "bk_scope_type": "biz_set",
+            "bk_scope_id": env.JOB_BLUEKING_BIZ_ID,
             "job_instance_id": validated_data["job_instance_id"],
             "step_instance_id": validated_data["step_instance_id"],
             "ip_list": validated_data["ip_list"],
@@ -132,7 +135,8 @@ class JobApiProxyPassViewSet(BaseProxyPassViewSet):
                 }
             )
         transfer_file_payload = {
-            "bk_biz_id": env.JOB_BLUEKING_BIZ_ID,
+            "bk_scope_type": "biz_set",
+            "bk_scope_id": env.JOB_BLUEKING_BIZ_ID,
             "task_name": _("DBM 快速文件分发"),
             "transfer_mode": 2,
             "file_source_list": source_list,

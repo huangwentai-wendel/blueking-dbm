@@ -23,10 +23,10 @@
     <InfoItem :label="t('DB模块名')">
       {{ ticketDetails.details.db_module_name || '--' }}
     </InfoItem>
-    <InfoItem :label="t('集群ID')">
+    <InfoItem :label="t('集群名称')">
       {{ ticketDetails.details.cluster_name || '--' }}
     </InfoItem>
-    <InfoItem :label="t('集群名称')">
+    <InfoItem :label="t('集群别名')">
       {{ ticketDetails.details.cluster_alias || '--' }}
     </InfoItem>
     <InfoItem :label="t('管控区域')">
@@ -47,20 +47,31 @@
     </InfoItem>
     <template v-if="isFromResourcePool">
       <InfoItem :label="t('资源规格')">
-        <BkPopover
+        <SpecDetailPopover
           v-if="riakSpec"
-          placement="top"
-          theme="light">
+          :data="riakSpec"
+          placement="top">
           <span
             class="pb-2"
             style="cursor: pointer; border-bottom: 1px dashed #979ba5">
             {{ riakSpec.spec_name }}（{{ `${riakSpec.count} ${t('台')}` }}）
           </span>
-          <template #content>
-            <SpecInfos :data="riakSpec" />
-          </template>
-        </BkPopover>
+        </SpecDetailPopover>
         <span v-else>--</span>
+      </InfoItem>
+      <InfoItem :label="t('资源标签')">
+        <template v-if="riakSpec && riakSpec.label_names?.length">
+          <BkTag
+            v-for="item in riakSpec.label_names"
+            :key="item">
+            {{ item }}
+          </BkTag>
+        </template>
+        <BkTag
+          v-else
+          theme="success">
+          {{ t('通用无标签') }}
+        </BkTag>
       </InfoItem>
       <InfoItem :label="t('节点数量')">
         {{ riakSpec?.count || '--' }}
@@ -95,12 +106,12 @@
   import { TicketTypes } from '@common/const';
 
   import HostPreview from '@components/host-preview/HostPreview.vue';
+  import SpecDetailPopover from '@components/spec-detail-popover/Index.vue';
 
   import { firstLetterToUpper } from '@utils';
 
   import InfoList, { Item as InfoItem } from '../components/info-list/Index.vue';
   import RegionRequirements from '../components/RegionRequirements.vue';
-  import SpecInfos from '../components/SpecInfos.vue';
 
   interface Props {
     ticketDetails: TicketModel<Riak.Apply>;

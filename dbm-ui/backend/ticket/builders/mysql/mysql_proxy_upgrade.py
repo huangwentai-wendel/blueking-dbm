@@ -25,7 +25,7 @@ class MysqlProxyUpgradeDetailSerializer(MySQLBaseOperateDetailSerializer):
         pkg_id = serializers.IntegerField(help_text=_("目标版本包ID"))
 
     infos = serializers.ListField(help_text=_("单据信息"), child=InfoSerializer())
-    force = serializers.BooleanField(help_text=_("是否强制执行"), required=False, default=False)
+    is_check_process = serializers.BooleanField(help_text=_("是否做安全检测"), default=True, required=False)
 
 
 class MysqlProxyUpgradeParamBuilder(builders.FlowParamBuilder):
@@ -36,3 +36,4 @@ class MysqlProxyUpgradeParamBuilder(builders.FlowParamBuilder):
 class MysqlProxyUpgradeFlowBuilder(BaseMySQLTicketFlowBuilder):
     serializer = MysqlProxyUpgradeDetailSerializer
     inner_flow_builder = MysqlProxyUpgradeParamBuilder
+    validator = MySQLController.mysql_proxy_upgrade_scene.validator

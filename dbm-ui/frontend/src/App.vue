@@ -9,10 +9,10 @@
         style="margin-left: auto" />
       <LocaleSwitch />
       <BkPopover
+        click-content-auto-hide
         placement="bottom"
         theme="light top-action-menu-theme"
-        @after-hidden="isShowHelp = false"
-        @after-show="isShowHelp = true">
+        trigger="click">
         <div class="top-action-btn mr-8">
           <DbIcon type="help-fill" />
         </div>
@@ -30,8 +30,10 @@
         </template>
       </BkPopover>
       <BkPopover
+        click-content-auto-hide
         placement="bottom"
         theme="light top-action-menu-theme"
+        trigger="click"
         @after-hidden="isShowLogout = false"
         @after-show="isShowLogout = true">
         <div class="user-info-box">
@@ -58,6 +60,7 @@
     <DbRouterView style="height: 100%" />
   </Layout>
   <SystemVersionLog v-model:is-show="isShowSystemVersionLog" />
+  <AIBlueking />
 </template>
 <script setup lang="ts">
   import InfoBox from 'bkui-vue/lib/info-box';
@@ -73,6 +76,7 @@
 
   import { useSystemEnviron, useUserProfile } from '@stores';
 
+  import AIBlueking from '@components/ai-blueking/Index.vue';
   import DbRouterView from '@components/db-router-view/Index.vue';
   import LocaleSwitch from '@components/locale-switch/Index.vue';
   import RouterBack from '@components/router-back/Index.vue';
@@ -96,14 +100,13 @@
 
   const noticeApi = urlJoin(window.PROJECT_ENV.VITE_AJAX_URL_PREFIX, '/notice/announcements/');
   const isShowBKNotice = ref(false);
-  const isShowHelp = ref(false);
   const isShowLogout = ref(false);
   const isShowSystemVersionLog = ref(false);
 
   watch(
     locale,
     () => {
-      document.title = documentTitles[locale.value];
+      document.title = documentTitles[locale.value]!;
     },
     { immediate: true },
   );
@@ -188,6 +191,7 @@
 
     .username-text {
       padding-right: 4px;
+      line-height: 32px;
     }
 
     .user-info-arrow {

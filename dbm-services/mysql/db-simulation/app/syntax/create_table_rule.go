@@ -11,6 +11,7 @@
 package syntax
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/samber/lo"
@@ -20,19 +21,22 @@ import (
 
 // Checker type create table checker
 func (c CreateTableResult) Checker(mysqlVersion string) (r *CheckerResult) {
-	r = &CheckerResult{}
+	r = &CheckerResult{
+		ObjName: c.TableName,
+	}
 	r.Parse(R.CreateTableRule.SuggestEngine, c.GetEngine(), "")
 	r.Parse(R.CreateTableRule.SuggestBlobColumCount, c.BlobColumCount(), "")
 	if R.BuiltInRule.TableNameSpecification.KeyWord {
-		r.ParseBultinRisk(func() (bool, string) {
+		r.ParseBuiltinRisk(func() (bool, string) {
 			return KeyWordValidator(mysqlVersion, c.TableName)
 		})
 	}
-	if R.BuiltInRule.TableNameSpecification.SpeicalChar {
-		r.ParseBultinBan(func() (bool, string) {
+	if R.BuiltInRule.TableNameSpecification.SpecialChar {
+		r.ParseBuiltinBan(func() (bool, string) {
 			return SpecialCharValidator(c.TableName)
 		})
 	}
+	r.ParseBuiltinBan(c.JsonColumInvalidDefaultCheck)
 	return
 }
 
@@ -82,37 +86,60 @@ func (c CreateTableResult) GetTableCharset() (engine string) {
 	return ""
 }
 
-// GetAllColCharsets get columns define charset
-func (c CreateTableResult) GetAllColCharsets() (charsets []string) {
-	haveDefaultCharseTypes := []string{
+// GetAllColCharacterSets get columns defined charset
+func (c CreateTableResult) GetAllColCharacterSets() (charSets []string) {
+	haveDefaultCharSetTypes := []string{
 		"timestamp", "time", "datetime", "date",
 		"tinyblob", "blob", "mediumblob", "longblob",
 		"string", "varchar", "json",
 	}
 	for _, colDef := range c.CreateDefinitions.ColDefs {
 		// Mysql会对MYSQL_TYPE_TIME，MYSQL_TYPE_TIMESTAMP，MYSQL_TYPE_DATETIME这三种类型的字段默认设置字符集为latin1
-		if lo.IsNotEmpty(colDef.CharacterSet) && !lo.Contains(haveDefaultCharseTypes, colDef.DataType) {
-			charsets = append(charsets, colDef.CharacterSet)
+		if lo.IsNotEmpty(colDef.CharacterSet) && !lo.Contains(haveDefaultCharSetTypes, colDef.DataType) {
+			charSets = append(charSets, colDef.CharacterSet)
 		}
 	}
-	return lo.Uniq(charsets)
+	return lo.Uniq(charSets)
 }
 
 // ColCharsetNotEqTbCharset 字段的字符集合和表的字符集合相同
 func (c CreateTableResult) ColCharsetNotEqTbCharset() bool {
-	colCharsets := c.GetAllColCharsets()
-	if len(colCharsets) == 0 {
+	colCharSets := c.GetAllColCharacterSets()
+	if len(colCharSets) == 0 {
 		return false
 	}
-	if len(colCharsets) > 1 {
+	if len(colCharSets) > 1 {
 		return true
 	}
 	tableDefineCharset := c.GetTableCharset()
 	if lo.IsEmpty(tableDefineCharset) {
 		return false
 	}
-	if strings.Compare(strings.ToLower(colCharsets[0]), strings.ToLower(tableDefineCharset)) == 0 {
+	if strings.Compare(strings.ToLower(colCharSets[0]), strings.ToLower(tableDefineCharset)) == 0 {
 		return false
 	}
 	return true
+}
+
+// JsonDataType JSON 数据类型常量
+const JsonDataType = "json"
+
+// JsonColumInvalidDefaultCheck 检查创建表时 json 字段是否设置了无效的默认值
+// 无效的默认值包括：字符串 'null'（DEFAULT 'null'）、空字符串 ”（DEFAULT ”）
+// 有效的默认值包括：DEFAULT NULL（NULL 关键字，MySQL 5.7 仅允许此形态；
+// 8.0.13+ 还允许 DEFAULT (expr) 表达式形式，如 DEFAULT (JSON_ARRAY()))
+//
+// 实现说明：必须遍历完所有列再返回，避免因第一个 JSON 列合法而提前 return，
+// 导致后续违规的 JSON 列被漏检。
+func (c CreateTableResult) JsonColumInvalidDefaultCheck() (bool, string) {
+	var invalidCols []string
+	for _, colDef := range c.CreateDefinitions.ColDefs {
+		if colDef.DataType == JsonDataType && colDef.HasInvalidJsonDefault() {
+			invalidCols = append(invalidCols, colDef.ColName)
+		}
+	}
+	if len(invalidCols) == 0 {
+		return false, ""
+	}
+	return true, fmt.Sprintf("json 列 %s 的默认值无效，不允许为 '' 或 'null'", strings.Join(invalidCols, ", "))
 }

@@ -16,7 +16,7 @@ import time
 from datetime import timedelta
 from json import JSONDecodeError
 from operator import itemgetter
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from bamboo_engine.api import EngineAPIResult
 from bamboo_engine.eri import NodeType
@@ -31,12 +31,14 @@ from backend.db_services.taskflow.constants import LOG_START_STRIP_PATTERN
 from backend.db_services.taskflow.exceptions import (
     CallbackNodeException,
     ForceFailNodeException,
+    GetNodeDataException,
+    OperateNodeException,
     RevokePipelineException,
     SkipNodeException,
 )
-from backend.flow.consts import PENDING_STATES, StateType
+from backend.flow.consts import PENDING_STATES, FlowNodeOperateType, StateType
 from backend.flow.engine.bamboo.engine import BambooEngine
-from backend.flow.models import FlowNode, FlowTree
+from backend.flow.models import FlowNode, FlowNodeOperateRecord, FlowTree
 from backend.utils.string import format_json_string
 from backend.utils.time import calculate_cost_time, datetime2str
 
@@ -47,17 +49,23 @@ class TaskFlowHandler:
     def __init__(self, root_id: str):
         self.root_id = root_id
 
-    def revoke_pipeline(self):
+    def revoke_pipeline(self, operator: str, remark: str = ""):
         """撤销当前流程"""
 
-        # 如果当前的pipeline未被创建，则直接更新FlowTree的状态为撤销态
+        # 不管是否成功，优先插入操作记录
+        FlowNodeOperateRecord.insert_root_record(self.root_id, operator, FlowNodeOperateType.PIPELINE_TERMINATE)
+
         tree = FlowTree.objects.get(root_id=self.root_id)
+        if tree.status == StateType.REVOKED:
+            return EngineAPIResult(result=True, message=_("pipeline已撤销"))
+
+        # 如果当前的pipeline未被创建，则直接更新FlowTree的状态为撤销态
         if tree.status in PENDING_STATES:
             tree.status = StateType.REVOKED
             tree.save()
             result = EngineAPIResult(result=True, message=_("pipeline未创建，仅更新FlowTree"))
+        # 撤销pipeline
         else:
-            # 撤销pipeline
             bamboo_engine = BambooEngine(root_id=self.root_id)
             result = bamboo_engine.revoke_pipeline()
             if not result.result:
@@ -70,43 +78,73 @@ class TaskFlowHandler:
 
         return result
 
-    def retry_node(self, node: str):
+    def retry_node(self, node_id: str, operator: str, remark: str = "", is_force: bool = False):
         """重试节点"""
-        if isinstance(node, str):
-            flow_node = FlowNode.objects.get(root_id=self.root_id, node_id=node)
-        else:
-            flow_node = node
-        return task.retry_node(root_id=self.root_id, flow_node=flow_node, retry_times=1)
+        operate_type = FlowNodeOperateType.FORCE_RETRY if is_force else FlowNodeOperateType.RETRY
+        flow = FlowNodeOperateRecord.insert_record(node_id, operator, operate_type, remark, root_id=self.root_id)
+        return task.retry_node(root_id=self.root_id, flow_node=flow, retry_times=1, is_force=is_force)
 
-    def batch_retry_nodes(self):
-        """批量重试节点"""
-        node_ids = self.get_failed_node_ids()
-
-        flow_nodes = FlowNode.objects.filter(node_id__in=node_ids, root_id=self.root_id).all()
-        flow_node_dict = {node.node_id: node for node in flow_nodes}
-
-        for node_id in node_ids:
-            flow_node = flow_node_dict.get(node_id)
-            try:
-                self.retry_node(flow_node)
-            except Exception as err:
-                logger.error(f"{node_id} retry failed, {err}")
-
-    def skip_node(self, node_id: str):
+    def skip_node(self, node_id: str, operator: str, remark: str = "", is_force: bool = False):
         """跳过节点"""
-        result = BambooEngine(root_id=self.root_id).skip_node(node_id=node_id)
+        operate_type = FlowNodeOperateType.FORCE_SKIP if is_force else FlowNodeOperateType.SKIP
+        FlowNodeOperateRecord.insert_record(node_id, operator, operate_type, remark, root_id=self.root_id)
+
+        result = BambooEngine(root_id=self.root_id).skip_node(node_id=node_id, is_force=is_force)
         if not result.result:
             raise SkipNodeException(",".join(result.exc.args))
 
         return result
 
-    def force_fail_node(self, node_id: str):
+    def force_fail_node(self, node_id: str, operator: str):
         """强制失败节点"""
+        FlowNodeOperateRecord.insert_record(node_id, operator, FlowNodeOperateType.FORCE_FAIL, root_id=self.root_id)
+
         result = BambooEngine(root_id=self.root_id).force_fail_node(node_id=node_id, ex_data=_("人工强制失败"))
         if not result.result:
             raise ForceFailNodeException(",".join(result.exc.args))
 
         return result
+
+    def batch_operate_nodes(
+        self,
+        func: Callable,
+        node_status: StateType,
+        operator: str,
+        some_nodes: List[str] = None,
+        is_force: bool = False,
+        remark: str = "",
+    ):
+        """批量操作节点"""
+        node_ids = self.get_specific_node_ids(status=node_status)
+        # 支持部分节点重试
+        if some_nodes:
+            node_ids = list(set(node_ids) & set(some_nodes))
+
+        errors = []
+        for node_id in node_ids:
+            try:
+                if is_force:
+                    func(node_id, operator, is_force=is_force, remark=remark)
+                else:
+                    func(node_id, operator)
+            except Exception as err:
+                errors.append(f"{node_id} operate failed, err is {err}")
+
+        if errors:
+            success, fail = len(node_ids) - len(errors), len(errors)
+            raise OperateNodeException(_("成功{}个节点, 失败{}个节点, 错误信息:{}").format(success, fail, errors))
+
+    def batch_retry_nodes(self, operator: str, some_nodes: List[str] = None, is_force: bool = False, remark: str = ""):
+        """批量重试节点"""
+        self.batch_operate_nodes(self.retry_node, StateType.FAILED, operator, some_nodes, is_force, remark)
+
+    def batch_force_fail_nodes(self, operator: str, some_nodes: List[str] = None):
+        """批量强制失败节点"""
+        self.batch_operate_nodes(self.force_fail_node, StateType.RUNNING, operator, some_nodes)
+
+    def batch_skip_nodes(self, operator: str, some_nodes: List[str] = None, is_force: bool = False, remark: str = ""):
+        """批量强制失败节点"""
+        self.batch_operate_nodes(self.skip_node, StateType.FAILED, operator, some_nodes, is_force, remark)
 
     def callback_node(self, node_id: str, desc: Optional[Any]):
         """回调节点"""
@@ -121,12 +159,12 @@ class TaskFlowHandler:
 
         return result
 
-    def get_failed_node_ids(self) -> List[str]:
+    def get_specific_node_ids(self, status: StateType) -> List[str]:
         """
-        获取失败叶子节点ID列表
+        获取特定状态节点ID列表
         """
         node_ids = []
-        tree_states = BambooEngine(root_id=self.root_id).get_pipeline_tree_states()
+        tree_states = BambooEngine(root_id=self.root_id).get_pipeline_tree_states() or {}
         activities = tree_states.get("activities", {})
 
         def recurse_activities(current_activities):
@@ -135,14 +173,35 @@ class TaskFlowHandler:
                 if "pipeline" in activity:
                     pipeline_activities = activity["pipeline"].get("activities", {})
                     recurse_activities(pipeline_activities)
-                if (
-                    activity.get("status") == StateType.FAILED
-                    and activity.get("type") == NodeType.ServiceActivity.value
-                ):
+                if activity.get("status") == status and activity.get("type") == NodeType.ServiceActivity.value:
                     node_ids.append(act_id)
 
         recurse_activities(activities)
         return node_ids
+
+    def get_specific_nodes(self, status: StateType, with_node_name: bool = False) -> List[Dict[str, str]]:
+        """
+        获取特定状态节点详情（节点ID、版本ID、可选节点名称）
+        """
+        # 获取特定状态节点ID列表
+        node_ids = self.get_specific_node_ids(status=status)
+        if not node_ids:
+            return []
+
+        # 获取节点版本ID映射
+        nodes = FlowNode.objects.filter(root_id=self.root_id, node_id__in=node_ids)
+        version_map = {node.node_id: node.version_id for node in nodes}
+
+        # 获取节点名称映射
+        name_map = {}
+        if with_node_name:
+            engine = BambooEngine(root_id=self.root_id)
+            engine.recursion_activity_name(engine.get_pipeline_tree()["activities"], name_map)
+
+        return [
+            {"node_id": node_id, "version_id": version_map.get(node_id), "node_name": name_map.get(node_id, "")}
+            for node_id in node_ids
+        ]
 
     def get_node_histories(self, node_id: str) -> List[Dict[str, Any]]:
         """获取节点历史版本信息"""
@@ -166,6 +225,27 @@ class TaskFlowHandler:
             }
         )
         return sorted(histories, key=itemgetter("started_time"), reverse=True)
+
+    def get_node_execution_data(self, node_id: str) -> Dict[str, Any]:
+        """获取节点执行数据"""
+        result = BambooEngine(root_id=self.root_id).get_node_execution_data(node_id=node_id)
+        if not result.result:
+            raise GetNodeDataException(",".join(result.exc.args))
+        return result.data
+
+    def get_node_operate_records(self, node_id: str = None) -> List[Dict[str, Any]]:
+        """获取节点历史记录"""
+        node_records = FlowNodeOperateRecord.objects.filter(root_id=self.root_id)
+        if node_id:
+            node_records = node_records.filter(node_id=node_id)
+        node_records = list(node_records.order_by("-operate_date").values())
+        # 补充节点名称
+        node_name_map = {}
+        engine = BambooEngine(root_id=self.root_id)
+        engine.recursion_activity_name(engine.get_pipeline_tree()["activities"], node_name_map)
+        for record in node_records:
+            record.update(node_name=node_name_map.get(record["node_id"], ""))
+        return node_records
 
     @classmethod
     def get_node_id_by_component(cls, tree: Dict, component_code: str) -> List[str]:
@@ -202,7 +282,7 @@ class TaskFlowHandler:
         )
         return resp["hits"]["hits"]
 
-    def get_version_logs(self, node_id: str, version_id: str) -> List[Dict[str, Dict[str, str]]]:
+    def get_version_logs(self, node_id: str, version_id: str, label_filters: list = None) -> List[Dict[str, Dict]]:
         """获取节点的日志信息"""
         if not FlowNode.objects.filter(root_id=self.root_id, node_id=node_id).count():
             return [self.generate_log_record(message=_("节点尚未运行，请稍后查看"))]
@@ -223,25 +303,87 @@ class TaskFlowHandler:
         start_time = datetime2str(history["started_time"])
         end_time = datetime2str(history["finished_time"] + timedelta(days=1))
         # 获取pod采集日志
+        dbm_logs_query = f'("{self.root_id}" AND "{node_id}" AND {version_id}) AND ({detected_pods_query})'
+        logger.info(_("BKLog DBM_LOG 查询DSL: {}").format(dbm_logs_query))
         dbm_logs = self.bklog_esquery_search(
             indices=f"{env.DBA_APP_BK_BIZ_ID}_bklog.dbm_log",
-            query_string=f"({self.root_id} AND {node_id} AND {version_id}) AND ({detected_pods_query})",
+            query_string=dbm_logs_query,
             start_time=start_time,
             end_time=end_time,
         )
         # 获取dbactuator采集日志
+        dbm_dbactuator_query = f'"{self.root_id}" AND "{node_id}" AND {version_id}'
+        logger.info(_("BKLog DBACTUATOR 查询DSL: {}").format(dbm_dbactuator_query))
         dbm_dbactuator_logs = self.bklog_esquery_search(
             indices=f"{env.DBA_APP_BK_BIZ_ID}_bklog.dbm_dbactuator,{env.DBA_APP_BK_BIZ_ID}_bklog.dbm_win_dbactuator,",
-            query_string=f"{self.root_id} AND {node_id} AND {version_id}",
+            query_string=dbm_dbactuator_query,
             start_time=start_time,
             end_time=end_time,
         )
-
+        logger.info(_("BKLog DBACTUATOR 查询结果: {}").format(dbm_dbactuator_logs))
         # 格式化日志信息
         logs = []
         sorted_hits = sorted(
             dbm_logs + dbm_dbactuator_logs,
-            key=lambda x: (x["_source"]["dtEventTimeStamp"], x["_source"]["gseIndex"], x["_source"]["iterationIndex"]),
+            key=lambda x: (
+                int(x["_source"]["dtEventTimeStamp"]),
+                int(x["_source"]["gseIndex"]),
+                int(x["_source"]["iterationIndex"]),
+            ),
+        )
+
+        for hit in sorted_hits:
+            log = self._format_log(hit["_source"]["log"], hit["_source"]["serverIp"], hit["_index"])
+            # 日志不存在，或者在过滤标签里面，则忽略
+            if not log or (label_filters and log.get("label") in label_filters):
+                continue
+            logs.append(
+                self.generate_log_record(
+                    timestamp=hit["_source"].get("time"), levelname=log["levelname"], message=log["log"]
+                )
+            )
+        if not logs:
+            return [self.generate_log_record(message=_("日志上报中，请稍后查看"))]
+        return logs
+
+    def get_version_error_logs_for_dbactuator(self, node_id: str, version_id: str) -> List[Dict[str, Dict[str, str]]]:
+        """仅获取指定节点版本的错误级别日志
+
+        参考 get_version_logs 的实现，但仅查询 dbactuator 采集的日志，并增加 levelname:error 过滤。
+        """
+        if not FlowNode.objects.filter(root_id=self.root_id, node_id=node_id).count():
+            return [self.generate_log_record(message=_("节点尚未运行，请稍后查看"))]
+
+        try:
+            node_histories_map = {h["version"]: h for h in self.get_node_histories(node_id)}
+            history = node_histories_map[version_id]
+        except KeyError:
+            return [self.generate_log_record(message=_("无法找到当前版本{}的节点日志").format(version_id))]
+
+        if history["finished_time"] < timezone.now() - timedelta(days=env.BKLOG_DEFAULT_RETENTION):
+            return [self.generate_log_record(message=_("节点日志仅保留{}天").format(env.BKLOG_DEFAULT_RETENTION))]
+
+        start_time = datetime2str(history["started_time"])
+        end_time = datetime2str(history["finished_time"] + timedelta(days=1))
+
+        # 仅查询 dbactuator 采集日志，并增加 error 级别过滤（兼容大小写）
+        query_string = f' {self.root_id} AND {node_id} AND {version_id} and "levelname: error"  '
+        logger.info(_("BKLog ERROR 查询DSL: {}").format(query_string))
+        dbm_dbactuator_logs = self.bklog_esquery_search(
+            indices=f"{env.DBA_APP_BK_BIZ_ID}_bklog.dbm_dbactuator,{env.DBA_APP_BK_BIZ_ID}_bklog.dbm_win_dbactuator,",
+            query_string=query_string,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        logger.info(_("BKLog DBACTUATOR 查询结果: {}").format(dbm_dbactuator_logs))
+        logs: List[Dict] = []
+        sorted_hits = sorted(
+            dbm_dbactuator_logs,
+            key=lambda x: (
+                int(x["_source"]["dtEventTimeStamp"]),
+                int(x["_source"]["gseIndex"]),
+                int(x["_source"]["iterationIndex"]),
+            ),
         )
 
         for hit in sorted_hits:
@@ -252,8 +394,6 @@ class TaskFlowHandler:
                         timestamp=hit["_source"].get("time"), levelname=log["levelname"], message=log["log"]
                     )
                 )
-        if not logs:
-            return [self.generate_log_record(message=_("日志上报中，请稍后查看"))]
         return logs
 
     @staticmethod
@@ -282,7 +422,7 @@ class TaskFlowHandler:
         if levelname == LogLevelName.DEBUG.value:
             # 不暴露debug日志给用户
             return
-        if levelname == LogLevelName.INFO.value:
+        if levelname in [LogLevelName.INFO.value]:
             # 目前前端组件不支持自定义配色，暂时由后端处理INFO日志，不添加 ## 标签则展示白色
             # TODO 待前端组件优化后可去掉此段处理
             log = f"{prefix}: {format_json_string(log['msg'])}"

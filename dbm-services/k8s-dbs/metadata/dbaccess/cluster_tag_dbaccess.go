@@ -20,9 +20,11 @@ limitations under the License.
 package dbaccess
 
 import (
-	metaconst "k8s-dbs/metadata/constant"
-	models "k8s-dbs/metadata/dbaccess/model"
-	"log/slog"
+	commconst "k8s-dbs/common/constant"
+	models "k8s-dbs/metadata/model"
+	"sync"
+
+	"github.com/pkg/errors"
 
 	"gorm.io/gorm"
 )
@@ -40,10 +42,26 @@ type K8sCrdClusterTagDbAccessImpl struct {
 	db *gorm.DB
 }
 
+var (
+	clusterTagInstance K8sCrdClusterTagDbAccess
+	clusterTagOnce     sync.Once
+)
+
+// GetClusterTagDbAccess 获取 K8sCrdClusterTagDbAccess 单例实例
+func GetClusterTagDbAccess(db *gorm.DB) K8sCrdClusterTagDbAccess {
+	clusterTagOnce.Do(func() {
+		clusterTagInstance = &K8sCrdClusterTagDbAccessImpl{db: db}
+	})
+	if clusterTagInstance == nil {
+		panic("K8sCrdClusterTagDbAccess instance is nil after initialization")
+	}
+	return clusterTagInstance
+}
+
 // BatchCreate 批量新增
 func (k K8sCrdClusterTagDbAccessImpl) BatchCreate(models []*models.K8sCrdClusterTagModel) (uint64, error) {
 	if err := k.db.Create(&models).Error; err != nil {
-		return 0, err
+		return 0, errors.Wrap(err, "batch create cluster tag error")
 	}
 	return uint64(len(models)), nil
 }
@@ -54,7 +72,7 @@ func (k K8sCrdClusterTagDbAccessImpl) Create(model *models.K8sCrdClusterTagModel
 	error,
 ) {
 	if err := k.db.Create(model).Error; err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to create cluster tag with model %+v", model)
 	}
 	return model, nil
 }
@@ -63,8 +81,7 @@ func (k K8sCrdClusterTagDbAccessImpl) Create(model *models.K8sCrdClusterTagModel
 func (k K8sCrdClusterTagDbAccessImpl) DeleteByClusterID(clusterID uint64) (uint64, error) {
 	result := k.db.Delete(&models.K8sCrdClusterTagModel{}, "crd_cluster_id = ?", clusterID)
 	if result.Error != nil {
-		slog.Error("Delete cluster models error", "error", result.Error.Error())
-		return 0, result.Error
+		return 0, errors.Wrapf(result.Error, "failed to delete cluster tag with clusterID=%d", clusterID)
 	}
 	return uint64(result.RowsAffected), nil
 }
@@ -72,18 +89,12 @@ func (k K8sCrdClusterTagDbAccessImpl) DeleteByClusterID(clusterID uint64) (uint6
 // FindByClusterID 查找集群关联的 Tag
 func (k K8sCrdClusterTagDbAccessImpl) FindByClusterID(clusterID uint64) ([]*models.K8sCrdClusterTagModel, error) {
 	var tagModels []*models.K8sCrdClusterTagModel
-	if err := k.db.Limit(metaconst.MaxFetchSize).
+	if err := k.db.Limit(commconst.MaxFetchSize).
 		Where("crd_cluster_id = ?", clusterID).
 		Order("created_at DESC").
 		Find(&tagModels).Error; err != nil {
-		slog.Error("Find cluster models error", "error", err.Error())
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to find cluster tag with clusterID=%d", clusterID)
 	}
 	return tagModels, nil
 
-}
-
-// NewK8sCrdClusterTagDbAccess 创建 K8sCrdClusterTagDbAccess 接口实现实例
-func NewK8sCrdClusterTagDbAccess(db *gorm.DB) K8sCrdClusterTagDbAccess {
-	return &K8sCrdClusterTagDbAccessImpl{db}
 }

@@ -11,10 +11,20 @@
     <template #content>
       <slot name="content">
         <I18nT
-          keypath="m_处理人_p_耗时_t"
+          keypath="m_处理人_p"
           scope="global">
           <span style="color: #ea3636">{{ t('执行失败') }}</span>
-          <span>{{ ticketDetail.todo_operators.join(',') }}</span>
+          {{ ticketDetail.todo_operators.join(',') }}
+        </I18nT>
+        <I18nT
+          v-if="ticketDetail.todo_helpers.length > 0"
+          keypath="_协助人_p"
+          scope="global">
+          {{ ticketDetail.todo_helpers.join(',') }}
+        </I18nT>
+        <I18nT
+          keypath="_耗时_t"
+          scope="global">
           <CostTimer
             :is-timing="false"
             :start-time="utcTimeToSeconds(data.start_time)"
@@ -28,28 +38,24 @@
             {{ t('查看详情') }}
           </a>
         </template>
-        <FlowCollapse
-          v-if="data.err_msg"
-          danger
-          :title="t('失败原因')">
-          <div style="padding-left: 16px">
-            {{ data.err_msg }}
-          </div>
-        </FlowCollapse>
-        <div
-          v-if="isCanOperation && isNeedOperation"
-          class="mt-12">
-          <ProcessRetry
-            :data="ticketDetail"
-            :flow-data="data">
-            <BkButton
-              class="w-88"
-              theme="primary">
-              {{ t('失败重试') }}
-            </BkButton>
-          </ProcessRetry>
-        </div>
       </slot>
+      <RenderErrorMessage
+        :data="data"
+        :ticket-detail="ticketDetail" />
+      <Abstract :data="data" />
+      <div
+        v-if="isCanOperation && isNeedOperation"
+        class="mt-12">
+        <ProcessRetry
+          :data="ticketDetail"
+          :flow-data="data">
+          <BkButton
+            class="w-88"
+            theme="primary">
+            {{ t('失败重试') }}
+          </BkButton>
+        </ProcessRetry>
+      </div>
       <!-- 系统自动终止 -->
       <template v-if="data.err_code === 3 && data.context.expire_time && renderTodoList.length === 0">
         <div style="margin-top: 8px; color: #ea3636">
@@ -60,7 +66,6 @@
           {{ utcDisplayTime(data.update_at) }}
         </div>
       </template>
-      <Abstract :data="data" />
     </template>
     <template #desc>
       {{ utcDisplayTime(data.update_at) }}
@@ -86,7 +91,7 @@
   import DbTimeLineItem from '../time-line/TimeLineItem.vue';
 
   import Abstract from './components/abstract/Index.vue';
-  import FlowCollapse from './components/FlowCollapse.vue';
+  import RenderErrorMessage from './components/render-error-message/Index.vue';
 
   interface Props {
     data: FlowMode<unknown, any>;
@@ -113,7 +118,7 @@
       props.ticketDetail.todo_operators.includes(username) ||
       props.ticketDetail.todo_helpers.includes(username),
   );
-  const isNeedOperation = computed(() => [0, 2].includes(props.data.err_code));
+  const isNeedOperation = computed(() => [0, 2, 4].includes(props.data.err_code));
   const renderTodoList = computed(() =>
     _.filter(props.data.todos, (item) => item.type !== FlowMode.TODO_TYPE_INNER_FAILED),
   );

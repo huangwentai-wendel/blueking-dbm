@@ -14,7 +14,8 @@
 <template>
   <EditableColumn
     :label="t('当前容量')"
-    :min-width="400">
+    :min-width="400"
+    readonly>
     <EditableBlock :placeholder="t('选择集群后自动生成')">
       <div
         v-if="cluster.id"
@@ -24,9 +25,12 @@
           <div class="item-content">
             <RenderSpec
               :data="proxySpec"
-              :hide-qps="!proxySpec?.qps.max"
               is-ignore-counts />
           </div>
+        </div>
+        <div class="info-item">
+          <div class="item-title">{{ t('资源标签') }}：</div>
+          <div class="item-content item-count">--</div>
         </div>
         <div class="info-item">
           <div class="item-title">{{ t('Proxy 数量') }}：</div>
@@ -45,9 +49,12 @@
           <div class="item-content">
             <RenderSpec
               :data="backendSpec"
-              :hide-qps="!backendSpec?.qps.max"
               is-ignore-counts />
           </div>
+        </div>
+        <div class="info-item">
+          <div class="item-title">{{ t('资源标签') }}：</div>
+          <div class="item-content item-count">--</div>
         </div>
         <div class="info-item">
           <div class="item-title">{{ t('机器组数') }}：</div>
@@ -76,7 +83,7 @@
 
   import RedisModel from '@services/model/redis/redis';
 
-  import RenderSpec from '@components/render-table/columns/spec-display/Index.vue';
+  import RenderSpec from '@components/spec-display/Index.vue';
 
   import ClusterCapacityUsageRate from '@views/db-manage/common/cluster-capacity-usage-rate/Index.vue';
 

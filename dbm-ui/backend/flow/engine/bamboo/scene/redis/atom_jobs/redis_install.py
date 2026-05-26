@@ -13,7 +13,7 @@ from copy import deepcopy
 from dataclasses import asdict
 from typing import Dict
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.db_meta.enums import InstanceRole
@@ -119,8 +119,8 @@ def RedisBatchInstallAtomJob(
                 "kwargs": asdict(
                     DownloadBackupClientKwargs(
                         bk_cloud_id=act_kwargs.cluster["bk_cloud_id"],
-                        bk_biz_id=int(act_kwargs.cluster["bk_biz_id"]),
-                        download_host_list=[exec_ip],
+                        bk_biz_id=int(ticket_data["bk_biz_id"]),
+                        ip_list=[exec_ip],
                     ),
                 ),
             }
@@ -135,6 +135,7 @@ def RedisBatchInstallAtomJob(
                             bk_cloud_id=int(act_kwargs.cluster["bk_cloud_id"]), ips=[exec_ip], plugin_name=plugin_name
                         )
                     ),
+                    "timeout": 300,
                 }
             )
         sub_pipeline.add_parallel_acts(acts_list=acts_list)

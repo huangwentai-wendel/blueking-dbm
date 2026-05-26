@@ -12,7 +12,7 @@ import logging.config
 from dataclasses import asdict
 from typing import Dict
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.db_meta.enums.cluster_type import ClusterType
@@ -99,7 +99,7 @@ def ProxyBatchInstallAtomJob(
                 DownloadBackupClientKwargs(
                     bk_cloud_id=act_kwargs.cluster["bk_cloud_id"],
                     bk_biz_id=int(act_kwargs.cluster["bk_biz_id"]),
-                    download_host_list=[exec_ip],
+                    ip_list=[exec_ip],
                 ),
             ),
         }
@@ -114,6 +114,7 @@ def ProxyBatchInstallAtomJob(
                         bk_cloud_id=int(act_kwargs.cluster["bk_cloud_id"]), ips=[exec_ip], plugin_name=plugin_name
                     )
                 ),
+                "timeout": 300,
             }
         )
     sub_pipeline.add_parallel_acts(acts_list=acts_list)
@@ -132,6 +133,7 @@ def ProxyBatchInstallAtomJob(
     # 安装proxy实例
     if act_kwargs.cluster["cluster_type"] in [
         ClusterType.TendisPredixyTendisplusCluster.value,
+        ClusterType.TendisPredixyTendisplusInstance.value,
         ClusterType.TendisPredixyRedisCluster.value,
     ]:
         act_kwargs.cluster["ip"] = exec_ip
@@ -143,6 +145,7 @@ def ProxyBatchInstallAtomJob(
         act_kwargs.cluster["port"] = param["proxy_port"]
         act_kwargs.cluster["servers"] = param["servers"]
         act_kwargs.cluster["load_modules"] = load_modules
+        act_kwargs.cluster["databases"] = str(param.get("databases", ""))  # PredixyTendisplusInstance
         act_kwargs.get_redis_payload_func = RedisActPayload.get_install_predixy_payload.__name__
     else:
         act_kwargs.cluster["ip"] = exec_ip

@@ -23,13 +23,18 @@ import (
 	"gorm.io/gorm/logger"
 
 	"dbm-services/mysql/db-simulation/app/config"
-	"dbm-services/mysql/db-simulation/assets"
 )
 
 // DB TODO
 var DB *gorm.DB
 
 func init() {
+	// 在测试环境下跳过数据库初始化
+	if os.Getenv("TESTING") == "true" || os.Getenv("SKIP_DB_INIT") == "true" {
+		log.Println("Skipping database initialization in test environment")
+		return
+	}
+
 	user := config.GAppConfig.DbConf.User
 	pwd := config.GAppConfig.DbConf.Pwd
 	addr := fmt.Sprintf("%s:%d", config.GAppConfig.DbConf.Host, config.GAppConfig.DbConf.Port)
@@ -44,13 +49,16 @@ func init() {
 	if err != nil {
 		log.Fatalf("init create db failed:%s", err.Error())
 	}
-	log.Println("make dbeug dbname", dbName)
-	err = assets.DoMigrateFromEmbed(user, addr, pwd, dbName)
-	if err != nil {
-		log.Fatalf("init migrate from embed failed:%s", err.Error())
-	}
 	sqldb.Close()
 	DB = openDB(user, pwd, addr, dbName)
+	// auto migrate
+	DB.AutoMigrate(&TbContainerRecord{})
+	DB.AutoMigrate(&TbRequestRecord{})
+	DB.AutoMigrate(&TbSimulationTask{})
+	DB.AutoMigrate(&TbSimulationImgCfg{})
+	DB.AutoMigrate(&TbSqlFileSimulationInfo{})
+	DB.AutoMigrate(&TbSyntaxRule{})
+	DB.AutoMigrate(&TbSpiderPefWhitelist{})
 }
 
 func openDB(username, password, addr, name string) *gorm.DB {
@@ -75,6 +83,9 @@ func openDB(username, password, addr, name string) *gorm.DB {
 		log.Fatalf("connect to mysql failed %s", err.Error())
 		return nil
 	}
+	dbc.SetMaxOpenConns(config.GAppConfig.DbConf.MaxOpenConns)
+	dbc.SetMaxIdleConns(config.GAppConfig.DbConf.MaxIdleConns)
+	dbc.SetConnMaxLifetime(time.Duration(config.GAppConfig.DbConf.MaxLifetime) * time.Hour)
 	db, err := gorm.Open(mysql.New(mysql.Config{
 		Conn: dbc,
 	}), &gorm.Config{

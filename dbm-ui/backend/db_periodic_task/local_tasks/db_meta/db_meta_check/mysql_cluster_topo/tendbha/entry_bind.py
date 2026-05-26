@@ -10,11 +10,15 @@ specific language governing permissions and limitations under the License.
 """
 from typing import List
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.db_meta.enums import ClusterEntryRole, ClusterEntryType, InstancePhase, InstanceStatus
 from backend.db_meta.models import Cluster
 from backend.db_periodic_task.local_tasks.db_meta.db_meta_check.mysql_cluster_topo.check_response import CheckResponse
+from backend.db_periodic_task.local_tasks.db_meta.db_meta_check.mysql_cluster_topo.clb_entry_bind_check import (
+    TENDBHA_CLB_SUBTYPES,
+    collect_clb_entry_check_results,
+)
 from backend.db_periodic_task.local_tasks.db_meta.db_meta_check.mysql_cluster_topo.decorator import checker_wrapper
 from backend.db_report.enums import MetaCheckSubType
 
@@ -25,7 +29,7 @@ def _cluster_master_entry_on_proxy(c: Cluster) -> List[CheckResponse]:
     主入口 bind 到 proxy 的数量必须和集群正常 proxy 相等
     """
     bad = []
-    for cme in c.clusterentry_set.all():
+    for cme in c.clusterentry_set.filter(forward_to__isnull=True, cluster_entry_type=ClusterEntryType.DNS):
         if cme.role == ClusterEntryRole.MASTER_ENTRY:
             cluster_proxy_cnt = 0
             for pi in c.proxyinstance_set.all():
@@ -36,7 +40,7 @@ def _cluster_master_entry_on_proxy(c: Cluster) -> List[CheckResponse]:
                 bad.append(
                     CheckResponse(
                         msg=_("主访问入口 {} 关联 proxy 和集群 proxy 数量不相等".format(cme.entry)),
-                        check_subtype=MetaCheckSubType.ClusterTopo,
+                        check_subtype=MetaCheckSubType.TenDBHAProxyCountNotMatch,
                     )
                 )
 
@@ -49,18 +53,27 @@ def _cluster_master_entry_on_storage(c: Cluster) -> List[CheckResponse]:
     主入口不能 bind 到存储
     """
     bad = []
-    for cme in c.clusterentry_set.all():
+    for cme in c.clusterentry_set.filter(forward_to__isnull=True):
         if cme.role == ClusterEntryRole.MASTER_ENTRY:
             for si in cme.storageinstance_set.all():
                 bad.append(
                     CheckResponse(
                         msg=_("主访问入口 {} 关联到存储实例".format(cme.entry)),
-                        check_subtype=MetaCheckSubType.ClusterTopo,
+                        check_subtype=MetaCheckSubType.TenDBHAMasterEntryBindStorage,
                         instance=si,
                     )
                 )
 
     return bad
+
+
+@checker_wrapper
+def _cluster_clb_exists_and_rs_match(c: Cluster) -> List[CheckResponse]:
+    """
+    存在 CLB 入口时：校验名字服务可查询该 CLB，且后端 RS 与当前 CLB entry 的 proxy 元数据一致。
+    期望后端来自该 entry 的 proxyinstance_set；与名字服务 data.ips 返回项及元数据 ip:port 拼接串做 strip 后集合比对。
+    """
+    return collect_clb_entry_check_results(c, TENDBHA_CLB_SUBTYPES)
 
 
 @checker_wrapper

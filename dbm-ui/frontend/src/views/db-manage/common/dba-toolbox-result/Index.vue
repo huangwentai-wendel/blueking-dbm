@@ -13,7 +13,7 @@
 
 <template>
   <div
-    class="mysql-operation-success-page"
+    class="dba-toolbox-result-success-page"
     :loading="isLoading">
     <div style="font-size: 64px; color: #2dcb56">
       <DbIcon type="check-circle-fill" />
@@ -47,7 +47,7 @@
     </div>
     <div class="action">
       <BkButton
-        class="ml8"
+        class="ml-8"
         theme="primary"
         @click="handleStepChange">
         {{ t('再次提单') }}
@@ -100,7 +100,8 @@
 
   import { getTickets } from '@services/source/ticket';
 
-  import { useGlobalBizs } from '@/stores';
+  import { useGlobalBizs } from '@stores';
+
   import { useTimeoutPoll } from '@vueuse/core';
 
   type RowData = ServiceReturnType<typeof getTickets>['results'][0];
@@ -193,7 +194,7 @@
   );
 </script>
 <style lang="less">
-  .mysql-operation-success-page {
+  .dba-toolbox-result-success-page {
     display: block;
     padding-top: 100px;
     text-align: center;

@@ -9,7 +9,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.core.storages import mock_data
@@ -38,6 +38,11 @@ class CreateTokenSerializer(serializers.Serializer):
 class CreateTokenSerializerResponseSerializer(serializers.Serializer):
     class Meta:
         swagger_schema_fields = {"example": mock_data.CREATE_TOKEN_DATA}
+
+
+class BatchTokenFileSerializerResponseSerializer(serializers.Serializer):
+    class Meta:
+        swagger_schema_fields = {"example": mock_data.BATCH_TOKEN_DATA}
 
 
 class DirDownloadSerializer(serializers.Serializer):

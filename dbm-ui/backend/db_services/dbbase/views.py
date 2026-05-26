@@ -13,7 +13,7 @@ from collections import defaultdict
 from typing import Dict, List, Set, Union
 
 from django.db.models import Count, Q
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -24,9 +24,22 @@ from backend.bk_web.pagination import AuditedLimitOffsetPagination
 from backend.bk_web.swagger import ResponseSwaggerAutoSchema, common_swagger_auto_schema
 from backend.components import BKBaseApi, DRSApi
 from backend.configuration.constants import DBType
+from backend.db_dirty.models import DirtyMachine
 from backend.db_meta.enums import ClusterType, InstanceRole
-from backend.db_meta.models import Cluster, DBModule, ProxyInstance, StorageInstance, Tag
-from backend.db_services.dbbase.cluster.handlers import ClusterServiceHandler
+from backend.db_meta.models import (
+    BKCity,
+    Cluster,
+    DBModule,
+    Machine,
+    MongoDBStorageInstanceExt,
+    ProxyInstance,
+    Spec,
+    StorageInstance,
+    Tag,
+    TenDBClusterSpiderExt,
+)
+from backend.db_monitor.tasks import sync_cluster_load_by_cluster_type, sync_cluster_stat_by_cluster_type
+from backend.db_services.dbbase.cluster.handlers import ClusterServiceHandler, retrieve_resources
 from backend.db_services.dbbase.cluster.serializers import (
     BatchCheckClusterDbsSerializer,
     CheckClusterDbsResponseSerializer,
@@ -35,6 +48,7 @@ from backend.db_services.dbbase.cluster.serializers import (
 from backend.db_services.dbbase.instances.handlers import InstanceHandler
 from backend.db_services.dbbase.instances.yasg_slz import CheckInstancesResSLZ, CheckInstancesSLZ
 from backend.db_services.dbbase.resources import register
+from backend.db_services.dbbase.resources.pagination import ResourceLimitOffsetPagination
 from backend.db_services.dbbase.resources.query import ListRetrieveResource, ResourceList
 from backend.db_services.dbbase.resources.serializers import ClusterSLZ
 from backend.db_services.dbbase.serializers import (
@@ -54,6 +68,9 @@ from backend.db_services.dbbase.serializers import (
     QueryClusterCapResponseSerializer,
     QueryClusterCapSerializer,
     QueryClusterInstanceCountSerializer,
+    QueryGlobalClusterSerializer,
+    QueryGlobalInstanceSerializer,
+    QueryGlobalMachineSerializer,
     RemoveClusterTagKeysSerializer,
     ResourceAdministrationSerializer,
     UpdateClusterAliasSerializer,
@@ -69,8 +86,10 @@ from backend.iam_app.handlers.drf_perm.base import DBManagePermission
 from backend.iam_app.handlers.drf_perm.cluster import (
     ClusterDBConsolePermission,
     ClusterEditPermission,
+    ClusterListPermission,
     ClusterWebconsolePermission,
 )
+from backend.ticket.models import Todo
 
 SWAGGER_TAG = _("集群通用接口")
 
@@ -85,12 +104,14 @@ class DBBaseViewSet(viewsets.SystemViewSet):
     action_permission_map = {
         (
             "verify_duplicated_cluster_name",
+            "query_cluster_instance_count",
             "check_instances",
         ): [],
         (
             "simple_query_cluster",
             "common_query_cluster",
-            "filter_clusters",
+            "query_cluster_stat",
+            "query_cluster_load",
         ): [DBManagePermission()],
         ("webconsole",): [ClusterWebconsolePermission()],
         ("dbconsole",): [ClusterDBConsolePermission()],
@@ -100,6 +121,11 @@ class DBBaseViewSet(viewsets.SystemViewSet):
             "remove_cluster_tag_keys",
             "add_cluster_tag_keys",
         ): [ClusterEditPermission()],
+        (
+            "filter_clusters",
+            "filter_machines",
+            "filter_instances",
+        ): [ClusterListPermission()],
     }
     default_permission_class = [DBManagePermission()]
 
@@ -150,9 +176,10 @@ class DBBaseViewSet(viewsets.SystemViewSet):
         query_serializer=ClusterFilterSerializer(),
         tags=[SWAGGER_TAG],
     )
-    @action(methods=["GET"], detail=False, serializer_class=ClusterFilterSerializer)
+    @action(methods=["GET"], detail=False, serializer_class=ClusterFilterSerializer, pagination_class=None)
     def filter_clusters(self, request, *args, **kwargs):
         data = self.params_validate(self.get_serializer_class())
+        limit, offset = data.pop("limit"), data.pop("offset")
         # 先按照集群类型聚合
         resource_cls__cluster_ids_map = defaultdict(list)
         for cluster in Cluster.objects.filter(data["filters"]).values("id", "cluster_type"):
@@ -165,7 +192,7 @@ class DBBaseViewSet(viewsets.SystemViewSet):
                 continue
             query_params = {**data["query_params"], "cluster_ids": ",".join(map(str, cluster_ids))}
             cluster_resource_data: ResourceList = resource_class.list_clusters(
-                bk_biz_id=data["bk_biz_id"], query_params=query_params, limit=-1, offset=0
+                bk_biz_id=data["bk_biz_id"], query_params=query_params, limit=limit, offset=offset
             )
             clusters_data.extend(cluster_resource_data.data)
 
@@ -200,7 +227,9 @@ class DBBaseViewSet(viewsets.SystemViewSet):
             InstanceHandler(bk_biz_id=data["bk_biz_id"]).check_instances(
                 query_instances=data["instance_addresses"],
                 cluster_ids=data.get("cluster_ids"),
+                cluster_type=data.get("cluster_type"),
                 db_type=data.get("db_type"),
+                instance_role=data.get("instance_role"),
             )
         )
 
@@ -287,7 +316,6 @@ class DBBaseViewSet(viewsets.SystemViewSet):
         # 实例的部署角色
         if "role" in data["instances_attrs"]:
             query_filters = Q(bk_biz_id=data["bk_biz_id"], cluster_type__in=data["cluster_type"])
-            # 获取proxy实例的查询集
             proxy_roles = ProxyInstance.objects.filter(query_filters).values_list("access_layer", flat=True)
             # 获取storage实例的查询集
             storage_queryset = StorageInstance.objects.filter(query_filters)
@@ -302,6 +330,228 @@ class DBBaseViewSet(viewsets.SystemViewSet):
             cluster_attrs["role"] = roles_dicts
 
         return Response(cluster_attrs)
+
+    @common_swagger_auto_schema(
+        operation_summary=_("查询业务下主机的属性字段"),
+        auto_schema=ResponseSwaggerAutoSchema,
+        query_serializer=QueryBizClusterAttrsSerializer(),
+        responses={status.HTTP_200_OK: QueryBizClusterAttrsResponseSerializer()},
+        tags=[SWAGGER_TAG],
+    )
+    @action(methods=["GET"], detail=False, serializer_class=QueryBizClusterAttrsSerializer)
+    def query_biz_machine_attrs(self, request, *args, **kwargs):
+        data = self.params_validate(self.get_serializer_class())
+        if data.get("cluster_id"):
+            cluster = (
+                Cluster.objects.prefetch_related("storageinstance_set__machine", "proxyinstance_set__machine")
+                .filter(bk_biz_id=data["bk_biz_id"], id=data["cluster_id"])
+                .first()
+            )
+            storage_machines = [si.machine.bk_host_id for si in cluster.storageinstance_set.all() if si.machine]
+            proxy_machines = [pi.machine.bk_host_id for pi in cluster.proxyinstance_set.all() if pi.machine]
+
+            bk_host_ids = storage_machines + proxy_machines
+            machines = Machine.objects.filter(bk_host_id__in=bk_host_ids)
+
+        else:
+            machines = Machine.objects.filter(bk_biz_id=data["bk_biz_id"], cluster_type__in=data["cluster_type"])
+        # 聚合每个属性字段
+        machine_attrs: Dict[str, Union[List, Set]] = defaultdict(list)
+        existing_values: Dict[str, Set[str]] = defaultdict(set)
+        # 过滤一些不合格的数据
+        instance_role_flag = False
+        if data["machine_attrs"]:
+            if "instance_role" in data["machine_attrs"]:
+                data["machine_attrs"].remove("instance_role")
+                instance_role_flag = True
+            # 获取choice map
+            field__choice_map = {
+                attr: {value: label for value, label in getattr(Machine, attr).field.choices or []}
+                for attr in data["machine_attrs"]
+            }
+            for attr in machines.values(*data["machine_attrs"]):
+                for key, value in attr.items():
+                    # 保留bk_cloud_id有等于0的情况
+                    if value not in existing_values[key]:
+                        existing_values[key].add(value)
+                        machine_attrs[key].append(
+                            {
+                                "value": value,
+                                "text": field__choice_map[key].get(value, value)
+                                if field__choice_map[key].get(value, value)
+                                or field__choice_map[key].get(value, value) == 0
+                                else "--",
+                            }
+                        )
+
+            if instance_role_flag:
+                storage_roles = (
+                    StorageInstance.objects.filter(machine__in=machines)
+                    .values_list("instance_role", flat=True)
+                    .distinct()
+                )
+                if ClusterType.TenDBCluster.value in data["cluster_type"]:
+                    spider_roles = (
+                        TenDBClusterSpiderExt.objects.filter(instance__machine__in=machines)
+                        .values_list("spider_role", flat=True)
+                        .distinct()
+                    )
+                    instance_roles = list(storage_roles) + list(spider_roles)
+                else:
+                    proxy_access_layers = (
+                        ProxyInstance.objects.filter(machine__in=machines)
+                        .values_list("access_layer", flat=True)
+                        .distinct()
+                    )
+                    instance_roles = list(proxy_access_layers) + list(storage_roles)
+                machine_attrs["instance_role"] = [
+                    {"value": instance_role, "text": instance_role} for instance_role in instance_roles
+                ]
+
+            if "bk_city_id" in machine_attrs:
+                cities = BKCity.objects.all()
+                if cities:
+                    city_name_map = {city.bk_idc_city_id: city.bk_idc_city_name for city in cities}
+                    machine_attrs["bk_city_id"] = [
+                        {"value": city_id, "text": city_name_map.get(city_id, "--")}
+                        for city_id in existing_values["bk_city_id"]
+                    ]
+
+                else:
+                    machine_attrs["bk_city_id"] = []
+
+            if "spec_id" in machine_attrs:
+                specs = Spec.objects.filter(spec_id__in=list(existing_values["spec_id"]))
+                if specs:
+                    spec_name_map = {spec.spec_id: spec.spec_name for spec in specs}
+                    machine_attrs["spec_id"] = [
+                        {"value": spec_id, "text": spec_name_map.get(spec_id, "--")}
+                        for spec_id in existing_values["spec_id"]
+                    ]
+
+                else:
+                    machine_attrs["spec_id"] = []
+
+        return Response(machine_attrs)
+
+    @common_swagger_auto_schema(
+        operation_summary=_("查询污点池下主机的属性字段"),
+        auto_schema=ResponseSwaggerAutoSchema,
+        query_serializer=QueryBizClusterAttrsSerializer(),
+        responses={status.HTTP_200_OK: QueryBizClusterAttrsResponseSerializer()},
+        tags=[SWAGGER_TAG],
+    )
+    @action(methods=["GET"], detail=False, serializer_class=QueryBizClusterAttrsSerializer)
+    def query_dirty_machine_attrs(self, request, *args, **kwargs):
+        data = self.params_validate(self.get_serializer_class())
+        filter_map = {}
+        if data.get("pool"):
+            filter_map = {"pool": data["pool"]}
+        if data.get("is_todo"):
+            user = request.user.username
+            type_map = {"recycle": "RECYCLE_HOST", "fault": "FAULT_HOST"}
+            todos = Todo.objects.filter(operators__contains=user, status="TODO", type=type_map[data["pool"]])
+            host_ids = [todo.context["host_id"] for todo in todos]
+            filter_map = {"bk_host_id__in": host_ids}
+        machines = DirtyMachine.objects.filter(**filter_map)
+        # 聚合每个属性字段
+        machine_attrs: Dict[str, Union[List, Set]] = defaultdict(list)
+        existing_values: Dict[str, Set[str]] = defaultdict(set)
+        # 过滤一些不合格的数据
+        if data["machine_attrs"]:
+            # 获取choice map
+            field__choice_map = {
+                attr: {value: label for value, label in getattr(DirtyMachine, attr).field.choices or []}
+                for attr in data["machine_attrs"]
+            }
+            for attr in machines.values(*data["machine_attrs"]):
+                for key, value in attr.items():
+                    # 保留bk_cloud_id有等于0的情况
+                    if value not in existing_values[key]:
+                        existing_values[key].add(value)
+                        machine_attrs[key].append(
+                            {
+                                "value": value,
+                                "text": field__choice_map[key].get(value, value)
+                                if field__choice_map[key].get(value, value)
+                                or field__choice_map[key].get(value, value) == 0
+                                else "--",
+                            }
+                        )
+        return Response(machine_attrs)
+
+    @common_swagger_auto_schema(
+        operation_summary=_("查询业务下实例的属性字段"),
+        auto_schema=ResponseSwaggerAutoSchema,
+        query_serializer=QueryBizClusterAttrsSerializer(),
+        responses={status.HTTP_200_OK: QueryBizClusterAttrsResponseSerializer()},
+        tags=[SWAGGER_TAG],
+    )
+    @action(methods=["GET"], detail=False, serializer_class=QueryBizClusterAttrsSerializer)
+    def query_biz_instance_attrs(self, request, *args, **kwargs):
+        data = self.params_validate(self.get_serializer_class())
+        query_map = {"bk_biz_id": data["bk_biz_id"]}
+        if data.get("cluster_type"):
+            query_map["cluster_type__in"] = data["cluster_type"]
+        if data.get("cluster_id"):
+            query_map["cluster__id"] = data["cluster_id"]
+        # 获取proxy实例的查询集
+        proxy_query = ProxyInstance.objects.filter(**query_map)
+        # 获取storage实例的查询集
+        storage_queryset = StorageInstance.objects.filter(**query_map)
+
+        instance_attrs: Dict[str, Union[List, Set]] = defaultdict(list)
+        # mongodb实例列表副本集状态下拉筛选的数据来源
+        if "mongodb_state" in data["instances_attrs"]:
+            instance_ids = [*proxy_query.values_list("id", flat=True), *storage_queryset.values_list("id", flat=True)]
+            ext_instances = (
+                MongoDBStorageInstanceExt.objects.filter(instance_id__in=instance_ids).distinct().values("state")
+            )
+            instance_attrs["mongodb_state"] = [{"value": ext["state"], "text": ext["state"]} for ext in ext_instances]
+
+        if "role" in data["instances_attrs"]:
+            cluster_type = data.get("cluster_type")
+            if not cluster_type and proxy_query:
+                cluster_type = [proxy_query.first().cluster.first().cluster_type]
+            storage_roles = storage_queryset.values_list("instance_role", flat=True)
+            if cluster_type == [ClusterType.TenDBCluster.value]:
+                proxy_roles = proxy_query.values_list("tendbclusterspiderext__spider_role", flat=True)
+            else:
+                proxy_roles = proxy_query.values_list("access_layer", flat=True)
+
+            unique_roles = set(storage_roles) | (set(proxy_roles))
+            roles_dicts = [{"value": role, "text": role} for role in unique_roles]
+            instance_attrs["role"] = roles_dicts
+
+        if "version" in data["instances_attrs"]:
+            proxy_versions = proxy_query.values_list("version", flat=True)
+            storage_versions = storage_queryset.values_list("version", flat=True)
+            versions = set(proxy_versions) | (set(storage_versions))
+            instance_attrs["version"] = [
+                {"value": version, "text": version if version else "--"} for version in versions
+            ]
+
+        if "status" in data["instances_attrs"]:
+            proxy_status = proxy_query.values_list("status", flat=True)
+            storage_status = storage_queryset.values_list("status", flat=True)
+            all_status = set(proxy_status) | (set(storage_status))
+            instance_attrs["status"] = [{"value": status, "text": status if status else "--"} for status in all_status]
+
+        if "bk_os_name" in data["instances_attrs"]:
+            proxy_os_names = proxy_query.values_list("machine__bk_os_name", flat=True)
+            storage_os_names = storage_queryset.values_list("machine__bk_os_name", flat=True)
+            os_names = set(proxy_os_names) | (set(storage_os_names))
+            instance_attrs["bk_os_name"] = [
+                {"value": os_name, "text": os_name if os_name else "--"} for os_name in os_names
+            ]
+
+        if "bk_sub_zone" in data["instances_attrs"]:
+            proxy_zones = proxy_query.values_list("machine__bk_sub_zone", flat=True)
+            storage_zones = storage_queryset.values_list("machine__bk_sub_zone", flat=True)
+            zones = set(proxy_zones) | (set(storage_zones))
+            instance_attrs["bk_sub_zone"] = [{"value": zone, "text": zone if zone else "--"} for zone in zones]
+
+        return Response(instance_attrs)
 
     @common_swagger_auto_schema(
         operation_summary=_("查询资源池,污点主机管理表头筛选数据"),
@@ -479,7 +729,6 @@ class DBBaseViewSet(viewsets.SystemViewSet):
     )
     @action(methods=["GET"], detail=False, serializer_class=QueryClusterCapSerializer, pagination_class=None)
     def query_cluster_stat(self, request, *args, **kwargs):
-        from backend.db_periodic_task.local_tasks.db_meta.sync_cluster_stat import sync_cluster_stat_by_cluster_type
 
         data = self.params_validate(self.get_serializer_class())
         cluster_stat_map = {}
@@ -493,6 +742,26 @@ class DBBaseViewSet(viewsets.SystemViewSet):
         }
 
         return Response(cluster_stat_map)
+
+    @common_swagger_auto_schema(
+        operation_summary=_("查询集群负载"),
+        auto_schema=ResponseSwaggerAutoSchema,
+        query_serializer=QueryClusterCapSerializer(),
+        responses={status.HTTP_200_OK: QueryClusterCapResponseSerializer()},
+        tags=[SWAGGER_TAG],
+    )
+    @action(methods=["GET"], detail=False, serializer_class=QueryClusterCapSerializer, pagination_class=None)
+    def query_cluster_load(self, request, *args, **kwargs):
+
+        data = self.params_validate(self.get_serializer_class())
+        cluster_load_data_map, cluster_load_status_map = {}, {}
+        for cluster_type in data["cluster_type"].split(","):
+            load_status, load_data = sync_cluster_load_by_cluster_type(data["bk_biz_id"], cluster_type)
+            cluster_load_data_map.update(load_data)
+            cluster_load_status_map.update(load_status)
+
+        data = {"cluster_load_data_map": cluster_load_data_map, "cluster_load_status_map": cluster_load_status_map}
+        return Response(data)
 
     @common_swagger_auto_schema(
         operation_summary=_("更新集群别名"),
@@ -557,3 +826,52 @@ class DBBaseViewSet(viewsets.SystemViewSet):
             through.objects.bulk_create(add_tags)
 
         return Response()
+
+    @common_swagger_auto_schema(
+        operation_summary=_("根据集群类型获取实例信息"),
+        auto_schema=ResponseSwaggerAutoSchema,
+        query_serializer=QueryGlobalInstanceSerializer(),
+        responses={status.HTTP_200_OK: QueryGlobalInstanceSerializer()},
+        tags=[SWAGGER_TAG],
+    )
+    @action(
+        methods=["GET"],
+        detail=False,
+        serializer_class=QueryGlobalInstanceSerializer,
+        pagination_class=ResourceLimitOffsetPagination,
+    )
+    def filter_instances(self, request, *args, **kwargs):
+        return retrieve_resources(self, request, QueryGlobalInstanceSerializer, "list_instances")
+
+    @common_swagger_auto_schema(
+        operation_summary=_("根据集群类型获取机器信息"),
+        auto_schema=ResponseSwaggerAutoSchema,
+        query_serializer=QueryGlobalMachineSerializer(),
+        responses={status.HTTP_200_OK: QueryGlobalMachineSerializer()},
+        tags=[SWAGGER_TAG],
+    )
+    @action(
+        methods=["GET"],
+        detail=False,
+        serializer_class=QueryGlobalMachineSerializer,
+        pagination_class=ResourceLimitOffsetPagination,
+    )
+    def filter_machines(self, request, *args, **kwargs):
+        return retrieve_resources(self, request, self.get_serializer_class(), "list_machines")
+
+    @common_swagger_auto_schema(
+        operation_summary=_("根据集群类型获取集群信息"),
+        auto_schema=ResponseSwaggerAutoSchema,
+        query_serializer=QueryGlobalClusterSerializer(),
+        responses={status.HTTP_200_OK: QueryGlobalClusterSerializer()},
+        tags=[SWAGGER_TAG],
+    )
+    @action(
+        methods=["GET"],
+        detail=False,
+        serializer_class=QueryGlobalClusterSerializer,
+        pagination_class=ResourceLimitOffsetPagination,
+    )
+    def filter_clusters_by_type(self, request, *args, **kwargs):
+        """根据集群类型获取集群信息"""
+        return retrieve_resources(self, request, self.get_serializer_class(), "list_clusters")

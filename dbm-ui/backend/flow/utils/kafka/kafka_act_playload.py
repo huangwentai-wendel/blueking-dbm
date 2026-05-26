@@ -92,7 +92,7 @@ class KafkaActPayload(object):
             },
         }
 
-    def get_payload(self, action, host) -> dict:
+    def get_payload(self, action, host, rack="RACK1", node_id=1, role="broker") -> dict:
         """
         拼接安装payload参数
         """
@@ -131,6 +131,11 @@ class KafkaActPayload(object):
                     "password": self.ticket_data["password"],
                     "no_security": int(self.ticket_data["no_security"]),
                     "retention_bytes": int(self.ticket_data["retention_bytes"]),
+                    "rack": rack,
+                    "node_id": node_id,
+                    "role": role,
+                    "controller_voters": self.ticket_data.get("controller_voters", ""),
+                    "controller_servers": self.ticket_data.get("controller_servers", ""),
                 },
             },
         }
@@ -209,6 +214,8 @@ class KafkaActPayload(object):
                     "zookeeper_ip": zookeeper_ip,
                     "exclude_brokers": host,
                     "new_brokers": new_host,
+                    "throttle_rate": self.ticket_data.get("throttle_rate", 100000000),
+                    "topics": self.ticket_data.get("topics", ["*"]),
                 },
             },
         }
@@ -239,8 +246,8 @@ class KafkaActPayload(object):
                 "general": {},
                 "extend": {
                     "brokers": host,
-                    "throttle_rate": self.ticket_data.get("throttle_rate", 20000000),
-                    "topics": self.ticket_data.get("topics", [".*"]),
+                    "throttle_rate": self.ticket_data.get("throttle_rate", 100000000),
+                    "topics": self.ticket_data.get("topics", ["*"]),
                 },
             },
         }

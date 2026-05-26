@@ -14,7 +14,7 @@ from collections import defaultdict
 from dataclasses import asdict
 from typing import Any, Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.components import DBConfigApi
 from backend.components.dbconfig.constants import FormatType, LevelName
@@ -33,6 +33,7 @@ from backend.flow.engine.bamboo.scene.redis.atom_jobs import (
 from backend.flow.plugins.components.collections.common.pause import PauseComponent
 from backend.flow.plugins.components.collections.redis.get_redis_payload import GetRedisActPayloadComponent
 from backend.flow.plugins.components.collections.redis.redis_db_meta import RedisDBMetaComponent
+from backend.flow.plugins.components.collections.redis.redis_update_version import RedisUpdateVersionComponent
 from backend.flow.utils.base.payload_handler import PayloadHandler
 from backend.flow.utils.redis.redis_context_dataclass import ActKwargs, CommonContext
 from backend.flow.utils.redis.redis_db_meta import RedisDBMeta
@@ -206,6 +207,16 @@ class RedisProxyScaleFlow(object):
             access_sub_builder = AccessManagerAtomJob(self.root_id, self.data, act_kwargs, params)
             sub_pipeline.add_sub_pipeline(sub_flow=access_sub_builder)
 
+            # 更新集群 proxy 版本
+            act_kwargs.cluster["update_all"] = True
+            act_kwargs.cluster["cluster_id"] = info["cluster_id"]
+            act_kwargs.cluster["bk_biz_id"] = self.data["bk_biz_id"]
+            sub_pipeline.add_act(
+                act_name=_("{}-更新版本").format(cluster_info["immute_domain"]),
+                act_component_code=RedisUpdateVersionComponent.code,
+                kwargs=asdict(act_kwargs),
+            )
+
             sub_pipelines.append(
                 sub_pipeline.build_sub_process(sub_name=_("{}新增proxy实例").format(cluster_info["cluster_name"]))
             )
@@ -216,15 +227,18 @@ class RedisProxyScaleFlow(object):
     @staticmethod
     def calc_scale_down_ips(bk_biz_id, proxy_ips, target_proxy_count):
         # 统计proxy的idc情况
-        idc_ips = defaultdict(list)
+        idc2ips = defaultdict(list)
         max_count = 0
         for proxy_ip in proxy_ips:
             m = Machine.objects.get(bk_biz_id=bk_biz_id, ip=proxy_ip)
             proxy_bk_idc_id = m.bk_idc_id
-            idc_ips[proxy_bk_idc_id].append(proxy_ip)
-            if len(idc_ips[proxy_bk_idc_id]) > max_count:
-                max_count = len(idc_ips[proxy_bk_idc_id])
-        idc_ips_dict = dict(idc_ips)
+            idc2ips[proxy_bk_idc_id].append(proxy_ip)
+            if len(idc2ips[proxy_bk_idc_id]) > max_count:
+                max_count = len(idc2ips[proxy_bk_idc_id])
+        idc_ips_dict = dict(idc2ips)
+
+        if max_count == 0:
+            return []
 
         # 计算需要裁撤的proxy列表。大概就是从多的pop出来
         proxy_now_count = len(proxy_ips)

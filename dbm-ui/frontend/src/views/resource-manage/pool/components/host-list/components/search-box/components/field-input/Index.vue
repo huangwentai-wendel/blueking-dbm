@@ -26,14 +26,14 @@
         name="resource_type"
         @change="handleChange" />
       <ComFactory
-        :ref="(el: any) => initInputRefCallback(el, 'label')"
+        :ref="(el: any) => initInputRefCallback(el, 'spec_id')"
         :model="localValueMemo"
-        name="labels"
+        name="spec_id"
         @change="handleChange" />
       <ComFactory
-        :ref="(el: any) => initInputRefCallback(el, 'agent_status')"
+        :ref="(el: any) => initInputRefCallback(el, 'label_names')"
         :model="localValueMemo"
-        name="agent_status"
+        name="label_names"
         @change="handleChange" />
     </div>
     <div class="row">
@@ -43,9 +43,14 @@
         name="city"
         @change="handleChange" />
       <ComFactory
-        :ref="(el: any) => initInputRefCallback(el, 'spec_id')"
+        :ref="(el: any) => initInputRefCallback(el, 'os_type')"
         :model="localValueMemo"
-        name="spec_id"
+        name="os_type"
+        @change="handleChange" />
+      <ComFactory
+        :ref="(el: any) => initInputRefCallback(el, 'os_names')"
+        :model="localValueMemo"
+        name="os_names"
         @change="handleChange" />
       <ComFactory
         :ref="(el: any) => initInputRefCallback(el, 'device_class')"
@@ -56,11 +61,6 @@
     <KeepAlive>
       <template v-if="isShowMore">
         <div class="row">
-          <ComFactory
-            :ref="(el: any) => initInputRefCallback(el, 'os_type')"
-            :model="localValueMemo"
-            name="os_type"
-            @change="handleChange" />
           <ComFactory
             :ref="(el: any) => initInputRefCallback(el, 'cpu')"
             :model="localValueMemo"
@@ -76,13 +76,13 @@
             :model="localValueMemo"
             name="bk_cloud_ids"
             @change="handleChange" />
+          <ComFactory
+            :ref="(el: any) => initInputRefCallback(el, 'agent_status')"
+            :model="localValueMemo"
+            name="agent_status"
+            @change="handleChange" />
         </div>
         <div class="row">
-          <ComFactory
-            :ref="(el: any) => initInputRefCallback(el, 'mount_point')"
-            :model="localValueMemo"
-            name="mount_point"
-            @change="handleChange" />
           <ComFactory
             :ref="(el: any) => initInputRefCallback(el, 'disk')"
             :model="localValueMemo"
@@ -92,6 +92,11 @@
             :ref="(el: any) => initInputRefCallback(el, 'disk_type')"
             :model="localValueMemo"
             name="disk_type"
+            @change="handleChange" />
+          <ComFactory
+            :ref="(el: any) => initInputRefCallback(el, 'mount_point')"
+            :model="localValueMemo"
+            name="mount_point"
             @change="handleChange" />
           <div style="flex: 1" />
         </div>
@@ -162,13 +167,13 @@
   const inputRef = shallowRef<Record<string, typeof ComFactory>>({});
   const localValueMemo = shallowRef<Record<string, any>>({});
   const moreKeys: Record<string, true> = {
-    os_type: true,
-    cpu: true,
-    mem: true,
     bk_cloud_ids: true,
-    mount_point: true,
+    cpu: true,
     disk: true,
     disk_type: true,
+    mem: true,
+    mount_point: true,
+    // os_type: true,
   };
   const isBusiness = route.name === 'BizResourcePool';
 
@@ -181,7 +186,7 @@
     () => props.modelValue,
     () => {
       localValueMemo.value = { ...props.modelValue };
-      isShowMore.value = Object.keys(props.modelValue).some((key) => moreKeys[key]);
+      // isShowMore.value = Object.keys(props.modelValue).some((key) => moreKeys[key]);
     },
     {
       immediate: true,
@@ -230,6 +235,11 @@
     emits('update:modelValue', value);
     emits('submit');
   };
+
+  onBeforeMount(() => {
+    // 父组件挂载或激活时，会解析url，此时需要判断是否要自动展开更多条件
+    isShowMore.value = Object.keys(props.modelValue).some((key) => moreKeys[key]);
+  });
 
   onActivated(() => {
     // 组件激活时需要校验一次值

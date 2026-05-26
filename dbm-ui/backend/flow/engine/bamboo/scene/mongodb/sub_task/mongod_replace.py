@@ -12,11 +12,13 @@ specific language governing permissions and limitations under the License.
 from copy import deepcopy
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
+from backend.db_meta.enums import InstanceRole
 from backend.db_meta.enums.cluster_type import ClusterType
-from backend.flow.consts import MongoDBClusterRole, MongoDBInstanceType, MongoDBManagerUser, MongoInstanceDbmonType
+from backend.flow.consts import MongoDBClusterRole, MongoDBManagerUser
 from backend.flow.engine.bamboo.scene.common.builder import SubBuilder
+from backend.flow.plugins.components.collections.common.pause import PauseComponent
 from backend.flow.plugins.components.collections.mongodb.add_domain_to_dns import ExecAddDomainToDnsOperationComponent
 from backend.flow.plugins.components.collections.mongodb.add_password_to_db import (
     ExecAddPasswordToDBOperationComponent,
@@ -28,7 +30,7 @@ from backend.flow.plugins.components.collections.mongodb.delete_password_from_db
     ExecDeletePasswordFromDBOperationComponent,
 )
 from backend.flow.plugins.components.collections.mongodb.exec_actuator_job import ExecuteDBActuatorJobComponent
-from backend.flow.plugins.components.collections.mongodb.fast_exec_script import MongoFastExecScriptComponent
+from backend.flow.plugins.components.collections.mongodb.mongo_add_alarm_shield import MongoAddAlarmShieldComponent
 from backend.flow.plugins.components.collections.mongodb.mongodb_capcity_chgs_meta import MongoDBCapcityMetaComponent
 from backend.flow.utils.mongodb.mongodb_dataclass import ActKwargs
 
@@ -52,13 +54,103 @@ def mongod_replace(
     sub_sub_pipeline = SubBuilder(root_id=root_id, data=ticket_data)
 
     # 获取参数
-    down = info.get("down")  # 机器是否down
-    new_node = info["target"]
+    instance_role_exclude_backup = [
+        InstanceRole.MONGO_M1.value,
+        InstanceRole.MONGO_M2.value,
+        InstanceRole.MONGO_M3.value,
+        InstanceRole.MONGO_M4.value,
+        InstanceRole.MONGO_M5.value,
+        InstanceRole.MONGO_M6.value,
+        InstanceRole.MONGO_M7.value,
+        InstanceRole.MONGO_M8.value,
+        InstanceRole.MONGO_M9.value,
+        InstanceRole.MONGO_M10.value,
+    ]
+    new_node = info["target"]  # 新节点信息
     sub_sub_get_kwargs.payload["app"] = sub_sub_get_kwargs.payload["bk_app_abbr"]
-    if not mongod_scale:
-        sub_sub_get_kwargs.replicaset_info = {}
+
     sub_sub_get_kwargs.replicaset_info["port"] = sub_sub_get_kwargs.db_instance["port"]
-    force = True
+
+    admin_user = MongoDBManagerUser.DbaUser.value
+    # 删除老实例密码使用 获取密码使用
+    sub_sub_get_kwargs.payload["nodes"] = [
+        {
+            "ip": info["ip"],
+            "domain": sub_sub_get_kwargs.db_instance.get("domain", ""),
+            "port": sub_sub_get_kwargs.db_instance["port"],
+            "bk_cloud_id": info["bk_cloud_id"],
+            "instance_role": sub_sub_get_kwargs.db_instance["instance_role"],
+        }
+    ]
+
+    # 获取密码
+    get_password = {}
+    get_password["usernames"] = sub_sub_get_kwargs.manager_users
+    sub_sub_get_kwargs.payload["passwords"] = sub_sub_get_kwargs.get_password_from_db(info=get_password)["passwords"]
+
+    # 主备切换参数
+    admin_password = sub_sub_get_kwargs.payload["passwords"][admin_user]
+    step_down_info = {
+        "exec_ip": "",
+        "exec_bk_cloud_id": 0,
+        "ip": "",
+        "port": 0,
+        "target_ip": info["ip"],
+        "admin_user": admin_user,
+        "admin_password": admin_password,
+    }
+
+    # 添加新节点
+    port = sub_sub_get_kwargs.db_instance["port"]
+    target = {
+        "ip": new_node["ip"],
+        "port": port,
+        "priority": "",
+        "hidden": "",
+    }
+    add_node_info = {
+        "exec_ip": new_node["ip"],
+        "exec_bk_cloud_id": new_node["bk_cloud_id"],
+        "ip": "",
+        "port": 0,
+        "bk_cloud_id": info["bk_cloud_id"],
+        "admin_user": admin_user,
+        "admin_password": admin_password,
+        "target": target,
+    }
+    if sub_sub_get_kwargs.db_instance["instance_role"] in instance_role_exclude_backup:
+        add_node_info["target"]["priority"] = "1"
+        add_node_info["target"]["hidden"] = "0"
+    elif sub_sub_get_kwargs.db_instance["instance_role"] == InstanceRole.MONGO_BACKUP.value:
+        add_node_info["target"]["priority"] = "0"
+        add_node_info["target"]["hidden"] = "1"
+
+    # 副本集移除老节点信息 移除节点作为执行操作节点
+    source = {
+        "ip": info["ip"],
+        "port": port,
+    }
+    remove_node_info = {
+        "exec_ip": new_node["ip"],
+        "exec_bk_cloud_id": new_node["bk_cloud_id"],
+        "ip": new_node["ip"],
+        "port": port,
+        "bk_cloud_id": info["bk_cloud_id"],
+        "admin_user": admin_user,
+        "admin_password": admin_password,
+        "source": source,
+    }
+
+    # 下架节点信息
+    nodes_info = [
+        {
+            "ip": info["ip"],
+            "domain": sub_sub_get_kwargs.db_instance.get("domain", ""),
+            "port": sub_sub_get_kwargs.db_instance["port"],
+            "bk_cloud_id": info["bk_cloud_id"],
+        }
+    ]
+
     if cluster_role:
         sub_sub_get_kwargs.cluster_type = ClusterType.MongoShardedCluster.value
         cluster_name = sub_sub_get_kwargs.db_instance["seg_range"]
@@ -70,8 +162,6 @@ def mongod_replace(
         sub_sub_get_kwargs.payload["config_nodes"] = []
         sub_sub_get_kwargs.payload["shards_nodes"] = []
         sub_sub_get_kwargs.payload["mongos_nodes"] = []
-        # 整机替换获取配置
-        conf = sub_sub_get_kwargs.get_conf(cluster_name=sub_sub_get_kwargs.db_instance["cluster_name"])
         if cluster_role == MongoDBClusterRole.ConfigSvr.value:
             sub_sub_get_kwargs.payload["config_nodes"] = [
                 {
@@ -81,8 +171,7 @@ def mongod_replace(
                     "bk_cloud_id": info["bk_cloud_id"],
                 }
             ]
-            sub_sub_get_kwargs.replicaset_info["cacheSizeGB"] = conf["config_cacheSizeGB"]
-            sub_sub_get_kwargs.replicaset_info["oplogSizeMB"] = conf["config_oplogSizeMB"]
+
         elif cluster_role == MongoDBClusterRole.ShardSvr.value:
             shard_nodes = {
                 "nodes": [
@@ -95,11 +184,8 @@ def mongod_replace(
                 ]
             }
             sub_sub_get_kwargs.payload["shards_nodes"].append(shard_nodes)
-            if not mongod_scale:
-                # 整机替换shard直接获取configdb保存cachesize 和 oplogsize 的配置
-                sub_sub_get_kwargs.replicaset_info["cacheSizeGB"] = conf["cacheSizeGB"]
-                sub_sub_get_kwargs.replicaset_info["oplogSizeMB"] = conf["oplogSizeMB"]
     else:
+        # 副本集下架需要检查连接
         sub_sub_get_kwargs.cluster_type = ClusterType.MongoReplicaSet.value
         cluster_name = sub_sub_get_kwargs.db_instance["cluster_name"]
         sub_sub_get_kwargs.payload["cluster_type"] = ClusterType.MongoReplicaSet.value
@@ -107,9 +193,9 @@ def mongod_replace(
         # 副本集直接获取配置
         conf = sub_sub_get_kwargs.get_conf(cluster_name=cluster_name)
         sub_sub_get_kwargs.replicaset_info["key_file"] = conf["key_file"]
-        if not mongod_scale:
-            sub_sub_get_kwargs.replicaset_info["cacheSizeGB"] = conf["cacheSizeGB"]
-            sub_sub_get_kwargs.replicaset_info["oplogSizeMB"] = conf["oplogSizeMB"]
+
+    # 公共参数
+    node_info = nodes_info[0]
     sub_sub_get_kwargs.replicaset_info["set_id"] = cluster_name
     sub_sub_get_kwargs.replicaset_info["nodes"] = [
         {
@@ -119,14 +205,7 @@ def mongod_replace(
             "port": sub_sub_get_kwargs.db_instance["port"],
         }
     ]
-    sub_sub_get_kwargs.payload["nodes"] = [
-        {
-            "ip": info["ip"],
-            "domain": sub_sub_get_kwargs.db_instance.get("domain", ""),
-            "port": sub_sub_get_kwargs.db_instance["port"],
-            "bk_cloud_id": info["bk_cloud_id"],
-        }
-    ]
+
     sub_sub_get_kwargs.payload["bk_cloud_id"] = info["bk_cloud_id"]
 
     # mognod安装
@@ -137,15 +216,38 @@ def mongod_replace(
         kwargs=kwargs,
     )
 
-    # mognod替换
-    kwargs = sub_sub_get_kwargs.get_instance_replace_kwargs(info=info, source_down=down)
+    # 执行为new ip
+    exec_ip = new_node["ip"]
+    exec_ip_bk_cloud_id = new_node["bk_cloud_id"]
+
+    # mognod替换 需要适配 cluster
+    if sub_sub_get_kwargs.db_instance["role_status"] == "primary":
+        # 人工确认
+        sub_sub_pipeline.add_act(act_name=_("primary切换-人工确认"), act_component_code=PauseComponent.code, kwargs={})
+        # 检查源端是否为主，如果为主则进行主备切换
+        step_down_info["exec_ip"] = exec_ip
+        step_down_info["exec_bk_cloud_id"] = exec_ip_bk_cloud_id
+        # 在new ip 上通过 primary ip 去连接 db 执行操作 副本集中其他节点可能挂了
+        step_down_info["ip"] = sub_sub_get_kwargs.db_instance["primary_ip"]
+        step_down_info["port"] = sub_sub_get_kwargs.db_instance["primary_port"]
+        kwargs = sub_sub_get_kwargs.get_step_down_kwargs(info=step_down_info)
+        sub_sub_pipeline.add_act(
+            act_name=_("MongoDB-主备切换-{}:{}".format(info["ip"], str(sub_sub_get_kwargs.db_instance["port"]))),
+            act_component_code=ExecuteDBActuatorJobComponent.code,
+            kwargs=kwargs,
+        )
+    # 添加新节点到副本集中
+    # 操作ip为非需要替换的ip
+    add_node_info["ip"] = sub_sub_get_kwargs.db_instance["primary_ip"]
+    add_node_info["port"] = sub_sub_get_kwargs.db_instance["primary_port"]
+    kwargs = sub_sub_get_kwargs.get_res_replace_add_node_kwargs(info=add_node_info)
     sub_sub_pipeline.add_act(
-        act_name=_("MongoDB-mongod替换"),
+        act_name=_("MongoDB-添加node-{}:{}".format(new_node["ip"], str(sub_sub_get_kwargs.db_instance["port"]))),
         act_component_code=ExecuteDBActuatorJobComponent.code,
         kwargs=kwargs,
     )
 
-    # 更改dns
+    # 副本集更改dns
     # 添加新的dns
     if not cluster_role:
         kwargs = sub_sub_get_kwargs.get_add_domain_to_dns_kwargs(cluster=False)
@@ -190,43 +292,42 @@ def mongod_replace(
         kwargs=kwargs,
     )
 
-    # 修改meta信息
+    # 下架老实例
+    # 屏蔽老实例监控
+    act_name = _("MongoDB-mongod下架前屏蔽告警-{}:{}".format(info["ip"], str(sub_sub_get_kwargs.db_instance["port"])))
+    kwargs = sub_sub_get_kwargs.get_add_alarm_shield_kwargs(
+        ip=info["ip"], port=sub_sub_get_kwargs.db_instance["port"], description=act_name
+    )
+    sub_sub_pipeline.add_act(
+        act_name=act_name,
+        act_component_code=MongoAddAlarmShieldComponent.code,
+        kwargs=kwargs,
+    )
+
+    # 下架节点设置为隐藏
+    kwargs = sub_sub_get_kwargs.get_mongod_hidden_kwargs(
+        info=info, hidden=True, port=sub_sub_get_kwargs.db_instance["port"]
+    )
+    sub_sub_pipeline.add_act(
+        act_name=_("MongoDB-mongod下架前隐藏-{}:{}".format(info["ip"], str(sub_sub_get_kwargs.db_instance["port"]))),
+        act_component_code=ExecuteDBActuatorJobComponent.code,
+        kwargs=kwargs,
+    )
+    # 从复制集中移除老节点
+    kwargs = sub_sub_get_kwargs.get_reduce_node_kwargs(info=remove_node_info)
+    sub_sub_pipeline.add_act(
+        act_name=_("MongoDB-移除node-{}:{}".format(node_info["ip"], str(sub_sub_get_kwargs.db_instance["port"]))),
+        act_component_code=ExecuteDBActuatorJobComponent.code,
+        kwargs=kwargs,
+    )
+
     if mongod_scale:
+        # 修改 meta
         kwargs = sub_sub_get_kwargs.get_scale_change_meta(info=info, instance=sub_sub_get_kwargs.db_instance)
         sub_sub_pipeline.add_act(
             act_name=_("MongoDB-mongod修改meta"), act_component_code=MongoDBCapcityMetaComponent.code, kwargs=kwargs
         )
 
-    if not down:
-        # 下架老实例
-        # 老实例关闭 dbmon
-        kwargs_delete_dbmon = sub_sub_get_kwargs.get_dbmon_operation_kwargs(
-            node_info=sub_sub_get_kwargs.payload["nodes"][0], operation_type=MongoInstanceDbmonType.DeleteDbmon
-        )
-        sub_sub_pipeline.add_act(
-            act_name=_(
-                "MongoDB-{}:{}-删除dbmon".format(
-                    sub_sub_get_kwargs.payload["nodes"][0]["ip"], str(sub_sub_get_kwargs.payload["nodes"][0]["port"])
-                )
-            ),
-            act_component_code=MongoFastExecScriptComponent.code,
-            kwargs=kwargs_delete_dbmon,
-        )
-
-        # 下架
-        kwargs = sub_sub_get_kwargs.get_mongo_deinstall_kwargs(
-            node_info=sub_sub_get_kwargs.payload["nodes"][0],
-            instance_type=MongoDBInstanceType.MongoD.value,
-            nodes_info=sub_sub_get_kwargs.payload["nodes"],
-            force=force,
-            rename_dir=True,
-        )
-        sub_sub_pipeline.add_act(
-            act_name=_("MongoDB-老实例下架-{}:{}".format(info["ip"], str(sub_sub_get_kwargs.db_instance["port"]))),
-            act_component_code=ExecuteDBActuatorJobComponent.code,
-            kwargs=kwargs,
-        )
-    # 老实例提下架单 TODO
     return sub_sub_pipeline.build_sub_process(
         sub_name=_("MongoDB--mongod替换--{}:{}".format(info["ip"], str(sub_sub_get_kwargs.db_instance["port"])))
     )

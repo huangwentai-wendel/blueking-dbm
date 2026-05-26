@@ -25,99 +25,36 @@ import { t } from '@locales/index';
 const { createRouteItem } = createToolboxRoute(DBTypes.MYSQL);
 
 export const mysqlToolboxChildrenRouters: RouteRecordRaw[] = [
-  {
-    path: 'sql-execute/:step?',
-    name: 'MySQLExecute',
-    meta: {
-      navName: t('变更SQL执行'),
-    },
-    component: () => import('@views/db-manage/mysql/sql-execute/index.vue'),
-  },
+  createRouteItem(TicketTypes.MYSQL_IMPORT_SQLFILE, t('变更SQL执行'), {}, { params: '/:step?' }),
   createRouteItem(TicketTypes.MYSQL_RENAME_DATABASE, t('DB重命名')),
-  {
-    path: 'privilege-clone-client/:page?',
-    name: 'MySQLPrivilegeCloneClient',
-    meta: {
-      navName: t('客户端权限克隆'),
-    },
-    component: () => import('@views/db-manage/mysql/privilege-clone-client/Index.vue'),
-  },
-  {
-    path: 'privilege-clone-inst/:page?',
-    name: 'MySQLPrivilegeCloneInst',
-    meta: {
-      navName: t('DB实例权限克隆'),
-    },
-    component: () => import('@views/db-manage/mysql/privilege-clone-inst/Index.vue'),
-  },
   createRouteItem(TicketTypes.MYSQL_RESTORE_LOCAL_SLAVE, t('重建从库')),
+  createRouteItem(TicketTypes.MYSQL_RESTORE_SLAVE, t('重建从库')),
   createRouteItem(TicketTypes.MYSQL_ADD_SLAVE, t('添加从库')),
   createRouteItem(TicketTypes.MYSQL_MIGRATE_CLUSTER, t('迁移主从')),
-  createRouteItem(TicketTypes.MYSQL_PROXY_ADD, t('添加Proxy')),
   createRouteItem(TicketTypes.MYSQL_MASTER_SLAVE_SWITCH, t('主从互切')),
-  createRouteItem(TicketTypes.MYSQL_PROXY_SWITCH, t('替换Proxy')),
+  createRouteItem(TicketTypes.MYSQL_PROXY_ADD, t('添加 Proxy')),
+  createRouteItem(TicketTypes.MYSQL_PROXY_REDUCE, t('减少 Proxy')),
+  createRouteItem(TicketTypes.MYSQL_PROXY_CONF_CHANGE, t('Proxy 升降配')),
+  createRouteItem(TicketTypes.MYSQL_PROXY_SWITCH, t('替换 Proxy')),
+  createRouteItem(TicketTypes.MYSQL_PROXY_MIGRATE, t('迁移 Proxy (按集群)')),
+  createRouteItem(TicketTypes.MYSQL_PROXY_MIGRATE_INS, t('迁移 Proxy (按实例)')),
   createRouteItem(TicketTypes.MYSQL_MASTER_FAIL_OVER, t('主库故障切换')),
-  {
-    path: 'db-table-backup/:page?',
-    name: 'MySQLDBTableBackup',
-    meta: {
-      navName: t('库表备份'),
-    },
-    component: () => import('@views/db-manage/mysql/db-table-backup/index.vue'),
-  },
-  {
-    path: 'db-backup/:page?',
-    name: 'MySQLDBBackup',
-    meta: {
-      navName: t('全库备份'),
-    },
-    component: () => import('@views/db-manage/mysql/db-backup/index.vue'),
-  },
-  {
-    path: 'db-clear/:page?',
-    name: 'MySQLDBClear',
-    meta: {
-      navName: t('清档'),
-    },
-    component: () => import('@views/db-manage/mysql/db-clear/Index.vue'),
-  },
+  createRouteItem(TicketTypes.MYSQL_INSTANCE_FAIL_OVER, t('主库故障切换')),
+  createRouteItem(TicketTypes.MYSQL_HA_DB_TABLE_BACKUP, t('库表备份')),
+  createRouteItem(TicketTypes.MYSQL_HA_FULL_BACKUP, t('全库备份')),
+  createRouteItem(TicketTypes.MYSQL_HA_TRUNCATE_DATA, t('清档')),
+  createRouteItem(TicketTypes.MYSQL_SINGLE_TRUNCATE_DATA, t('清档')),
   createRouteItem(TicketTypes.MYSQL_ROLLBACK_CLUSTER, t('定点构造')),
-  // 库表闪回
-  {
-    path: 'flashback/:page?',
-    name: 'MySQLDBFlashback',
-    meta: {
-      navName: t('闪回'),
-    },
-    component: () => import('@views/db-manage/mysql/flashback/Index.vue'),
-  },
-  // 记录级闪回
-  // 两个闪回两个路由，这里没问题
-  createRouteItem(TicketTypes.MYSQL_FLASHBACK, t('闪回')),
-  {
-    path: 'checksum/:page?',
-    name: 'MySQLChecksum',
-    meta: {
-      navName: t('数据校验修复'),
-    },
-    component: () => import('@views/db-manage/mysql/checksum/Index.vue'),
-  },
-  {
-    path: 'openarea-template',
-    name: 'MySQLOpenareaTemplate',
-    meta: {
-      navName: t('开区模版'),
-    },
-    component: () => import('@views/db-manage/mysql/openarea/template/Index.vue'),
-  },
-  {
-    path: 'data-migrate/:page?',
-    name: 'MySQLDataMigrate',
-    meta: {
-      navName: t('DB克隆'),
-    },
-    component: () => import('@views/db-manage/mysql/data-migrate/Index.vue'),
-  },
+  createRouteItem(TicketTypes.MYSQL_CHECKSUM, t('数据校验修复')),
+  createRouteItem(TicketTypes.MYSQL_CLIENT_CLONE_RULES, t('客户端权限克隆')),
+  createRouteItem(TicketTypes.MYSQL_INSTANCE_CLONE_RULES, t('DB实例权限克隆')),
+  createRouteItem(TicketTypes.MYSQL_DATA_MIGRATE, t('DB 数据克隆')),
+  createRouteItem(TicketTypes.MYSQL_PROXY_UPGRADE, t('版本升级')),
+  createRouteItem(TicketTypes.MYSQL_CLUSTER_STANDARDIZE, t('集群标准化')),
+  createRouteItem(TicketTypes.MYSQL_FLASHBACK, t('回档')),
+  createRouteItem(TicketTypes.MYSQL_ROLLBACK, t('回档')),
+  createRouteItem(TicketTypes.MYSQL_MIGRATE_SINGLE, t('单节点迁移')),
+  createRouteItem(TicketTypes.MYSQL_OPEN_AREA, t('开区模版')),
   {
     path: 'webconsole',
     name: 'MySQLWebconsole',
@@ -126,7 +63,20 @@ export const mysqlToolboxChildrenRouters: RouteRecordRaw[] = [
     },
     component: () => import('@views/db-manage/mysql/webconsole/Index.vue'),
   },
-  createRouteItem(TicketTypes.MYSQL_PROXY_UPGRADE, t('版本升级')),
+  {
+    path: 'merge-disk-space',
+    name: 'MySQLMergeDiskSpace',
+    meta: {
+      navName: t('DB 数据合并空间评估'),
+    },
+    component: () => import('@views/db-manage/mysql/merge-disk-space/Index.vue'),
+  },
+  createRouteItem(TicketTypes.MYSQL_PROXY_UPGRADE, t('版本升级')), // 接入层升级
+  createRouteItem(TicketTypes.MYSQL_LOCAL_UPGRADE, t('版本升级')), // 主从/单节点-存储层-本地升级
+  createRouteItem(TicketTypes.MYSQL_MIGRATE_UPGRADE, t('版本升级')), // 主从-存储层-迁移升级
+  createRouteItem(TicketTypes.MYSQL_CLUSTER_STANDARDIZE, t('集群标准化')),
+  createRouteItem(TicketTypes.MYSQL_FIXPOINT_EXIST_CLUSTER, t('构造')),
+  createRouteItem(TicketTypes.MYSQL_FIXPOINT_NEW_CLUSTER, t('构造')),
 ];
 
 const singleRoutes: RouteRecordRaw[] = [
@@ -134,7 +84,6 @@ const singleRoutes: RouteRecordRaw[] = [
     path: 'tendbsingle',
     name: 'tendbsingle',
     meta: {
-      fullscreen: true,
       navName: t('MySQL单节点_集群管理'),
       skeleton: 'clusterList',
     },
@@ -147,11 +96,10 @@ const singleRoutes: RouteRecordRaw[] = [
         path: 'list/:clusterId?',
         name: 'DatabaseTendbsingle',
         meta: {
-          fullscreen: true,
           navName: t('MySQL单节点_集群管理'),
           skeleton: 'clusterList',
         },
-        component: () => import('@/views/db-manage/mysql/single-cluster-list/Index.vue'),
+        component: () => import('@views/db-manage/mysql/single-cluster-list/Index.vue'),
       },
       {
         path: 'detail/:clusterId',
@@ -171,7 +119,6 @@ const haRoutes: RouteRecordRaw[] = [
     path: 'tendbha',
     name: 'tendbha',
     meta: {
-      fullscreen: true,
       navName: t('MySQL主从集群_集群管理'),
       skeleton: 'clusterList',
     },
@@ -184,7 +131,6 @@ const haRoutes: RouteRecordRaw[] = [
         path: 'list/:clusterId?',
         name: 'DatabaseTendbha',
         meta: {
-          fullscreen: true,
           navName: t('MySQL主从集群_集群管理'),
           skeleton: 'clusterList',
         },
@@ -203,7 +149,6 @@ const haRoutes: RouteRecordRaw[] = [
         path: 'instance-list',
         name: 'DatabaseTendbhaInstance',
         meta: {
-          fullscreen: true,
           navName: t('MySQL主从集群_实例视图'),
         },
         component: () => import('@views/db-manage/mysql/ha-instance-list/Index.vue'),
@@ -221,17 +166,10 @@ const mysqlToolboxRouters: RouteRecordRaw[] = [
       navName: t('工具箱'),
     },
     redirect: {
-      name: 'MySQLExecute',
+      name: TicketTypes.MYSQL_IMPORT_SQLFILE,
     },
-    component: () => import('@views/db-manage/mysql/toolbox/index.vue'),
-    children: [
-      ...mysqlToolboxChildrenRouters,
-      {
-        path: 'toolbox-result/:ticketType?/:ticketId?',
-        name: 'MysqlToolboxResult',
-        component: () => import('@views/db-manage/common/toolbox-result/Index.vue'),
-      },
-    ],
+    component: () => import('@views/db-manage/mysql/toolbox/IndexNew.vue'),
+    children: [...mysqlToolboxChildrenRouters],
   },
 ];
 
@@ -250,6 +188,7 @@ const commonRouters: RouteRecordRaw[] = [
     path: 'mysql',
     name: 'MysqlManage',
     meta: {
+      dbType: DBTypes.MYSQL,
       navName: t('Mysql 集群管理'),
     },
     redirect: {
@@ -296,7 +235,7 @@ const commonRouters: RouteRecordRaw[] = [
         meta: {
           navName: t('新建开区模板'),
         },
-        component: () => import('@views/db-manage/mysql/openarea/template-create/Index.vue'),
+        component: () => import('@views/db-manage/mysql/MYSQL_OPEN_AREA/template-create/Index.vue'),
       },
       {
         path: 'openarea-template-edit/:id',
@@ -304,15 +243,15 @@ const commonRouters: RouteRecordRaw[] = [
         meta: {
           navName: t('编辑开区模板'),
         },
-        component: () => import('@views/db-manage/mysql/openarea/template-create/Index.vue'),
+        component: () => import('@views/db-manage/mysql/MYSQL_OPEN_AREA/template-create/Index.vue'),
       },
       {
         path: 'openarea-create/:id',
-        name: 'mysqlOpenareaCreate',
+        name: 'MySQLOpenareaCreate',
         meta: {
           navName: t('新建开区'),
         },
-        component: () => import('@views/db-manage/mysql/openarea/create/Index.vue'),
+        component: () => import('@views/db-manage/mysql/MYSQL_OPEN_AREA/create/Index.vue'),
       },
     ],
   },

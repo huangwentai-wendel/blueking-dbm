@@ -9,7 +9,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 
 from backend.db_meta.enums import InstanceRole
@@ -18,7 +18,7 @@ from backend.db_monitor.serializers import AlarmCallBackDataSerializer
 from backend.db_services.dbbase.constants import IpSource
 from backend.flow.engine.controller.redis import RedisController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import SkipToRepresentationMixin
+from backend.ticket.builders.redis.base import RedisBaseOperateDetailSerializer
 from backend.ticket.builders.redis.redis_toolbox_cut_off import (
     RedisClusterCutOffFlowBuilder,
     RedisClusterCutOffResourceParamBuilder,
@@ -26,7 +26,7 @@ from backend.ticket.builders.redis.redis_toolbox_cut_off import (
 from backend.ticket.constants import TicketType
 
 
-class RedisClusterAutofixDetailSerializer(SkipToRepresentationMixin, serializers.Serializer):
+class RedisClusterAutofixDetailSerializer(RedisBaseOperateDetailSerializer):
     """故障自愈"""
 
     class InfoSerializer(serializers.Serializer):
@@ -36,8 +36,11 @@ class RedisClusterAutofixDetailSerializer(SkipToRepresentationMixin, serializers
 
         cluster_id = serializers.IntegerField(help_text=_("集群ID"))
         bk_cloud_id = serializers.IntegerField(help_text=_("云区域ID"))
+        resource_spec = serializers.JSONField(required=False, help_text=_("资源申请信息"))
         proxy = serializers.ListField(help_text=_("proxy列表"), child=HostInfoSerializer(), required=False)
         redis_slave = serializers.ListField(help_text=_("slave列表"), child=HostInfoSerializer(), required=False)
+        need_manual_confirm = serializers.BooleanField(help_text=_("需要人工确认"), required=False, default=True)
+        switch_role = serializers.CharField(required=False, help_text=_("替换角色"))
 
     ip_source = serializers.ChoiceField(
         help_text=_("主机来源"), choices=IpSource.get_choices(), default=IpSource.RESOURCE_POOL.value
@@ -92,7 +95,7 @@ class RedisClusterAutofixFlowBuilder(RedisClusterCutOffFlowBuilder):
     inner_flow_builder = RedisClusterAutofixParamBuilder
     inner_flow_name = _("故障自愈")
     resource_batch_apply_builder = RedisClusterAutofixResourceParamBuilder
-    default_need_itsm = True
+    default_need_itsm = False
     default_need_manual_confirm = False
 
     @property

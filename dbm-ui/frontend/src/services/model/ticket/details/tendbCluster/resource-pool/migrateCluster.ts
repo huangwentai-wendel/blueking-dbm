@@ -1,8 +1,12 @@
-import type { DetailMachines, ResourcePoolDetailBase } from '../../common';
+import type { BackupSourceType } from '@services/types';
+
+import type { DetailMachines } from '../../common';
+
+import type { ResourcePoolDetailBase } from '../../resource-pool';
+
 /**
  * TenDB Cluster 主从迁移
  */
-
 interface IHost {
   bk_biz_id: number;
   bk_cloud_id: number;
@@ -11,7 +15,7 @@ interface IHost {
 }
 
 export interface MigrateCluster extends ResourcePoolDetailBase {
-  backup_source: string;
+  backup_source: BackupSourceType;
   infos: {
     cluster_id: number;
     old_nodes: {
@@ -21,6 +25,8 @@ export interface MigrateCluster extends ResourcePoolDetailBase {
     resource_spec: {
       backend_group: {
         count: number;
+        label_names: string[]; // 标签名称列表，单据详情回显用
+        labels: string[]; // 标签id列表
         spec_id: number;
       };
     };

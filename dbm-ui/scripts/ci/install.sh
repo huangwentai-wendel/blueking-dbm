@@ -39,6 +39,11 @@ drop database if exists \`${REPORT_DB_NAME}\`;
 drop database if exists \`${REPORT_DB_NAME}_test\`;
 create database \`${REPORT_DB_NAME}\` default character set utf8mb4 collate utf8mb4_general_ci;
 SELECT schema_name, default_character_set_name FROM information_schema.SCHEMATA;
+
+drop database if exists \`${STATS_DB_NAME}\`;
+drop database if exists \`${STATS_DB_NAME}_test\`;
+create database \`${STATS_DB_NAME}\` default character set utf8mb4 collate utf8mb4_general_ci;
+
 "
 
 echo $CREATE_DB_SQL
@@ -49,10 +54,6 @@ else
   # 没有密码时无需-p，防止回车阻塞
   mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -sNe "$CREATE_DB_SQL"
 fi
-
-# 清空redis数据
-redis-cli -h ${REDIS_IP} -p ${REDIS_PORT} -a ${REDIS_PASSWORD} FLUSHALL
-redis-cli -h ${REDIS_IP} -p ${REDIS_PORT} -a ${REDIS_PASSWORD} DBSIZE
 
 echo "开始执行 python manage.py migrate --database=report_db"
 python manage.py migrate --database=report_db >> /tmp/migrate_report_db.log
@@ -77,8 +78,24 @@ python manage.py createcachetable django_cache
 python manage.py language_finder -p backend/ -m error
 if [[ $? -ne 0 ]];
 then
-  echo -e "\033[1;31m Error: python manage.py language_finder -p backend/ -m error 执行失败！请检查中文是否已标记 \033[0m"
+  echo -e "\033[1;31m Error: python manage.py language_finder -p backend/ -m error 执行失败！请检查中文是否已标记并且是否存在非法导入 \033[0m"
   FAILED_COUNT=$[$FAILED_COUNT+1]
+fi
+
+echo "正在检查是否有未提交的数据库迁移文件..."
+MIGRATION_OUTPUT=$(python manage.py makemigrations --dry-run --check 2>&1)
+
+# 捕获命令的退出状态
+STATUS=$?
+
+if [ $STATUS -ne 0 ]; then
+    echo "❌ 错误：检测到模型变更但未生成对应的迁移文件！"
+    echo ""
+    echo "====== 迁移详情 ======"
+    echo "$MIGRATION_OUTPUT"
+else
+    echo "✅ 检查通过：没有未提交的模型变更。"
+    exit 0
 fi
 
 if [[ $FAILED_COUNT -ne 0 ]];
@@ -88,3 +105,4 @@ then
 else
   echo "前置命令已通过"
 fi
+

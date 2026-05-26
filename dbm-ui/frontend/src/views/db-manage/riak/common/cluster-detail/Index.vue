@@ -61,8 +61,8 @@
             {{ t('禁用') }}
           </AuthButton>
         </OperationBtnStatusTips>
-        <MoreActionExtend trigger="hover">
-          <template #handler>
+        <MoreActionExtend>
+          <template #trigger>
             <BkButton
               v-bk-tooltips="t('更多操作')"
               class="ml-4"
@@ -71,7 +71,7 @@
               <DbIcon type="more" />
             </BkButton>
           </template>
-          <BkDropdownItem v-db-console="'riak.clusterManage.enable'">
+          <div v-db-console="'riak.clusterManage.enable'">
             <OperationBtnStatusTips :data="data">
               <AuthButton
                 action-id="riak_enable_disable"
@@ -83,8 +83,8 @@
                 {{ t('启用') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem v-db-console="'riak.clusterManage.delete'">
+          </div>
+          <div v-db-console="'riak.clusterManage.delete'">
             <OperationBtnStatusTips :data="data">
               <AuthButton
                 v-bk-tooltips="{
@@ -100,10 +100,8 @@
                 {{ t('删除') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem>
-            <ClusterDomainDnsRelation :data="data" />
-          </BkDropdownItem>
+          </div>
+          <ClusterDomainDnsRelation :data="data" />
         </MoreActionExtend>
       </DisplayBox>
       <ActionPanel
@@ -112,8 +110,15 @@
         :cluster-type="ClusterTypes.RIAK">
         <template #infoContent>
           <BaseInfo
+            :cluster-type="ClusterTypes.RIAK"
             :data="data"
-            @refresh="fetchDetailData" />
+            @refresh="fetchDetailData">
+            <template #moduleName>
+              <ModuleNameInfo
+                :cluster-type="ClusterTypes.RIAK"
+                :data="data" />
+            </template>
+          </BaseInfo>
         </template>
       </ActionPanel>
     </template>
@@ -140,21 +145,19 @@
   import { useI18n } from 'vue-i18n';
   import { useRequest } from 'vue-request';
 
-  import RiakModel from '@services/model/riak/riak';
+  import RiakDetailModel from '@services/model/riak/riak-detail';
   import { getRiakDetail } from '@services/source/riak';
 
   import { ClusterTypes } from '@common/const';
 
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
 
-  import { ActionPanel, DisplayBox } from '@views/db-manage/common/cluster-details';
+  import { ActionPanel, BaseInfo, BaseInfoField, DisplayBox } from '@views/db-manage/common/cluster-details';
   import ClusterDomainDnsRelation from '@views/db-manage/common/cluster-domain-dns-relation/Index.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
   import AddNodes from '@views/db-manage/riak/common/AddNodes.vue';
   import DeleteNodes from '@views/db-manage/riak/common/DeleteNodes.vue';
-
-  import BaseInfo from './components/BaseInfo.vue';
 
   interface Props {
     clusterId: number;
@@ -165,9 +168,11 @@
   const props = defineProps<Props>();
   const emits = defineEmits<Emits>();
 
+  const { ModuleNameInfo } = BaseInfoField;
+
   const { t } = useI18n();
 
-  const data = ref<RiakModel>();
+  const data = ref<RiakDetailModel>();
   const isShowAddNode = ref(false);
   const isShowDeleteNode = ref(false);
 
@@ -179,7 +184,7 @@
 
   const { loading: isLoading, run: fetchClusterDetail } = useRequest(getRiakDetail, {
     manual: true,
-    onSuccess(result: RiakModel) {
+    onSuccess(result: RiakDetailModel) {
       data.value = result;
     },
   });

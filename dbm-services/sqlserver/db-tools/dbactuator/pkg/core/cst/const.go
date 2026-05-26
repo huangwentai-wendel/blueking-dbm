@@ -19,6 +19,8 @@ const (
 	SysDB = "Monitor"
 	// 临时账号前缀
 	TempJobUserPrefix = "J_%"
+	// mssql_data_read_user固定SID
+	MSSQL_DATA_READ_USER_SID = "0x1234567890ABCDEF1234567890ABCDEF"
 )
 
 const (
@@ -241,6 +243,26 @@ var (
 	`
 )
 
+// 初始化账号SQL模板, 指定SID
+var (
+	EXEC_INIT_LOGIN_WITH_SID_SQL = `
+	USE [master]
+	DECLARE @username NVARCHAR(50) = '%s'
+	DECLARE @pwd NVARCHAR(50) = '%s'
+	DECLARE @role NVARCHAR(50) = '%s'
+	DECLARE @sql NVARCHAR(MAX)
+	set @sql ='
+	use master
+	IF SUSER_SID('''+@username+''') IS NOT NULL
+	DROP LOGIN ' +@username+ '
+	CREATE LOGIN ['+@username+'] WITH PASSWORD = N'''+@pwd+''', DEFAULT_DATABASE = [master], CHECK_POLICY = OFF, SID=%s;'
+	IF @role <> 'public'
+	set @sql = @sql + '
+	EXEC master.sys.sp_addsrvrolemember @loginame = ' +@username+', @rolename = N'''+@role+''';'
+	EXEC(@sql)
+	`
+)
+
 // 添加权限SQL模板,这里统一给db_owner权限
 var (
 	EXEC_INIT_PRIV_SQL = `
@@ -340,6 +362,12 @@ var (
 	exec(@sql)
 `
 )
+
+// mssql_data_read_drs 账号初始化
+var GRANT_DATA_READ_SQL = `
+use [master] 
+GRANT VIEW SERVER STATE TO [%s]
+`
 
 // 导出系统库一些配置专用的SQL
 var (

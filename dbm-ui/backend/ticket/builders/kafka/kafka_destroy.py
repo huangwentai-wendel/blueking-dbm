@@ -11,12 +11,11 @@ specific language governing permissions and limitations under the License.
 
 import logging
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.db_meta.enums import ClusterPhase
 from backend.flow.engine.controller.kafka import KafkaController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import HostRecycleSerializer
 from backend.ticket.builders.common.bigdata import BaseKafkaTicketFlowBuilder, BigDataTakeDownDetailSerializer
 from backend.ticket.constants import TicketType
 
@@ -24,7 +23,7 @@ logger = logging.getLogger("root")
 
 
 class KafkaDestroyDetailSerializer(BigDataTakeDownDetailSerializer):
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.DEFAULT)
+    pass
 
 
 class KafkaDestroyFlowParamBuilder(builders.FlowParamBuilder):

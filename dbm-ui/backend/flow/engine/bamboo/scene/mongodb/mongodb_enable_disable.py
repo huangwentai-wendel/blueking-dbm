@@ -11,7 +11,7 @@ specific language governing permissions and limitations under the License.
 import logging.config
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.flow.engine.bamboo.scene.common.builder import Builder
 from backend.flow.engine.bamboo.scene.mongodb.sub_task.cluster_enable_disable import cluster_enable_disable
@@ -85,4 +85,4 @@ class MongoEnableDisableFlow(object):
         pipeline.add_parallel_sub_pipeline(sub_flow_list=sub_pipelines)
 
         # 运行流程
-        pipeline.run_pipeline()
+        pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=self.data["cluster_ids"])

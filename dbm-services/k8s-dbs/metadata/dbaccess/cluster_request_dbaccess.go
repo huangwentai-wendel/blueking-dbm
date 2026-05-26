@@ -20,28 +20,24 @@ limitations under the License.
 package dbaccess
 
 import (
-	"errors"
-	"fmt"
 	"k8s-dbs/common/entity"
-	mconst "k8s-dbs/metadata/constant"
-	models "k8s-dbs/metadata/dbaccess/model"
-	"log/slog"
+	metaentity "k8s-dbs/metadata/entity"
+	metamodel "k8s-dbs/metadata/model"
+	"sync"
+
+	"github.com/pkg/errors"
 
 	"gorm.io/gorm"
 )
 
 // ClusterRequestRecordDbAccess 定义 request record 元数据的数据库访问接口
 type ClusterRequestRecordDbAccess interface {
-	Create(model *models.ClusterRequestRecordModel) (*models.ClusterRequestRecordModel, error)
+	Create(model *metamodel.ClusterRequestRecordModel) (*metamodel.ClusterRequestRecordModel, error)
 	DeleteByID(id uint64) (uint64, error)
-	FindByID(id uint64) (*models.ClusterRequestRecordModel, error)
-	Update(model *models.ClusterRequestRecordModel) (uint64, error)
-	ListByPage(params map[string]interface{}, pagination *entity.Pagination) (
-		[]models.ClusterRequestRecordModel,
-		uint64,
-		error,
-	)
-	FindByParams(params map[string]interface{}) ([]models.ClusterRequestRecordModel, error)
+	FindByID(id uint64) (*metamodel.ClusterRequestRecordModel, error)
+	Update(model *metamodel.ClusterRequestRecordModel) (uint64, error)
+	ListByPage(params *metaentity.ClusterRequestQueryParams, pagination *entity.Pagination) (
+		[]*metamodel.ClusterRequestRecordModel, uint64, error)
 }
 
 // ClusterRequestRecordDbAccessImpl ClusterRequestRecordDbAccess 的具体实现
@@ -49,95 +45,113 @@ type ClusterRequestRecordDbAccessImpl struct {
 	db *gorm.DB
 }
 
-// FindByParams 通过参数查询
-func (k *ClusterRequestRecordDbAccessImpl) FindByParams(params map[string]interface{}) (
-	[]models.ClusterRequestRecordModel,
-	error,
-) {
-	var recordModels []models.ClusterRequestRecordModel
-	if err := k.db.
-		Where(params).
-		Limit(mconst.MaxFetchSize).
-		Find(&recordModels).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return []models.ClusterRequestRecordModel{}, nil
-		}
-		slog.Error("failed to find by params", "error", err)
-		return nil, fmt.Errorf("database query failed: %w", err)
+var (
+	clusterRequestInstance ClusterRequestRecordDbAccess
+	clusterRequestOnce     sync.Once
+)
+
+// GetClusterRequestDbAccess 获取 ClusterRequestRecordDbAccess 单例实例
+func GetClusterRequestDbAccess(db *gorm.DB) ClusterRequestRecordDbAccess {
+	clusterRequestOnce.Do(func() {
+		clusterRequestInstance = &ClusterRequestRecordDbAccessImpl{db: db}
+	})
+	if clusterRequestInstance == nil {
+		panic("ClusterRequestRecordDbAccess instance is nil after initialization")
 	}
-	return recordModels, nil
+	return clusterRequestInstance
 }
 
 // Create 创建元数据接口实现
-func (k *ClusterRequestRecordDbAccessImpl) Create(model *models.ClusterRequestRecordModel) (
-	*models.ClusterRequestRecordModel, error,
+func (k *ClusterRequestRecordDbAccessImpl) Create(model *metamodel.ClusterRequestRecordModel) (
+	*metamodel.ClusterRequestRecordModel, error,
 ) {
 	if err := k.db.Create(model).Error; err != nil {
-		slog.Error("Create request error", "error", err)
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to create request record with model %+v", model)
 	}
 	return model, nil
 }
 
 // DeleteByID 删除元数据接口实现
 func (k *ClusterRequestRecordDbAccessImpl) DeleteByID(id uint64) (uint64, error) {
-	result := k.db.Delete(&models.ClusterRequestRecordModel{}, id)
+	result := k.db.Delete(&metamodel.ClusterRequestRecordModel{}, id)
 	if result.Error != nil {
-		slog.Error("Delete request error", "error", result.Error.Error())
-		return 0, result.Error
+		return 0, errors.Wrapf(result.Error, "failed to delete request record with id %d", id)
 	}
 	return uint64(result.RowsAffected), nil
 }
 
 // FindByID 查找元数据接口实现
-func (k *ClusterRequestRecordDbAccessImpl) FindByID(id uint64) (*models.ClusterRequestRecordModel, error) {
-	var request models.ClusterRequestRecordModel
+func (k *ClusterRequestRecordDbAccessImpl) FindByID(id uint64) (*metamodel.ClusterRequestRecordModel, error) {
+	var request metamodel.ClusterRequestRecordModel
 	result := k.db.First(&request, id)
 	if result.Error != nil {
-		slog.Error("Find request error", "error", result.Error.Error())
-		return nil, result.Error
+		return nil, errors.Wrapf(result.Error, "failed to find request record with id %d", id)
 	}
 	return &request, nil
 }
 
 // Update 更新元数据接口实现
-func (k *ClusterRequestRecordDbAccessImpl) Update(model *models.ClusterRequestRecordModel) (uint64, error) {
+func (k *ClusterRequestRecordDbAccessImpl) Update(model *metamodel.ClusterRequestRecordModel) (uint64, error) {
 	result := k.db.Omit("CreatedAt", "CreatedBy").Save(model)
 	if result.Error != nil {
-		slog.Error("Update request error", "error", result.Error.Error())
-		return 0, result.Error
+		return 0, errors.Wrapf(result.Error, "failed to update request record with model %+v", model)
 	}
 	return uint64(result.RowsAffected), nil
 }
 
 // ListByPage 分页查询元数据接口实现
-func (k *ClusterRequestRecordDbAccessImpl) ListByPage(params map[string]interface{}, pagination *entity.Pagination) (
-	[]models.ClusterRequestRecordModel,
+func (k *ClusterRequestRecordDbAccessImpl) ListByPage(
+	params *metaentity.ClusterRequestQueryParams,
+	pagination *entity.Pagination,
+) (
+	[]*metamodel.ClusterRequestRecordModel,
 	uint64,
 	error,
 ) {
-	var recordModels []models.ClusterRequestRecordModel
+	var recordModels []*metamodel.ClusterRequestRecordModel
 	var count int64
-	if err := k.db.Model(&models.ClusterRequestRecordModel{}).Where(params).Count(&count).Error; err != nil {
-		slog.Error("Count models error", "error", err.Error())
-		return nil, 0, err
+	query := k.db.Model(&metamodel.ClusterRequestRecordModel{})
+	if params.K8sClusterName != "" {
+		query = query.Where("k8s_cluster_name = ?", params.K8sClusterName)
 	}
+	if params.NameSpace != "" {
+		query = query.Where("namespace = ?", params.NameSpace)
+	}
+	if len(params.Creators) > 0 {
+		query = query.Where("created_by in ?", params.Creators)
+	}
+	if !params.StartTime.IsZero() {
+		query = query.Where("created_at >= ?", params.StartTime)
+
+	}
+	if !params.EndTime.IsZero() {
+		query = query.Where("created_at <= ?", params.EndTime)
+	}
+
+	if len(params.RequestTypes) > 0 {
+		query = query.Where("request_type in ?", params.RequestTypes)
+	}
+
+	if len(params.ClusterNames) > 0 {
+		query = query.Where("cluster_name in ?", params.ClusterNames)
+	}
+
+	if params.RequestParams != "" {
+		query = query.Where("request_params like ?", "%"+params.RequestParams+"%")
+	}
+
+	if err := query.Count(&count).Error; err != nil {
+		return nil, 0, errors.Wrapf(err, "failed to count request record with pagination %+v", pagination)
+	}
+
 	offset := (pagination.Page - 1) * pagination.Limit
-	if err := k.db.
+	if err := query.
 		Offset(offset).
 		Limit(pagination.Limit).
-		Where(params).
 		Order("created_at DESC").
 		Find(&recordModels).
 		Error; err != nil {
-		slog.Error("List models error", "error", err.Error())
-		return nil, 0, err
+		return nil, 0, errors.Wrapf(err, "failed to find request record with pagination %+v", pagination)
 	}
-
 	return recordModels, uint64(count), nil
-}
-
-// NewClusterRequestRecordDbAccess 创建 ClusterRequestRecordDbAccess 接口实现实例
-func NewClusterRequestRecordDbAccess(db *gorm.DB) ClusterRequestRecordDbAccess {
-	return &ClusterRequestRecordDbAccessImpl{db: db}
 }

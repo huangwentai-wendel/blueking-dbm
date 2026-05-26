@@ -19,7 +19,7 @@
       <BkLoading
         :loading="loading"
         mode="spin"
-        :title="t('日志加载中...')">
+        :title="loadingText">
       </BkLoading>
     </div>
     <div id="nodeLogLineNumbers"></div>
@@ -42,23 +42,21 @@
 </template>
 
 <script setup lang="tsx">
-  import { format } from 'date-fns';
-  import { useI18n } from 'vue-i18n';
+  import _ from 'lodash';
 
   import { execCopy } from '@utils';
 
+  import { t } from '@locales/index';
+
   import { FitAddon } from '@xterm/addon-fit';
   import { WebLinksAddon } from '@xterm/addon-web-links';
-  import { Terminal } from '@xterm/xterm';
+  import { type IBuffer, Terminal } from '@xterm/xterm';
+
+  import { formatLogData, type NodeLog } from './utils';
 
   interface Props {
     loading?: boolean;
-  }
-
-  interface NodeLog {
-    levelname: string;
-    message: string;
-    timestamp: number;
+    loadingText?: string;
   }
 
   interface Exposes {
@@ -72,14 +70,19 @@
 
   withDefaults(defineProps<Props>(), {
     loading: false,
+    loadingText: t('日志加载中...'),
   });
 
-  let terminal: Terminal;
-  let fitAddon: FitAddon;
+  let terminal: Terminal | null;
+  let fitAddon: FitAddon | null;
   let isAutoScrollEnabled = true; // 默认开启自动滚动
   let lastScrollPosition = 0; // 记录上次滚动位置
   let localLogList: NodeLog[] = [];
   let logicalLineNumbers: number[] = []; // 逻辑行与实际行的映射
+
+  const updateLastScrollPosition = _.debounce(() => {
+    lastScrollPosition = terminal?.buffer.active.viewportY || 0;
+  }, 500);
 
   const initTerm = () => {
     terminal = new Terminal({
@@ -93,14 +96,12 @@
         background: '#1A1A1A', // 背景色
         foreground: '#C4C6CC', // 默认字体颜色
       },
-      windowsMode: false,
     });
     fitAddon = new FitAddon();
     const linkAddon = new WebLinksAddon();
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(linkAddon);
     terminal.open(document.getElementById('nodeLogTermContent')!);
-    const viewport = terminal.element!.querySelector('.xterm-viewport')!;
     lastScrollPosition = terminal.buffer.active.viewportY;
 
     const originalWrite = terminal.writeln;
@@ -108,11 +109,11 @@
       originalWrite.call(this, data);
       // 仅当用户未手动滚动时自动跳转到底部
       if (isAutoScrollEnabled) {
-        terminal.scrollToBottom();
+        terminal?.scrollToBottom();
       } else {
         // 维持用户手动定位的位置
         setTimeout(() => {
-          terminal.scrollToLine(lastScrollPosition);
+          terminal?.scrollToLine(lastScrollPosition);
         });
       }
     };
@@ -120,7 +121,7 @@
     // 劫持键盘事件
     terminal.attachCustomKeyEventHandler((e) => {
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC' && e.type === 'keydown') {
-        const selection = terminal.getSelection();
+        const selection = terminal?.getSelection();
         if (selection) {
           execCopy(selection);
           return false; // 阻止默认
@@ -130,31 +131,31 @@
     });
 
     terminal.attachCustomWheelEventHandler(() => {
-      setTimeout(() => {
-        lastScrollPosition = terminal.buffer.active.viewportY;
-      });
+      updateLastScrollPosition();
       return true;
     });
 
-    terminal.element!.querySelector('.xterm-viewport')!.addEventListener('scroll', () => {
-      isAutoScrollEnabled = viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight;
+    terminal.onScroll(() => {
+      const buffer = terminal?.buffer.active;
+      isAutoScrollEnabled = (buffer?.viewportY || 0) + (terminal?.rows || 0) >= (buffer?.length || 0);
       updateLineNumbers();
       checkTermScroll();
     });
   };
 
-  const { t } = useI18n();
-
   const isTermAtTop = ref(false);
   const isTermAtBottom = ref(false);
 
   const updateLogicalLineNumbers = () => {
-    const buffer = terminal.buffer.active;
+    const buffer = terminal?.buffer.active || ([] as unknown as IBuffer);
     logicalLineNumbers = [];
     let currentLogicalLine = 0;
+    if (!buffer.length) {
+      return;
+    }
 
     for (let i = 0; i < buffer.length; i++) {
-      const line = buffer.getLine(i);
+      const line = buffer!.getLine(i);
       if (line && !line.isWrapped) {
         currentLogicalLine = currentLogicalLine + 1; // 行号从1开始
       }
@@ -165,82 +166,51 @@
   // 更新行号函数
   const updateLineNumbers = () => {
     const lineNumbers = document.getElementById('nodeLogLineNumbers')!;
-    const activeBuffer = terminal.buffer.active;
-    const scrollTop = activeBuffer.viewportY;
-    const visibleRows = terminal.rows;
+    const activeBuffer = terminal?.buffer.active;
+    const scrollTop = activeBuffer?.viewportY || 0;
+    const visibleRows = terminal?.rows || 0;
     // 生成当前可见行的行号
     let numbersHtml = '';
     let isSameLine = false;
     for (let i = 0; i < visibleRows; i++) {
       const lineIndex = scrollTop + i;
       isSameLine = logicalLineNumbers[lineIndex] === logicalLineNumbers[lineIndex - 1];
-      const logicalLine = !isSameLine ? logicalLineNumbers[lineIndex] : '';
-      const lineText = activeBuffer.getLine(lineIndex)?.translateToString().trim();
-      if (lineText) {
-        numbersHtml += `<div class="line-num">${logicalLine}</div>`;
-      }
+      const logicalLine = !isSameLine ? (logicalLineNumbers[lineIndex] ?? '') : '';
+      numbersHtml += `<div class="line-num">${logicalLine}</div>`;
     }
     lineNumbers.innerHTML = numbersHtml;
   };
 
   const checkTermScroll = () => {
-    isTermAtTop.value = terminal.buffer.active.viewportY === 0;
-    const buffer = terminal.buffer.active;
-    isTermAtBottom.value = buffer.viewportY + terminal.rows >= buffer.length;
+    isTermAtTop.value = terminal?.buffer.active.viewportY === 0;
+    const buffer = terminal?.buffer.active;
+    isTermAtBottom.value = (buffer?.viewportY || 0) + (terminal?.rows || 0) >= (buffer?.length || 0);
   };
 
   const handleClearLog = () => {
-    terminal.clear();
-  };
-
-  const formatLogData = (data: NodeLog[] = [], isSetColor = true) => {
-    const regex = /^##\[[a-z]+]/;
-    return data.map((item) => {
-      const { levelname, message, timestamp } = item;
-      const time = format(new Date(Number(timestamp)), 'yyyy-MM-dd HH:mm:ss');
-      let rowText = regex.test(message)
-        ? message.replace(regex, (match: string) => `${match}[${time} ${levelname}]`)
-        : `[${time} ${levelname}] ${message}`;
-      rowText = rowText.replace(/\n/g, '\r\n');
-      if (!isSetColor) {
-        return rowText;
-      }
-
-      // if (/\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} info\]/.test(rowText)) {
-      //   return `\x1b[32m${rowText}\x1b[0m`;
-      // }
-
-      if (/\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} warn\]/i.test(rowText)) {
-        return `\x1b[33m${rowText}\x1b[0m`;
-      }
-
-      if (/\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} error\]/i.test(rowText)) {
-        return `\x1b[31m${rowText}\x1b[0m`;
-      }
-
-      return rowText;
-    });
+    terminal?.clear();
   };
 
   const handleTermToTop = () => {
-    terminal.scrollToTop();
+    terminal?.scrollToTop();
     lastScrollPosition = 0;
   };
 
   const handleTermToBottom = () => {
-    terminal.scrollToBottom();
+    terminal?.scrollToBottom();
   };
 
   /**
    * 设置日志
    */
   const handleSetLog = (list: NodeLog[] = []) => {
+    handleClearLog();
     localLogList = list;
     const transferList = formatLogData(list);
     const content = transferList.join('\r\n');
-    terminal.write(content);
+    terminal?.write(content);
     setTimeout(() => {
-      fitAddon.fit();
+      fitAddon?.fit();
       updateLogicalLineNumbers();
       updateLineNumbers();
       checkTermScroll();
@@ -249,15 +219,17 @@
 
   const destroyTerm = () => {
     isAutoScrollEnabled = true;
-    terminal.clear();
-    terminal.dispose();
-    fitAddon.dispose();
+    terminal?.clear();
+    terminal?.dispose();
+    fitAddon?.dispose();
+    terminal = null;
+    fitAddon = null;
     const lineNumbers = document.getElementById('nodeLogLineNumbers')!;
     lineNumbers.innerHTML = '';
   };
 
   const handleWindowResize = () => {
-    fitAddon.fit();
+    fitAddon?.fit();
     updateLogicalLineNumbers();
     updateLineNumbers();
     checkTermScroll();
@@ -279,7 +251,7 @@
     },
     init: initTerm,
     resizeFit() {
-      fitAddon.fit();
+      fitAddon?.fit();
     },
     setLog: handleSetLog,
   });
@@ -320,6 +292,10 @@
       height: 100%;
       justify-content: center;
       align-items: center;
+
+      .bk-loading-indicator {
+        align-items: center;
+      }
     }
 
     .quick-switch {

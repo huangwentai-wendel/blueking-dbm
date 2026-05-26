@@ -41,8 +41,8 @@
           @click="handleShowPassword">
           {{ t('获取访问方式') }}
         </AuthButton>
-        <MoreActionExtend trigger="hover">
-          <template #handler>
+        <MoreActionExtend>
+          <template #trigger>
             <BkButton
               v-bk-tooltips="t('更多操作')"
               class="ml-4"
@@ -51,7 +51,7 @@
               <DbIcon type="more" />
             </BkButton>
           </template>
-          <BkDropdownItem v-db-console="'kafka.clusterManage.scaleUp'">
+          <div v-db-console="'kafka.clusterManage.scaleUp'">
             <OperationBtnStatusTips
               :data="data"
               :disabled="!data.isOffline">
@@ -64,8 +64,8 @@
                 {{ t('扩容') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem v-db-console="'kafka.clusterManage.scaleDown'">
+          </div>
+          <div v-db-console="'kafka.clusterManage.scaleDown'">
             <OperationBtnStatusTips :data="data">
               <AuthButton
                 action-id="kafka_shrink"
@@ -76,8 +76,8 @@
                 {{ t('缩容') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem
+          </div>
+          <div
             v-if="data.isOffline"
             v-db-console="'kafka.clusterManage.enable'">
             <OperationBtnStatusTips :data="data">
@@ -91,8 +91,8 @@
                 {{ t('启用') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem
+          </div>
+          <div
             v-else
             v-db-console="'kafka.clusterManage.disable'">
             <OperationBtnStatusTips :data="data">
@@ -106,8 +106,8 @@
                 {{ t('禁用') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem v-db-console="'kafka.clusterManage.delete'">
+          </div>
+          <div v-db-console="'kafka.clusterManage.delete'">
             <OperationBtnStatusTips :data="data">
               <AuthButton
                 v-bk-tooltips="{
@@ -123,10 +123,8 @@
                 {{ t('删除') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem>
-            <ClusterDomainDnsRelation :data="data" />
-          </BkDropdownItem>
+          </div>
+          <ClusterDomainDnsRelation :data="data" />
         </MoreActionExtend>
       </DisplayBox>
       <ActionPanel
@@ -135,13 +133,15 @@
         :cluster-type="ClusterTypes.KAFKA">
         <template #infoContent>
           <BaseInfo
+            :cluster-type="ClusterTypes.KAFKA"
             :data="data"
-            @refresh="fetchDetailData" />
+            @refresh="fetchDetailData">
+          </BaseInfo>
         </template>
-        <template #hostContent>
+        <template #hostContent="{ activePanel }">
           <HostList
-            :cluster-data="data"
-            :cluster-id="data.id" />
+            :active-panel="activePanel"
+            :cluster-data="data" />
         </template>
         <template #instanceContent>
           <BigDataInstanceList
@@ -149,26 +149,12 @@
             :cluster-type="ClusterTypes.KAFKA" />
         </template>
       </ActionPanel>
-      <DbSideslider
+      <ClusterExpansion
         v-model:is-show="isShowExpandsion"
-        background-color="#F5F7FA"
-        class="kafka-manage-sideslider"
-        quick-close
-        :title="t('xx扩容【name】', { title: 'Kafka', name: data?.cluster_name })"
-        :width="960">
-        <ClusterExpansion :data="data" />
-      </DbSideslider>
-      <DbSideslider
+        :cluster-data="data" />
+      <ClusterShrink
         v-model:is-show="isShowShrink"
-        background-color="#F5F7FA"
-        class="kafka-manage-sideslider"
-        quick-close
-        :title="t('xx缩容【name】', { title: 'Kafka', name: data?.cluster_name })"
-        :width="960">
-        <ClusterShrink
-          :data="data"
-          :node-list="[]" />
-      </DbSideslider>
+        :cluster-data="data" />
       <BkDialog
         v-model:is-show="isShowPassword"
         render-directive="if"
@@ -198,7 +184,7 @@
 
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
 
-  import { ActionPanel, BigDataInstanceList, DisplayBox } from '@views/db-manage/common/cluster-details';
+  import { ActionPanel, BaseInfo, BigDataInstanceList, DisplayBox } from '@views/db-manage/common/cluster-details';
   import ClusterDomainDnsRelation from '@views/db-manage/common/cluster-domain-dns-relation/Index.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
@@ -206,7 +192,6 @@
   import ClusterExpansion from '@views/db-manage/kafka/common/expansion/Index.vue';
   import ClusterShrink from '@views/db-manage/kafka/common/shrink/Index.vue';
 
-  import BaseInfo from './components/BaseInfo.vue';
   import HostList from './components/HostList.vue';
 
   interface Props {

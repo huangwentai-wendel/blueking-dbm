@@ -37,10 +37,16 @@ import (
 const MongoDBPortMin = 27000
 
 // MongoDBPortMax MongoDB最大端口
-const MongoDBPortMax = 28999
+const MongoDBPortMax = 29999
 
 // DefaultPerm 创建目录、文件的默认权限
 const DefaultPerm = 0755
+
+const (
+	installFileLockWaitTimeout  = 5 * time.Minute
+	installFileLockLogInterval  = 10 * time.Second
+	installFileLockRetryBackoff = 1 * time.Second
+)
 
 // MongoDBConfParams 配置文件参数
 type MongoDBConfParams struct {
@@ -144,7 +150,7 @@ func (m *MongoDBInstall) Init(runtime *jobruntime.JobGenericRuntime) error {
 	// 获取安装参数
 	m.runtime = runtime
 	m.runtime.Logger.Info("start to init")
-	m.BinDir = consts.UsrLocal
+	m.BinDir = consts.GetMongoBinDir()
 	m.BackupDir = consts.GetMongoBackupDir()
 	m.DataDir = consts.GetMongoDataDir()
 	m.OsUser = consts.GetProcessUser()
@@ -152,8 +158,7 @@ func (m *MongoDBInstall) Init(runtime *jobruntime.JobGenericRuntime) error {
 
 	// 获取MongoDB配置文件参数
 	if err := json.Unmarshal([]byte(m.runtime.PayloadDecoded), &m.ConfParams); err != nil {
-		m.runtime.Logger.Error(fmt.Sprintf(
-			"get parameters of mongodb config file fail by json.Unmarshal, error:%s", err))
+		m.runtime.Logger.Error("get parameters of mongodb config file fail by json.Unmarshal, error:%s", err)
 		return fmt.Errorf("get parameters of mongodb config file fail by json.Unmarshal, error:%s", err)
 	}
 
@@ -219,8 +224,7 @@ func (m *MongoDBInstall) makeConfContent() error {
 		// 获取非验证配置文件内容
 		m.NoAuthConfFileContent, err = conf.GetConfContent()
 		if err != nil {
-			m.runtime.Logger.Error(fmt.Sprintf(
-				"version:%s make mongodb no auth config file content fail, error:%s", m.ConfParams.DbVersion, err))
+			m.runtime.Logger.Error("version:%s make mongodb no auth config file content fail, error:%s", m.ConfParams.DbVersion, err)
 			return fmt.Errorf("version:%s make mongodb no auth config file content fail, error:%s",
 				m.ConfParams.DbVersion, err)
 		}
@@ -230,9 +234,7 @@ func (m *MongoDBInstall) makeConfContent() error {
 		// 获取验证配置文件内容
 		m.AuthConfFileContent, err = conf.GetConfContent()
 		if err != nil {
-			m.runtime.Logger.Error(fmt.Sprintf(
-				"version:%s make mongodb auth config file content fail, error:%s",
-				m.ConfParams.DbVersion, err))
+			m.runtime.Logger.Error("version:%s make mongodb auth config file content fail, error:%s", m.ConfParams.DbVersion, err)
 			return fmt.Errorf("version:%s make mongodb auth config file content fail, error:%s",
 				m.ConfParams.DbVersion, err)
 		}
@@ -288,27 +290,21 @@ func (m *MongoDBInstall) checkPortUsed() (bool, error) {
 				// 检查mongod版本
 				version, err := common.CheckMongoVersion(m.BinDir, "mongod")
 				if err != nil {
-					m.runtime.Logger.Error(
-						fmt.Sprintf("mongod has been installed, port:%d, check mongod version fail. error:%s",
-							m.ConfParams.Port, version))
+					m.runtime.Logger.Error("mongod has been installed, port:%d, check mongod version fail. error:%s", m.ConfParams.Port, version)
 					return false, fmt.Errorf("mongod has been installed, port:%d, check mongod version fail. error:%s",
 						m.ConfParams.Port, version)
 				}
 				if version == m.ConfParams.DbVersion {
-					m.runtime.Logger.Info(fmt.Sprintf("mongod has been installed, port:%d, version:%s",
-						m.ConfParams.Port, version))
+					m.runtime.Logger.Info("mongod has been installed, port:%d, version:%s", m.ConfParams.Port, version)
 					return true, nil
 				}
-				m.runtime.Logger.Error(fmt.Sprintf("other mongod has been installed, port:%d, version:%s",
-					m.ConfParams.Port, version))
+				m.runtime.Logger.Error("other mongod has been installed, port:%d, version:%s", m.ConfParams.Port, version)
 				return false, fmt.Errorf("other mongod has been installed, port:%d, version:%s",
 					m.ConfParams.Port, version)
 			}
 
 		}
-		m.runtime.Logger.Error(
-			fmt.Sprintf("validate port if it has been used, port:%d is used by other process",
-				m.ConfParams.Port))
+		m.runtime.Logger.Error("validate port if it has been used, port:%d is used by other process", m.ConfParams.Port)
 		return false, fmt.Errorf("validate port if it has been used, port:%d is used by other process",
 			m.ConfParams.Port)
 	}
@@ -322,15 +318,13 @@ func (m *MongoDBInstall) checkParams() (bool, error) {
 	validate := validator.New()
 	m.runtime.Logger.Info("start to validate parameters of mongodb config file")
 	if err := validate.Struct(m.ConfParams); err != nil {
-		m.runtime.Logger.Error(fmt.Sprintf("validate parameters of mongodb config file fail, error:%s", err))
+		m.runtime.Logger.Error("validate parameters of mongodb config file fail, error:%s", err)
 		return false, fmt.Errorf("validate parameters of mongodb config file fail, error:%s", err)
 	}
 	// 校验port是否合规
 	m.runtime.Logger.Info("start to validate port if it is correct")
 	if m.ConfParams.Port < MongoDBPortMin || m.ConfParams.Port > MongoDBPortMax {
-		m.runtime.Logger.Error(fmt.Sprintf(
-			"validate port if it is correct, port is not within defalut range [%d,%d]",
-			MongoDBPortMin, MongoDBPortMax))
+		m.runtime.Logger.Error("validate port if it is correct, port is not within defalut range [%d,%d]", MongoDBPortMin, MongoDBPortMax)
 		return false, fmt.Errorf("validate port if it is correct, port is not within defalut range [%d,%d]",
 			MongoDBPortMin, MongoDBPortMax)
 	}
@@ -338,14 +332,13 @@ func (m *MongoDBInstall) checkParams() (bool, error) {
 	// 校验安装包是否存在，md5值是否一致
 	m.runtime.Logger.Info("start to validate install package")
 	if flag := util.FileExists(m.InstallPackagePath); !flag {
-		m.runtime.Logger.Error(fmt.Sprintf("validate install package, %s is not existed",
-			m.InstallPackagePath))
+		m.runtime.Logger.Error("validate install package, %s is not existed", m.InstallPackagePath)
 		return false, fmt.Errorf("validate install file, %s is not existed",
 			m.InstallPackagePath)
 	}
 	md5, _ := util.GetFileMd5(m.InstallPackagePath)
 	if m.ConfParams.MediaPkg.PkgMd5 != md5 {
-		m.runtime.Logger.Error(fmt.Sprintf("validate install package md5 fail, md5 is incorrect"))
+		m.runtime.Logger.Error("validate install package md5 fail, md5 is incorrect")
 		return false, fmt.Errorf("validate install package md5 fail, md5 is incorrect")
 	}
 
@@ -386,44 +379,53 @@ func (m *MongoDBInstall) unTarAndCreateSoftLink() error {
 	// 解压安装包并授权
 	// 安装多实例并发执行添加文件锁
 	m.runtime.Logger.Info("start to get install file lock")
-	fileLock := common.NewFileLock(m.LockFilePath)
-	// 获取锁
-	err := fileLock.Lock()
+	fileLock, err := common.NewFileLock(m.LockFilePath)
 	if err != nil {
-		for {
-			err = fileLock.Lock()
-			if err != nil {
-				time.Sleep(1 * time.Second)
-				continue
-			}
+		return fmt.Errorf("create install file lock fail, lock_file:%s, err:%v", m.LockFilePath, err)
+	}
+	// 获取锁（带超时，避免无限等待）
+	startAt := time.Now()
+	nextLogAt := startAt.Add(installFileLockLogInterval)
+	for {
+		err = fileLock.Lock()
+		if err == nil {
 			m.runtime.Logger.Info("get install file lock successfully")
 			break
 		}
-	} else {
-		m.runtime.Logger.Info("get install file lock successfully")
+		if time.Now().After(startAt.Add(installFileLockWaitTimeout)) {
+			return fmt.Errorf("get install file lock timeout after %s, lock_file:%s, last_err:%v",
+				installFileLockWaitTimeout, m.LockFilePath, err)
+		}
+		if time.Now().After(nextLogAt) {
+			m.runtime.Logger.Warn("waiting install file lock, lock_file:%s, elapsed:%s, err:%v",
+				m.LockFilePath, time.Since(startAt), err)
+			nextLogAt = time.Now().Add(installFileLockLogInterval)
+		}
+		time.Sleep(installFileLockRetryBackoff)
 	}
+	defer func() {
+		if unlockErr := fileLock.UnLock(); unlockErr != nil {
+			m.runtime.Logger.Warn("release install file lock fail, lock_file:%s, err:%v", m.LockFilePath, unlockErr)
+		} else {
+			m.runtime.Logger.Info("release install file lock successfully")
+		}
+	}()
 
 	if err = common.UnTarAndCreateSoftLinkAndChown(m.runtime, m.BinDir,
 		m.InstallPackagePath, unTarPath, installPath, m.OsUser, m.OsGroup); err != nil {
 		return err
 	}
-	// 释放锁
-	_ = fileLock.UnLock()
-	m.runtime.Logger.Info("release install file lock successfully")
 
 	// 检查mongod版本
 	m.runtime.Logger.Info("start to check mongod version")
 	version, err := common.CheckMongoVersion(m.BinDir, "mongod")
 	if err != nil {
-		m.runtime.Logger.Error(fmt.Sprintf("%s has been existed, check mongodb version, error:%s",
-			installPath, err))
+		m.runtime.Logger.Error("%s has been existed, check mongodb version, error:%s", installPath, err)
 		return fmt.Errorf("%s has been existed, check mongodb version, error:%s",
 			installPath, err)
 	}
 	if version != m.ConfParams.DbVersion {
-		m.runtime.Logger.Error(
-			fmt.Sprintf("%s has been existed, check mongodb version, version:%s is incorrect",
-				installPath, version))
+		m.runtime.Logger.Error("%s has been existed, check mongodb version, version:%s is incorrect", installPath, version)
 		return fmt.Errorf("%s has been existed, check mongodb version, version:%s is incorrect",
 			installPath, version)
 	}
@@ -437,7 +439,7 @@ func (m *MongoDBInstall) mkdir() error {
 	logPathDir, _ := filepath.Split(m.LogPath)
 	m.runtime.Logger.Info("start to create log directory")
 	if err := util.MkDirsIfNotExistsWithPerm([]string{logPathDir}, DefaultPerm); err != nil {
-		m.runtime.Logger.Error(fmt.Sprintf("create log directory fail, error:%s", err))
+		m.runtime.Logger.Error("create log directory fail, error:%s", err)
 		return fmt.Errorf("create log directory fail, error:%s", err)
 	}
 	m.runtime.Logger.Info("create log directory successfully")
@@ -445,7 +447,7 @@ func (m *MongoDBInstall) mkdir() error {
 	// 创建数据文件目录
 	m.runtime.Logger.Info("start to create data directory")
 	if err := util.MkDirsIfNotExistsWithPerm([]string{m.DbpathDir}, DefaultPerm); err != nil {
-		m.runtime.Logger.Error(fmt.Sprintf("create data directory fail, error:%s", err))
+		m.runtime.Logger.Error("create data directory fail, error:%s", err)
 		return fmt.Errorf("create data directory fail, error:%s", err)
 	}
 	m.runtime.Logger.Info("create data directory successfully")
@@ -453,7 +455,7 @@ func (m *MongoDBInstall) mkdir() error {
 	// 创建备份文件目录
 	m.runtime.Logger.Info("start to create backup directory")
 	if err := util.MkDirsIfNotExistsWithPerm([]string{m.BackupDir}, DefaultPerm); err != nil {
-		m.runtime.Logger.Error(fmt.Sprintf("create backup directory fail, error:%s", err))
+		m.runtime.Logger.Error("create backup directory fail, error:%s", err)
 		return fmt.Errorf("create backup directory fail, error:%s", err)
 	}
 	m.runtime.Logger.Info("create backup directory successfully")
@@ -461,24 +463,24 @@ func (m *MongoDBInstall) mkdir() error {
 	// 修改目录属主
 	m.runtime.Logger.Info("start to execute chown command for dbPath, logPath and backupPath")
 	if _, err := util.RunBashCmd(
-		fmt.Sprintf("chown -R %s.%s %s", m.OsUser, m.OsGroup, filepath.Join(logPathDir, "../")),
+		fmt.Sprintf("chown -R %s:%s %s", m.OsUser, m.OsGroup, filepath.Join(logPathDir, "../")),
 		"", nil,
 		60*time.Second); err != nil {
-		m.runtime.Logger.Error(fmt.Sprintf("chown log directory fail, error:%s", err))
+		m.runtime.Logger.Error("chown log directory fail, error:%s", err)
 		return fmt.Errorf("chown log directory fail, error:%s", err)
 	}
 	if _, err := util.RunBashCmd(
-		fmt.Sprintf("chown -R %s.%s %s", m.OsUser, m.OsGroup, filepath.Join(m.DbpathDir, "../../")),
+		fmt.Sprintf("chown -R %s:%s %s", m.OsUser, m.OsGroup, filepath.Join(m.DbpathDir, "../../")),
 		"", nil,
 		60*time.Second); err != nil {
-		m.runtime.Logger.Error(fmt.Sprintf("chown data directory fail, error:%s", err))
+		m.runtime.Logger.Error("chown data directory fail, error:%s", err)
 		return fmt.Errorf("chown data directory fail, error:%s", err)
 	}
 	if _, err := util.RunBashCmd(
-		fmt.Sprintf("chown -R %s.%s %s", m.OsUser, m.OsGroup, m.BackupDir),
+		fmt.Sprintf("chown -R %s:%s %s", m.OsUser, m.OsGroup, m.BackupDir),
 		"", nil,
 		60*time.Second); err != nil {
-		m.runtime.Logger.Error(fmt.Sprintf("chown backup directory fail, error:%s", err))
+		m.runtime.Logger.Error("chown backup directory fail, error:%s", err)
 		return fmt.Errorf("chown backup directory fail, error:%s", err)
 	}
 	m.runtime.Logger.Info("execute chown command for dbPath, logPath and backupPath successfully")

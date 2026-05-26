@@ -1,5 +1,8 @@
 <template>
   <BkNavigation
+    :class="{
+      'is-hide-navigation-header': isHideNavigationHeader,
+    }"
     :default-open="isSideMenuFlod"
     navigation-type="top-bottom"
     :need-menu="needMenu"
@@ -34,7 +37,9 @@
     </template>
     <template #menu>
       <div class="db-navigation-side-menu">
-        <component :is="renderMenuCom" />
+        <Suspense :key="menuType">
+          <component :is="renderMenuCom" />
+        </Suspense>
       </div>
     </template>
     <div class="db-navigation-content-header">
@@ -48,13 +53,14 @@
     <div
       class="db-navigation-content-wrapper"
       :class="{ 'is-fullscreen': isContendFullscreen }"
-      style="height: calc(100vh - var(--notice-height) - 104px)">
+      :style="{
+        height: `calc(100vh - var(--notice-height) - 52px - ${navigationHeaderHeight})`,
+      }">
       <slot />
     </div>
   </BkNavigation>
 </template>
 <script setup lang="ts">
-  import _ from 'lodash';
   import { computed, ref, watch } from 'vue';
   import { useI18n } from 'vue-i18n';
   import { useRoute } from 'vue-router';
@@ -113,6 +119,7 @@
       value: menuEnum.globalConfigManage,
     },
     userProfile.platformManage && {
+      dbConsoleValue: 'platformManage',
       label: t('平台管理'),
       value: menuEnum.platformManage,
     },
@@ -133,8 +140,8 @@
       'BizResourceTag',
       'businessClusterTag',
       'DbConfigure',
-      'DBMonitorStrategy',
-      'DBMonitorAlarmGroup',
+      'monitorStrategy',
+      'alarmGroup',
       'AlarmShield',
       'StaffManage',
       'TicketFlowSetting',
@@ -146,6 +153,7 @@
       'MysqlManage',
       'EsManage',
       'HdfsManage',
+      'OracleManage',
       'InfluxDBManage',
       'KafkaManage',
       'PulsarManage',
@@ -155,10 +163,12 @@
       'MongoDBManage',
       'SqlServerManage',
       'DorisManage',
+      'OracleManage',
       'taskHistory',
       'DatabaseWhitelist',
       'bizTicketManage',
       'DBPasswordTemporaryModify',
+      'BussinessServiceApply',
     ],
     [menuEnum.globalConfigManage]: [
       'PlatformVersionFiles',
@@ -166,28 +176,43 @@
       'PlatformWhitelist',
       'PlatGlobalStrategy',
       'dutyRuleManange',
+      'TodoRemind',
       'PlatformNotificationSetting',
       'passwordManage',
       'PlatformTicketFlowSetting',
       'PlatformStaffManage',
     ],
-    [menuEnum.observableManage]: ['DBHASwitchEvents', 'inspectionManage', 'AlarmManage'],
+    [menuEnum.observableManage]: [
+      'DBHASwitchEvents',
+      'inspectionManage',
+      'monitorAlarm',
+      'bussinessDashboard',
+      'RiskMemo',
+    ],
     [menuEnum.personalWorkbench]: [
       'serviceApply',
       'SelfServiceMyTickets',
       'MyTodos',
       'ticketSelfDone',
+      'resourceManageHostTodo',
+      'ClusterDisableTodo',
       'ticketSelfManage',
-      'InspectionTodos',
-      'AlarmEventsTodo',
+      'inspectionTodosGlobal',
+      'platformAlarmEventsTodo',
+      'RiskMemoTodos',
+      'myAlarmSubscription',
     ],
     [menuEnum.platformManage]: [
       'platformTaskManage',
       'ticketPlatformManage',
       'inspectionReportGlobal',
       'DbaManage',
-      'AlarmEventsGlobal',
+      'platformAlarmEvents',
       'ServiceStatus',
+      'DashboradManage',
+      'RiskMemoGlobal',
+      'ExerciseReportGlobal',
+      'AgentChat',
     ],
     [menuEnum.resourceManage]: ['ResourceSpec', 'resourceManage', 'resourcePoolDirtyMachines'],
   } as Record<string, string[]>;
@@ -210,6 +235,8 @@
   const isContendFullscreen = computed(() => Boolean(route.meta.fullscreen));
   // 全局搜索结果页面不显示，点击顶部导航栏后显示并自动跳转
   const needMenu = computed(() => Boolean(menuType.value));
+  const isHideNavigationHeader = computed(() => route.name === 'AgentChatIndex');
+  const navigationHeaderHeight = computed(() => (isHideNavigationHeader.value ? '0px' : '52px'));
 
   // 解析路由分组
   watch(
@@ -222,7 +249,7 @@
 
       const routeGroupMap = Object.keys(routeGroup).reduce(
         (result, key) => {
-          routeGroup[key].forEach((item) => {
+          routeGroup[key]!.forEach((item) => {
             Object.assign(result, {
               [item]: key,
             });
@@ -254,6 +281,12 @@
 <style lang="less">
   .bk-navigation {
     height: calc(100vh - var(--notice-height)) !important;
+
+    &.is-hide-navigation-header {
+      .db-navigation-content-header {
+        display: none;
+      }
+    }
 
     .container-content {
       height: auto;
@@ -331,6 +364,10 @@
     color: #979ba5;
     align-items: center;
     justify-content: flex-end;
+  }
+
+  .db-navigation-side-menu {
+    height: 100%;
   }
 
   .db-navigation-content-header {

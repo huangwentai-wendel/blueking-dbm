@@ -25,6 +25,7 @@
         @remove="handleRemoveFile">
         <div
           key="upload"
+          v-test="{ type: 'div', value: 'uploadFiles' }"
           class="create-file-btn mr-4"
           @click="handleCreateFile">
           <DbIcon type="add" />
@@ -49,6 +50,7 @@
             v-if="!selectFileData.grammarCheck"
             class="footer-action">
             <BkButton
+              v-test="{ type: 'button', value: 'grammarCheck' }"
               size="small"
               theme="primary"
               @click="handleGrammarCheck">
@@ -115,6 +117,10 @@
   const props = defineProps<Props>();
   const emits = defineEmits<Emits>();
 
+  const modelValue = defineModel<string[]>({
+    required: true,
+  });
+
   const genFilename = (() => {
     let index = 0;
     return () => {
@@ -125,10 +131,6 @@
 
   const { dbType: currentDbType, grammarCheckHandle } = useSqlImport();
   const { t } = useI18n();
-
-  const modelValue = defineModel<string[]>({
-    required: true,
-  });
 
   const {
     fetchFileContentByFileName,

@@ -11,11 +11,12 @@
         @change="handlePanelChange">
         <slot name="topo">
           <BkTabPanel
+            :key="clusterData.id"
             :label="t('集群拓扑')"
             name="topo">
             <ClusterTopo
-              v-if="activePanel === 'topo'"
-              :key="clusterData.id"
+              v-if="visitedPanels.has('topo')"
+              v-show="activePanel === 'topo'"
               :cluster-id="clusterData.id"
               :cluster-role-node-group="clusterRoleNodeGroup"
               :cluster-type="clusterType"
@@ -24,12 +25,14 @@
         </slot>
         <slot name="info">
           <BkTabPanel
+            :key="clusterData.id"
             :label="t('基本信息')"
             name="info">
             <slot
-              v-if="activePanel === 'info' && clusterData"
+              v-if="visitedPanels.has('info') && clusterData"
               name="infoContent">
               <BaseInfo
+                v-show="activePanel === 'info'"
                 :key="clusterData.id"
                 :data="clusterData" />
             </slot>
@@ -37,12 +40,14 @@
         </slot>
         <slot name="instance">
           <BkTabPanel
+            :key="clusterData.id"
             :label="t('实例列表')"
             name="instance">
             <slot
-              v-if="activePanel === 'instance'"
+              v-if="visitedPanels.has('instance')"
               name="instanceContent">
               <Instancelist
+                v-show="activePanel === 'instance'"
                 :key="clusterData.id"
                 :cluster-id="clusterData.id"
                 :cluster-role-node-group="clusterRoleNodeGroup"
@@ -52,13 +57,17 @@
         </slot>
         <slot name="host">
           <BkTabPanel
+            :key="clusterData.id"
             :label="t('主机列表')"
             name="host">
             <slot
-              v-if="activePanel === 'host'"
+              v-if="visitedPanels.has('host')"
+              :active-panel="activePanel"
               name="hostContent">
               <HostList
+                v-show="activePanel === 'host'"
                 :key="clusterData.id"
+                :active-panel="activePanel"
                 :cluster-id="clusterData.id"
                 :cluster-type="clusterType" />
             </slot>
@@ -71,17 +80,33 @@
             :label="monirotItem.view"
             :name="monirotItem.view">
             <MonitorDashboard
-              v-if="activePanel === monirotItem.view"
+              v-if="visitedPanels.has(monirotItem.view)"
+              v-show="activePanel === monirotItem.view"
               :key="clusterData.id"
               :url="monirotItem.url" />
           </BkTabPanel>
         </template>
+        <slot
+          v-if="isAbleSubscribe"
+          name="alarmSubscription">
+          <BkTabPanel
+            :key="clusterData.id"
+            :label="t('告警订阅')"
+            name="alarmSubscription">
+            <AlarmSubscription
+              v-show="activePanel === 'alarmSubscription'"
+              :cluster-type="clusterData.cluster_type"
+              :data="clusterData" />
+          </BkTabPanel>
+        </slot>
         <slot name="record">
           <BkTabPanel
+            :key="clusterData.id"
             :label="t('单据记录')"
             name="record">
             <OperationRecord
-              v-if="activePanel === 'record'"
+              v-if="visitedPanels.has('record')"
+              v-show="activePanel === 'record'"
               :id="clusterData.id"
               :key="clusterData.id" />
           </BkTabPanel>
@@ -104,6 +129,8 @@
   import MongodbModel from '@services/model/mongodb/mongodb';
   import TendbhaModel from '@services/model/mysql/tendbha';
   import TendbsingleModel from '@services/model/mysql/tendbsingle';
+  import OracleHaModel from '@services/model/oracle/oracle-ha';
+  import OracleSingleModel from '@services/model/oracle/oracle-single';
   import PulsarModel from '@services/model/pulsar/pulsar';
   import RedisModel from '@services/model/redis/redis';
   import RiakModel from '@services/model/riak/riak';
@@ -113,10 +140,11 @@
   import { getMonitorUrls } from '@services/source/monitorGrafana';
   import type { ClusterListNode } from '@services/types';
 
-  import { useUrlSearch } from '@hooks';
+  import { useAlarmSubscribe, useUrlSearch } from '@hooks';
 
   import { clusterTypeInfos, ClusterTypes } from '@common/const';
 
+  import AlarmSubscription from './components/AlarmSubscription.vue';
   import BaseInfo from './components/BaseInfo.vue';
   import ClusterTopo from './components/cluster-topo/Index.vue';
   import HostList from './components/HostList.vue';
@@ -137,8 +165,9 @@
   }
 
   export interface Slots {
+    alarmSubscription: () => VNode;
     host: () => VNode;
-    hostContent: () => VNode;
+    hostContent: (params: { activePanel: string }) => VNode;
     info: () => VNode;
     infoContent: () => VNode;
     instance: () => VNode;
@@ -154,19 +183,26 @@
     [ClusterTypes.KAFKA]: KafkaModel;
     [ClusterTypes.MONGO_REPLICA_SET]: MongodbModel;
     [ClusterTypes.MONGO_SHARED_CLUSTER]: MongodbModel;
+    [ClusterTypes.ORACLE_PRIMARY_STANDBY]: OracleHaModel;
+    [ClusterTypes.ORACLE_SINGLE_NONE]: OracleSingleModel;
+    [ClusterTypes.PREDIXY_REDIS_CLUSTER]: RedisModel;
+    [ClusterTypes.PREDIXY_REDIS_CLUSTER]: RedisModel;
+    [ClusterTypes.PREDIXY_TENDISPLUS_CLUSTER]: RedisModel;
     [ClusterTypes.PULSAR]: PulsarModel;
-    [ClusterTypes.REDIS_CLUSTER]: RedisModel;
+    // [ClusterTypes.REDIS_CLUSTER]: RedisModel;
     [ClusterTypes.REDIS_INSTANCE]: RedisModel;
-    [ClusterTypes.REDIS]: RedisModel;
+    // [ClusterTypes.REDIS]: RedisModel;
     [ClusterTypes.RIAK]: RiakModel;
     [ClusterTypes.SQLSERVER_HA]: SqlserverHaModel;
     [ClusterTypes.SQLSERVER_SINGLE]: SqlserverSingleModel;
     [ClusterTypes.TENDBCLUSTER]: TendbClusterModel;
     [ClusterTypes.TENDBHA]: TendbhaModel;
     [ClusterTypes.TENDBSINGLE]: TendbsingleModel;
+    [ClusterTypes.TWEMPROXY_REDIS_INSTANCE]: RedisModel;
+    [ClusterTypes.TWEMPROXY_TENDIS_SSD_INSTANCE]: RedisModel;
   }
 
-  const fixedTabList = ['topo', 'info', 'instance', 'host', 'record'];
+  const fixedTabList = ['topo', 'info', 'instance', 'host', 'record', 'alarmSubscription'];
 </script>
 <script setup lang="ts" generic="T extends keyof ClusterTypeRelateClusterModel">
   const props = defineProps<Props<T>>();
@@ -176,15 +212,18 @@
   const route = useRoute();
   const router = useRouter();
   const { removeSearchParam } = useUrlSearch();
+  const { metricsMap } = useAlarmSubscribe();
 
   const isFixedTab = ref(false);
 
   const rootRef = useTemplateRef('root');
   const activePanel = ref(String(route.query[URL_CLUSTER_DETAIL_MEMO_KEY]) || '');
+  const visitedPanels = reactive(new Set<string>());
   const tabcontentheight = ref('0');
 
   const dbType = computed(() => clusterTypeInfos[props.clusterData.cluster_type].dbType);
   const isLoading = computed(() => !isFixedTab.value && isPanelLoading.value);
+  const isAbleSubscribe = computed(() => metricsMap.value[props.clusterData.cluster_type]?.list?.length > 0);
 
   const calcTabContentHeight = _.throttle(() => {
     if (rootRef.value) {
@@ -203,7 +242,11 @@
   watch(
     () => props.clusterData,
     () => {
-      if (props.clusterData) {
+      // 部分仪表盘暂时没数据，若请求会报错
+      if (
+        props.clusterData &&
+        ![ClusterTypes.ORACLE_PRIMARY_STANDBY, ClusterTypes.ORACLE_SINGLE_NONE].includes(props.clusterData.cluster_type)
+      ) {
         fetchMonitorUrls({
           bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
           cluster_id: props.clusterData.id,
@@ -221,6 +264,9 @@
     () => {
       activePanel.value = String(route.query[URL_CLUSTER_DETAIL_MEMO_KEY] || '');
       isFixedTab.value = fixedTabList.includes(activePanel.value);
+      if (activePanel.value) {
+        visitedPanels.add(activePanel.value);
+      }
     },
     {
       immediate: true,
@@ -235,6 +281,7 @@
       },
     });
     activePanel.value = value;
+    visitedPanels.add(value);
   };
 
   onMounted(() => {

@@ -20,14 +20,14 @@ limitations under the License.
 package controller
 
 import (
+	"k8s-dbs/common/api"
 	commconst "k8s-dbs/common/constant"
 	commentity "k8s-dbs/common/entity"
-	coreapiconst "k8s-dbs/core/api/constant"
-	reqvo "k8s-dbs/core/api/vo/req"
+	coreapiconst "k8s-dbs/core/constant"
 	"k8s-dbs/core/entity"
-	"k8s-dbs/core/errors"
 	"k8s-dbs/core/provider"
-	pventity "k8s-dbs/core/provider/entity"
+	reqvo "k8s-dbs/core/vo/request"
+	"k8s-dbs/errors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/copier"
@@ -40,70 +40,85 @@ type AddonController struct {
 
 // InstallAddon 安装 addon 插件
 func (a *AddonController) InstallAddon(ctx *gin.Context) {
-	var installReqVo reqvo.AddonOperationReqVo
-	if err := ctx.ShouldBindJSON(&installReqVo); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.InstallAddonError, err))
+	request := &reqvo.AddonOperationRequest{}
+	a.setAPIRequestContext(ctx, request, commconst.APIAddonInstall)
+	if err := ctx.ShouldBindJSON(request); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.InstallAddonError, err))
 		return
 	}
-	var addonEntity pventity.AddonEntity
-	if err := copier.Copy(&addonEntity, &installReqVo); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.InstallAddonError, err))
+	var addonEntity entity.AddonEntity
+	if err := copier.Copy(&addonEntity, request); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.InstallAddonError, err))
 		return
 	}
-	dbsContext := commentity.DbsContext{}
-	dbsContext.BkAuth = &installReqVo.BKAuth
-	err := a.addonProvider.ManageAddon(&dbsContext, &addonEntity, coreapiconst.InstallAddonOP)
+	dbsCtx := commentity.DbsContext{
+		BkAuth:           &request.BKAuth,
+		K8sClusterName:   addonEntity.K8sClusterName,
+		RequestType:      string(coreapiconst.InstallAddonOP),
+		APIRequestParams: request,
+	}
+
+	err := a.addonProvider.ManageAddon(&dbsCtx, &addonEntity, coreapiconst.InstallAddonOP)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.InstallAddonError, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.InstallAddonError, err))
 		return
 	}
-	entity.SuccessResponse(ctx, nil, commconst.Success)
+	api.SuccessResponse(ctx, nil, commconst.Success)
 }
 
 // UninstallAddon 卸载 addon 插件
 func (a *AddonController) UninstallAddon(ctx *gin.Context) {
-	var uninstallReqVo reqvo.AddonOperationReqVo
-	if err := ctx.ShouldBindJSON(&uninstallReqVo); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.UninstallAddonError, err))
+	request := &reqvo.AddonOperationRequest{}
+	a.setAPIRequestContext(ctx, request, commconst.APIAddonUninstall)
+
+	if err := ctx.ShouldBindJSON(request); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.UninstallAddonError, err))
 		return
 	}
-	var addonEntity pventity.AddonEntity
-	if err := copier.Copy(&addonEntity, &uninstallReqVo); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.UninstallAddonError, err))
+	var addonEntity entity.AddonEntity
+	if err := copier.Copy(&addonEntity, request); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.UninstallAddonError, err))
 		return
 	}
-	dbsContext := commentity.DbsContext{
-		BkAuth: &uninstallReqVo.BKAuth,
+	dbsCtx := commentity.DbsContext{
+		BkAuth:           &request.BKAuth,
+		K8sClusterName:   addonEntity.K8sClusterName,
+		RequestType:      string(coreapiconst.UninstallAddonOP),
+		APIRequestParams: request,
 	}
-	err := a.addonProvider.ManageAddon(&dbsContext, &addonEntity, coreapiconst.UninstallAddonOP)
+	err := a.addonProvider.ManageAddon(&dbsCtx, &addonEntity, coreapiconst.UninstallAddonOP)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.UninstallAddonError, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.UninstallAddonError, err))
 		return
 	}
-	entity.SuccessResponse(ctx, nil, commconst.Success)
+	api.SuccessResponse(ctx, nil, commconst.Success)
 }
 
 // UpgradeAddon 更新 addon 插件
 func (a *AddonController) UpgradeAddon(ctx *gin.Context) {
-	var upgradeReqVo reqvo.AddonOperationReqVo
-	if err := ctx.ShouldBindJSON(&upgradeReqVo); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.UpgradeAddonError, err))
+	request := &reqvo.AddonOperationRequest{}
+	a.setAPIRequestContext(ctx, request, commconst.APIAddonUpgrade)
+	if err := ctx.ShouldBindJSON(request); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.UpgradeAddonError, err))
 		return
 	}
-	var addonEntity pventity.AddonEntity
-	if err := copier.Copy(&addonEntity, &upgradeReqVo); err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.UpgradeAddonError, err))
+	var addonEntity entity.AddonEntity
+	if err := copier.Copy(&addonEntity, request); err != nil {
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.UpgradeAddonError, err))
 		return
 	}
-	dbsContext := commentity.DbsContext{
-		BkAuth: &upgradeReqVo.BKAuth,
+	dbsCtx := commentity.DbsContext{
+		BkAuth:           &request.BKAuth,
+		K8sClusterName:   addonEntity.K8sClusterName,
+		RequestType:      string(coreapiconst.UpgradeAddonOP),
+		APIRequestParams: request,
 	}
-	err := a.addonProvider.ManageAddon(&dbsContext, &addonEntity, coreapiconst.UpgradeAddonOP)
+	err := a.addonProvider.ManageAddon(&dbsCtx, &addonEntity, coreapiconst.UpgradeAddonOP)
 	if err != nil {
-		entity.ErrorResponse(ctx, errors.NewGlobalError(errors.UpgradeAddonError, err))
+		api.ErrorResponse(ctx, errors.NewK8sDbsError(errors.UpgradeAddonError, err))
 		return
 	}
-	entity.SuccessResponse(ctx, nil, commconst.Success)
+	api.SuccessResponse(ctx, nil, commconst.Success)
 }
 
 // NewAddonController 构建 AddonController
@@ -111,4 +126,14 @@ func NewAddonController(addonProvider *provider.AddonProvider) *AddonController 
 	return &AddonController{
 		addonProvider,
 	}
+}
+
+// setAPIRequestContext 设置 api 请求上下文
+func (a *AddonController) setAPIRequestContext(
+	ctx *gin.Context,
+	request *reqvo.AddonOperationRequest,
+	apiName string,
+) {
+	ctx.Set(commconst.APIName, apiName)
+	ctx.Set(commconst.APIRequestEntity, request)
 }

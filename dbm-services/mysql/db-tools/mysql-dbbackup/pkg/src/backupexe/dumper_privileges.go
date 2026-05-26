@@ -24,6 +24,7 @@ import (
 	"dbm-services/common/go-pubpkg/cmutil"
 	"dbm-services/common/go-pubpkg/mysqlcomm"
 	"dbm-services/mysql/db-tools/mysql-dbbackup/pkg/config"
+	"dbm-services/mysql/db-tools/mysql-dbbackup/pkg/cst"
 	"dbm-services/mysql/db-tools/mysql-dbbackup/pkg/src/dbareport"
 	"dbm-services/mysql/db-tools/mysql-dbbackup/pkg/src/logger"
 	"dbm-services/mysql/db-tools/mysql-dbbackup/pkg/src/mysqlconn"
@@ -51,7 +52,8 @@ func (d *DumperGrant) Execute(ctx context.Context) error {
 	defer func() {
 		d.backupEndTime = cmutil.TimeToSecondPrecision(time.Now())
 	}()
-	if err := BackupGrant(&d.cnf.Public); err != nil {
+	runner := BackupRunner{}
+	if err := runner.BackupGrant(&d.cnf.Public); err != nil {
 		return err
 	}
 	return nil
@@ -60,10 +62,10 @@ func (d *DumperGrant) Execute(ctx context.Context) error {
 // PrepareBackupMetaInfo construct metaInfo
 func (d *DumperGrant) PrepareBackupMetaInfo(cnf *config.BackupConfig, metaInfo *dbareport.IndexContent) error {
 	if metaInfo.BinlogInfo.ShowSlaveStatus == nil {
-		metaInfo.BinlogInfo.ShowSlaveStatus = &dbareport.StatusInfo{}
+		//metaInfo.BinlogInfo.ShowSlaveStatus = &dbareport.StatusInfo{}
 	}
 	if metaInfo.BinlogInfo.ShowMasterStatus == nil {
-		metaInfo.BinlogInfo.ShowMasterStatus = &dbareport.StatusInfo{}
+		//metaInfo.BinlogInfo.ShowMasterStatus = &dbareport.StatusInfo{}
 	}
 	metaInfo.BackupBeginTime = d.backupStartTime
 	metaInfo.BackupEndTime = d.backupEndTime
@@ -73,7 +75,7 @@ func (d *DumperGrant) PrepareBackupMetaInfo(cnf *config.BackupConfig, metaInfo *
 }
 
 // BackupGrant backup grant information
-func BackupGrant(cfg *config.Public) error {
+func (r *BackupRunner) BackupGrant(cfg *config.Public) error {
 	db, err := mysqlconn.InitConn(cfg)
 	if err != nil {
 		return err
@@ -92,7 +94,7 @@ func BackupGrant(cfg *config.Public) error {
 	var user string
 	var host string
 
-	filepath := cfg.BackupDir + "/" + cfg.TargetName() + ".priv"
+	filepath := cfg.BackupDir + "/" + cfg.TargetName() + cst.SuffixPriv
 	// logger.Log.Info(filepath)
 	file, err := os.OpenFile(filepath, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
@@ -123,7 +125,7 @@ func BackupGrant(cfg *config.Public) error {
 			gRows, err := db.Query(sqlString)
 			if err != nil {
 				logger.Log.Warn("failed to get grants about `", user, "`@`", host, "` err:", err)
-				continue
+				return err
 			}
 
 			for gRows.Next() {
@@ -144,7 +146,7 @@ func BackupGrant(cfg *config.Public) error {
 		gRows, err := db.Query(sqlString)
 		if err != nil {
 			logger.Log.Warn("failed to get grants about `", user, "`@`", host, "` err:", err)
-			continue
+			return err
 		}
 		for gRows.Next() {
 			err := gRows.Scan(&grantInfo)

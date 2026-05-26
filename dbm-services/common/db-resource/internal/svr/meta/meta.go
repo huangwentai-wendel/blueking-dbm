@@ -29,17 +29,21 @@ type FloatMeasureRange struct {
 	Max float32 `json:"max"`
 }
 
-// Iegal determine whether the parameter is legal
-func (m MeasureRange) Iegal() bool {
+// Legal determine whether the parameter is legal
+func (m MeasureRange) Legal() bool {
 	if m.IsNotEmpty() {
 		return m.Max >= m.Min
 	}
 	return true
 }
 
-// MatchTotalStorageSize match total disk capacity
-func (m *MeasureRange) MatchTotalStorageSize(db *gorm.DB) {
-	m.MatchRange(db, "total_storage_cap")
+// MatchTotalDataStorageSize match total data disk capacity
+func (m *MeasureRange) MatchTotalDataStorageSize(db *gorm.DB) {
+	if m.Min == m.Max {
+		db.Where("total_data_storage_cap = ?", m.Min)
+		return
+	}
+	m.MatchRange(db, "total_data_storage_cap")
 }
 
 // MatchMem match memory size range
@@ -56,7 +60,7 @@ func (m *MeasureRange) MatchCpu(db *gorm.DB) {
 func (m *MeasureRange) MatchRange(db *gorm.DB, col string) {
 	switch {
 	case m.Min > 0 && m.Max > 0:
-		db.Where(col+" >= ? and "+col+" <= ?", m.Min, m.Max)
+		db.Where(col+" BETWEEN ? AND ?", m.Min, m.Max)
 	case m.Max > 0 && m.Min <= 0:
 		db.Where(col+" <= ?", m.Max)
 	case m.Max <= 0 && m.Min > 0:

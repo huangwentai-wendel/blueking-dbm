@@ -15,15 +15,10 @@ from rest_framework import serializers
 
 from backend.db_meta.enums import ClusterType, InstanceInnerRole
 from backend.db_meta.models import Cluster
-from backend.db_services.dbbase.constants import IpSource
+from backend.db_services.dbbase.constants import IpSource, SourceType
 from backend.flow.engine.controller.mysql import MySQLController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import (
-    BaseOperateResourceParamBuilder,
-    HostInfoSerializer,
-    HostRecycleSerializer,
-    fetch_cluster_ids,
-)
+from backend.ticket.builders.common.base import BaseOperateResourceParamBuilder, HostInfoSerializer, fetch_cluster_ids
 from backend.ticket.builders.common.constants import MySQLBackupSource, OperaObjType
 from backend.ticket.builders.mysql.base import MySQLBaseOperateDetailSerializer
 from backend.ticket.builders.mysql.mysql_master_slave_switch import (
@@ -43,7 +38,9 @@ class MysqlMigrateClusterDetailSerializer(MySQLBaseOperateDetailSerializer):
     ip_source = serializers.ChoiceField(
         help_text=_("机器来源"), choices=IpSource.get_choices(), required=False, default=IpSource.MANUAL_INPUT
     )
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.DEFAULT)
+    source_type = serializers.ChoiceField(
+        help_text=_("资源来源类型"), choices=SourceType.get_choices(), required=False, default=SourceType.RESOURCE_AUTO
+    )
     infos = serializers.ListField(help_text=_("迁移主从信息"), child=MigrateClusterInfoSerializer())
     backup_source = serializers.ChoiceField(
         help_text=_("备份源"), choices=MySQLBackupSource.get_choices(), default=MySQLBackupSource.REMOTE
@@ -53,10 +50,9 @@ class MysqlMigrateClusterDetailSerializer(MySQLBaseOperateDetailSerializer):
     opera_object = serializers.ChoiceField(help_text=_("操作对象类型"), choices=OperaObjType.get_choices(), required=False)
 
     def validate(self, attrs):
+        attrs = super().validate(attrs)
         cluster_ids = fetch_cluster_ids(attrs)
 
-        # 校验集群是否可用，集群类型为高可用
-        super().validate_cluster_can_access(attrs)
         super().validated_cluster_type(attrs, ClusterType.TenDBHA)
 
         # 校验集群存在最近一次全备
@@ -91,7 +87,7 @@ class MysqlMigrateClusterParamBuilder(MysqlMasterSlaveSwitchParamBuilder):
 
 class MysqlMigrateClusterResourceParamBuilder(BaseOperateResourceParamBuilder):
     def format(self):
-        self.patch_info_affinity_location()
+        self.patch_info_common_affinity(role="backend_group")
 
     def post_callback(self):
         next_flow = self.ticket.next_flow()
@@ -101,11 +97,13 @@ class MysqlMigrateClusterResourceParamBuilder(BaseOperateResourceParamBuilder):
             if "backend_group" in info:
                 backend = info.pop("backend_group")[0]
                 info["bk_new_master"], info["bk_new_slave"] = backend["master"], backend["slave"]
+
                 # 修改规格key值
-                info["resource_spec"]["remote"] = info["resource_spec"].pop("master")
-                info["resource_spec"].pop("slave")
+                info["resource_spec"]["remote"] = info["resource_spec"]["master"]
             else:
                 info["bk_new_master"], info["bk_new_slave"] = info.pop("new_master")[0], info.pop("new_slave")[0]
+                info["resource_spec"]["master"] = info["resource_spec"].pop("new_master")
+                info["resource_spec"]["slave"] = info["resource_spec"].pop("new_slave")
             info["new_master_ip"], info["new_slave_ip"] = info["bk_new_master"]["ip"], info["bk_new_slave"]["ip"]
         next_flow.save(update_fields=["details"])
 

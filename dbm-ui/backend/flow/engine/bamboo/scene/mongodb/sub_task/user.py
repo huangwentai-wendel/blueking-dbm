@@ -12,7 +12,7 @@ specific language governing permissions and limitations under the License.
 from copy import deepcopy
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.flow.consts import MongoDBManagerUser
 from backend.flow.engine.bamboo.scene.common.builder import SubBuilder
@@ -51,13 +51,14 @@ def user(
 
     # 创建或删除用户
     kwargs = sub_get_kwargs.get_user_kwargs(create=create, admin_user=MongoDBManagerUser.DbaUser.value, info=info)
+    user_with_db = "{}@{}".format(info["username"], info["auth_db"])
     if create:
-        act_name = _("MongoDB-cluster_id:{}-创建用户:{}".format(str(cluster_id), info["username"]))
+        act_name = _("MongoDB-cluster_id:{}-创建用户:{}".format(str(cluster_id), user_with_db))
         sub_name = _(
             "MongoDB--创建用户--cluster_id:{}-{}".format(str(cluster_id), sub_get_kwargs.payload["hosts"][0]["ip"])
         )
     else:
-        act_name = _("MongoDB-cluster_id:{}-删除用户:{}".format(str(cluster_id), info["username"]))
+        act_name = _("MongoDB-cluster_id:{}-删除用户:{}".format(str(cluster_id), user_with_db))
         sub_name = _(
             "MongoDB--删除用户--cluster_id:{}-{}".format(str(cluster_id), sub_get_kwargs.payload["hosts"][0]["ip"])
         )

@@ -15,6 +15,7 @@
 import { createApp } from 'vue';
 import bkuiVue from 'bkui-vue';
 import dayjs from 'dayjs';
+import relativeTime from 'dayjs/plugin/relativeTime';
 import tz from 'dayjs/plugin/timezone';
 import utc from 'dayjs/plugin/utc';
 import duration from 'dayjs/plugin/duration';
@@ -26,6 +27,7 @@ import { setGlobalComps } from '@common/importComps';
 
 import i18n from '@locales/index';
 import BkTrace from '@blueking/bk-trace-core';
+import { BkXssFilterDirective } from '@blueking/xss-filter';
 
 import App from './App.vue';
 import getRouter from './router';
@@ -34,11 +36,11 @@ import SubApp from './SubApp.vue';
 import '@blueking/ip-selector/dist/styles/vue2.6.x.css';
 import '@lib/bk-icon/iconcool';
 import '@styles/common.less';
-import '@styles/toolbox.less';
 import '@xterm/xterm/css/xterm.css';
 import 'bkui-vue/dist/style.variable.css';
 import { setGlobalDirectives } from '@/directives/index';
 import { subEnv } from '@blueking/sub-saas';
+import 'dayjs/locale/zh-cn';
 
 import('tippy.js/dist/tippy.css');
 import('tippy.js/themes/light.css');
@@ -46,6 +48,8 @@ import('tippy.js/themes/light.css');
 dayjs.extend(utc);
 dayjs.extend(tz);
 dayjs.extend(duration);
+dayjs.extend(relativeTime);
+dayjs.locale('zh-cn');
 
 window.changeConfirm = false;
 
@@ -60,6 +64,11 @@ setGlobalDirectives(app);
 
 app.use(bkuiVue);
 app.use(i18n);
+app.use(BkXssFilterDirective, {
+  defaultOptions: {
+    imgSrcMode: 'none',
+  },
+});
 
 window.BKApp = app;
 
@@ -71,6 +80,7 @@ Promise.all([fetchFunController(), fetchBizs(), systemEnvironStore.fetchSystemEn
   app.use(getRouter());
   const { urls } = systemEnvironStore;
   const reportUrl = urls.BKDATA_FRONTEND_REPORT_URL;
+  window.PROJECT_CONFIG.AI_LOG_ANALYSIS_OPEN = !!urls.BK_AIDEV_LOG_ANALYSIS_URL;
   if (reportUrl) {
     // 监控数据上报
     app.use(BkTrace, {

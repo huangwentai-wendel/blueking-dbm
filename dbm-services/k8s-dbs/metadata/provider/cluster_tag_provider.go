@@ -22,8 +22,11 @@ package provider
 import (
 	commentity "k8s-dbs/common/entity"
 	"k8s-dbs/metadata/dbaccess"
-	models "k8s-dbs/metadata/dbaccess/model"
-	entitys "k8s-dbs/metadata/provider/entity"
+	entitys "k8s-dbs/metadata/entity"
+	models "k8s-dbs/metadata/model"
+	"sync"
+
+	"github.com/pkg/errors"
 
 	"github.com/jinzhu/copier"
 )
@@ -31,12 +34,12 @@ import (
 // K8sCrdClusterTagProvider 定义 cluster tag 业务逻辑层访问接口
 type K8sCrdClusterTagProvider interface {
 	Create(
-		dbsContext *commentity.DbsContext,
+		dbsCtx *commentity.DbsContext,
 		entity *entitys.K8sCrdClusterTagEntity,
 	) (*entitys.K8sCrdClusterTagEntity, error)
-	BatchCreate(dbsContext *commentity.DbsContext, inputEntities []*entitys.K8sCrdClusterTagEntity) (uint64, error)
-	DeleteByClusterID(dbsContext *commentity.DbsContext, clusterID uint64) (uint64, error)
-	FindByClusterID(dbsContext *commentity.DbsContext, clusterID uint64) ([]*entitys.K8sCrdClusterTagEntity, error)
+	BatchCreate(dbsCtx *commentity.DbsContext, inputEntities []*entitys.K8sCrdClusterTagEntity) (uint64, error)
+	DeleteByClusterID(dbsCtx *commentity.DbsContext, clusterID uint64) (uint64, error)
+	FindByClusterID(dbsCtx *commentity.DbsContext, clusterID uint64) ([]*entitys.K8sCrdClusterTagEntity, error)
 }
 
 // K8sCrdClusterTagProviderImpl K8sCrdClusterTagProvider 具体实现
@@ -44,48 +47,65 @@ type K8sCrdClusterTagProviderImpl struct {
 	dbAccess dbaccess.K8sCrdClusterTagDbAccess
 }
 
+var (
+	clusterTagInstance K8sCrdClusterTagProvider
+	clusterTagOnce     sync.Once
+)
+
+// GetK8sCrdClusterTagProvider 获取 K8sCrdClusterTagProvider 单例实例
+func GetK8sCrdClusterTagProvider(dbAccess dbaccess.K8sCrdClusterTagDbAccess) K8sCrdClusterTagProvider {
+	clusterTagOnce.Do(func() {
+		clusterTagInstance = &K8sCrdClusterTagProviderImpl{dbAccess: dbAccess}
+	})
+	if clusterTagInstance == nil {
+		panic("K8sCrdClusterTagProvider instance is nil after initialization")
+	}
+	return clusterTagInstance
+}
+
 // BatchCreate 批次创建 tags
 func (k K8sCrdClusterTagProviderImpl) BatchCreate(
-	dbsContext *commentity.DbsContext,
+	dbsCtx *commentity.DbsContext,
 	inputEntities []*entitys.K8sCrdClusterTagEntity,
 ) (uint64, error) {
 	dbModels := make([]*models.K8sCrdClusterTagModel, 0, len(inputEntities))
 	for _, inputEntity := range inputEntities {
-		inputEntity.CreatedBy = dbsContext.BkAuth.BkUserName
-		inputEntity.UpdatedBy = dbsContext.BkAuth.BkUserName
+		inputEntity.CreatedBy = dbsCtx.BkAuth.BkUserName
+		inputEntity.UpdatedBy = dbsCtx.BkAuth.BkUserName
 	}
-	err := copier.Copy(&dbModels, &inputEntities)
-	if err != nil {
-		return 0, err
+	if err := copier.Copy(&dbModels, &inputEntities); err != nil {
+		return 0, errors.Wrap(err, "failed to copy")
 	}
+
 	rows, err := k.dbAccess.BatchCreate(dbModels)
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrap(err, "failed to batch create")
 	}
 	return rows, nil
 }
 
 // Create 单次创建 tag
 func (k K8sCrdClusterTagProviderImpl) Create(
-	dbsContext *commentity.DbsContext,
+	dbsCtx *commentity.DbsContext,
 	inputEntity *entitys.K8sCrdClusterTagEntity,
 ) (*entitys.K8sCrdClusterTagEntity, error) {
 	dbModel := models.K8sCrdClusterTagModel{}
-	inputEntity.CreatedBy = dbsContext.BkAuth.BkUserName
-	inputEntity.UpdatedBy = dbsContext.BkAuth.BkUserName
-	err := copier.Copy(&dbModel, inputEntity)
-	if err != nil {
-		return nil, err
+	inputEntity.CreatedBy = dbsCtx.BkAuth.BkUserName
+	inputEntity.UpdatedBy = dbsCtx.BkAuth.BkUserName
+	if err := copier.Copy(&dbModel, inputEntity); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
 	}
 
 	createdDbModel, err := k.dbAccess.Create(&dbModel)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to create cluster tag with entity: %+v", inputEntity)
 	}
+
 	outputEntity := entitys.K8sCrdClusterTagEntity{}
-	if err := copier.Copy(&outputEntity, createdDbModel); err != nil {
-		return nil, err
+	if err = copier.Copy(&outputEntity, createdDbModel); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
 	}
+
 	return &outputEntity, nil
 }
 
@@ -101,17 +121,13 @@ func (k K8sCrdClusterTagProviderImpl) FindByClusterID(_ *commentity.DbsContext, 
 ) {
 	dbModels, err := k.dbAccess.FindByClusterID(clusterID)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to find cluster tag by clusterID: %v", clusterID)
 	}
-	var outputEntities []*entitys.K8sCrdClusterTagEntity
-	err = copier.Copy(&outputEntities, dbModels)
-	if err != nil {
-		return nil, err
-	}
-	return outputEntities, nil
-}
 
-// NewK8sCrdClusterTagProvider 创建 K8sCrdClusterTagProvider
-func NewK8sCrdClusterTagProvider(dbAccess dbaccess.K8sCrdClusterTagDbAccess) K8sCrdClusterTagProvider {
-	return &K8sCrdClusterTagProviderImpl{dbAccess: dbAccess}
+	var outputEntities []*entitys.K8sCrdClusterTagEntity
+	if err = copier.Copy(&outputEntities, dbModels); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
+	}
+
+	return outputEntities, nil
 }

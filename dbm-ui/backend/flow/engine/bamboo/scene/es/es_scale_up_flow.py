@@ -12,7 +12,7 @@ import logging.config
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.flow.consts import ES_DEFAULT_INSTANCE_NUM
@@ -158,6 +158,10 @@ class EsScaleUpFlow(EsFlow):
                 act_kwargs.exec_ip = ip
                 act_kwargs.es_role = role
                 act_kwargs.instance_num = instance_num
+                # 写入亲合度相关信息，目前为园区、机房、机架三个维度
+                act_kwargs.sub_zone_id = node.get("sub_zone_id") or ""
+                act_kwargs.idc_id = node.get("idc_id") or ""
+                act_kwargs.rack_id = node.get("rack_id") or ""
                 sub_pipeline.add_act(
                     act_name=_("安装ES {}-{}节点").format(role, ip),
                     act_component_code=ExecuteEsActuatorScriptComponent.code,
@@ -167,6 +171,15 @@ class EsScaleUpFlow(EsFlow):
                 sub_pipelines.append(sub_pipeline.build_sub_process(sub_name=_("安装ES {}-{}子流程").format(role, ip)))
         # 并发执行所有子流程
         es_pipeline.add_parallel_sub_pipeline(sub_flow_list=sub_pipelines)
+
+        # 校验扩容是否成功
+        act_kwargs.get_es_payload_func = EsActPayload.get_check_nodes_payload.__name__
+        act_kwargs.exec_ip = self.master_exec_ip
+        es_pipeline.add_act(
+            act_name=_("校验扩容结果"),
+            act_component_code=ExecuteEsActuatorScriptComponent.code,
+            kwargs=asdict(act_kwargs),
+        )
 
         # 添加到DBMeta
         es_pipeline.add_act(
@@ -191,4 +204,4 @@ class EsScaleUpFlow(EsFlow):
         if sub_pipeline_access:
             es_pipeline.add_sub_pipeline(sub_pipeline_access)
 
-        es_pipeline.run_pipeline()
+        es_pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=[self.cluster_id])

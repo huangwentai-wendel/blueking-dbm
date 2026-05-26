@@ -11,10 +11,8 @@ specific language governing permissions and limitations under the License.
 import copy
 import logging.config
 from dataclasses import asdict
-from datetime import datetime
 from typing import Dict, Optional
 
-from django.utils import timezone
 from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
@@ -23,9 +21,9 @@ from backend.db_meta.enums import ClusterType, InstanceInnerRole, InstanceStatus
 from backend.db_meta.exceptions import DBMetaException
 from backend.db_meta.models import Cluster, StorageInstance
 from backend.db_package.models import Package
-from backend.db_services.mysql.fixpoint_rollback.handlers import FixPointRollbackHandler
 from backend.flow.consts import MediumEnum
 from backend.flow.engine.bamboo.scene.common.builder import Builder, SubBuilder
+from backend.flow.engine.bamboo.scene.common.clone_module_config import add_clone_storage_module_config_act
 from backend.flow.engine.bamboo.scene.common.get_file_list import GetFileList
 from backend.flow.engine.bamboo.scene.mysql.common.cluster_entrys import get_tendb_ha_entry
 from backend.flow.engine.bamboo.scene.mysql.common.common_sub_flow import install_mysql_in_cluster_sub_flow
@@ -35,7 +33,6 @@ from backend.flow.engine.bamboo.scene.mysql.common.mysql_resotre_data_sub_flow i
     mysql_restore_data_sub_flow,
     mysql_restore_master_slave_sub_flow,
 )
-from backend.flow.engine.bamboo.scene.mysql.common.recover_slave_instance import slave_recover_sub_flow
 from backend.flow.engine.bamboo.scene.mysql.common.slave_recover_switch import slave_migrate_switch_sub_flow
 from backend.flow.engine.bamboo.scene.mysql.common.uninstall_instance import uninstall_instance_sub_flow
 from backend.flow.engine.bamboo.scene.mysql.deploy_peripheraltools.departs import (
@@ -44,13 +41,17 @@ from backend.flow.engine.bamboo.scene.mysql.deploy_peripheraltools.departs impor
     remove_departs,
 )
 from backend.flow.engine.bamboo.scene.mysql.deploy_peripheraltools.subflow import standardize_mysql_cluster_subflow
-from backend.flow.engine.bamboo.scene.mysql.mysql_upgrade import upgrade_version_check
-from backend.flow.engine.bamboo.scene.spider.common.exceptions import TendbGetBackupInfoFailedException
-from backend.flow.engine.bamboo.scene.spider.spider_remote_node_migrate import remote_instance_migrate_sub_flow
 from backend.flow.plugins.components.collections.common.download_backup_client import DownloadBackupClientComponent
 from backend.flow.plugins.components.collections.common.pause import PauseComponent
 from backend.flow.plugins.components.collections.mysql.clear_machine import MySQLClearMachineComponent
 from backend.flow.plugins.components.collections.mysql.exec_actuator_script import ExecuteDBActuatorScriptComponent
+from backend.flow.plugins.components.collections.mysql.mysql_checksum_ticket import MySQLCheckSumTicketComponent
+from backend.flow.plugins.components.collections.mysql.mysql_checksum_ticket_result_get import (
+    MySQLCheckSumTicketResultComponent,
+)
+from backend.flow.plugins.components.collections.mysql.mysql_checksum_ticket_status import (
+    MySQLCheckSumTicketProbeComponent,
+)
 from backend.flow.plugins.components.collections.mysql.mysql_db_meta import MySQLDBMetaComponent
 from backend.flow.plugins.components.collections.mysql.trans_flies import TransFileComponent
 from backend.flow.utils.common_act_dataclass import DownloadBackupClientKwargs
@@ -60,103 +61,16 @@ from backend.flow.utils.mysql.mysql_act_dataclass import (
     DBMetaOPKwargs,
     DownloadMediaKwargs,
     ExecActuatorKwargs,
+    MysqlCheckSumKwargs,
 )
 from backend.flow.utils.mysql.mysql_act_playload import MysqlActPayload
 from backend.flow.utils.mysql.mysql_context_dataclass import ClusterInfoContext
 from backend.flow.utils.mysql.mysql_db_meta import MySQLDBMeta
 from backend.flow.utils.mysql.mysql_version_parse import mysql_version_parse
 from backend.ticket.builders.common.constants import MySQLBackupSource
+from backend.ticket.constants import TicketType
 
 logger = logging.getLogger("flow")
-
-
-class DestroyNonStanbySlaveMySQLFlow(object):
-    """
-    下架非standby slave MySQL实例的流程
-    """
-
-    def __init__(self, root_id: str, ticket_data: Optional[Dict]):
-        """
-        @param root_id : 任务流程定义的root_id
-        @param tick_data : 单据传递过来的参数列表，是dict格式
-        """
-        self.root_id = root_id
-        self.ticket_data = ticket_data
-        if not self.ticket_data.get("force"):
-            self.ticket_data["force"] = False
-
-    def destroy(self):
-        """
-        {
-            "uid": "2022051612120001",
-            "created_by": "xxxx",
-            "bk_biz_id": "152",
-            "ticket_type": "MYSQL_RESTORE_SLAVE",
-            "infos": {
-                    "cluster_ids": [1001,1002],
-                    "slave_ip": "1.1.1.1",
-            }
-        }
-        """
-        cluster_ids = self.ticket_data["infos"]["cluster_ids"]
-        slave_ip = self.ticket_data["infos"]["slave_ip"]
-        cluster_class = Cluster.objects.get(id=cluster_ids[0])
-        ports = get_ports(cluster_ids)
-        slave_ins_list = StorageInstance.objects.filter(machine__ip=slave_ip)
-
-        for slave_ins in slave_ins_list:
-            if slave_ins.is_stand_by:
-                raise DBMetaException(message=_("{}:{}实例是standby slave,请确认").format(slave_ip, slave_ins.port))
-
-        p = Builder(
-            root_id=self.root_id,
-            data=copy.deepcopy(self.ticket_data),
-            need_random_pass_cluster_ids=list(set(cluster_ids)),
-        )
-
-        p.add_act(
-            act_name=_("卸载实例前先删除元数据"),
-            act_component_code=MySQLDBMetaComponent.code,
-            kwargs=asdict(
-                DBMetaOPKwargs(
-                    db_meta_class_func=MySQLDBMeta.ro_slave_recover_del_instance.__name__,
-                    cluster={"uninstall_ip": slave_ip, "cluster_ids": cluster_ids},
-                )
-            ),
-        )
-
-        p.add_act(
-            act_name=_("下发db-actor到节点{}").format(slave_ip),
-            act_component_code=TransFileComponent.code,
-            kwargs=asdict(
-                DownloadMediaKwargs(
-                    bk_cloud_id=cluster_class.bk_cloud_id,
-                    exec_ip=slave_ip,
-                    file_list=GetFileList(db_type=DBType.MySQL).get_db_actuator_package(),
-                )
-            ),
-        )
-
-        p.add_act(
-            act_name=_("清理机器配置"),
-            act_component_code=MySQLClearMachineComponent.code,
-            kwargs=asdict(
-                ClearMachineKwargs(
-                    exec_ip=slave_ip,
-                    bk_cloud_id=cluster_class.bk_cloud_id,
-                )
-            ),
-        )
-
-        p.add_sub_pipeline(
-            sub_flow=uninstall_instance_sub_flow(
-                root_id=self.root_id,
-                ticket_data=copy.deepcopy(self.ticket_data),
-                ip=slave_ip,
-                ports=ports,
-            )
-        )
-        p.run_pipeline(is_drop_random_user=False)
 
 
 class TendbClusterUpgradeFlow(object):
@@ -173,35 +87,53 @@ class TendbClusterUpgradeFlow(object):
         self.ticket_data = ticket_data
         #  仅添加从库。不切换。不复制账号
         self.add_slave_only = self.ticket_data.get("add_slave_only", False)
-        self.check_client_conn = not self.ticket_data.get("force", False)
+        # self.check_client_conn = not self.ticket_data.get("force", False)
+        self.is_check_process = self.ticket_data.get("is_check_process", True)
+        self.is_verify_checksum = self.ticket_data.get("is_verify_checksum", True)
+        self.need_checksum = self.ticket_data.get("need_checksum", True)
+        self.created_by = self.ticket_data.get("created_by", "system")
 
-    def __precheck(self):
+    def __pre_check(self):
         """
         升级前置检查
         """
         for info in self.ticket_data["infos"]:
-            cluster_class = Cluster.objects.get(id=info["cluster_ids"][0])
-            origin_chaset, origin_mysql_ver = get_version_and_charset(
-                self.ticket_data["bk_biz_id"],
-                db_module_id=cluster_class.db_module_id,
-                cluster_type=cluster_class.cluster_type,
-            )
+            # 检查操作系统版本（如果升级到 8.0）
+            pkg_id = info.get("pkg_id")
+            if pkg_id:
+                try:
+                    pkg = Package.objects.get(id=pkg_id, pkg_type=MediumEnum.MySQL, db_type=DBType.MySQL)
+                    pkg_name = pkg.name
 
-            new_charset, new_mysql_ver = get_version_and_charset(
-                self.ticket_data["bk_biz_id"],
-                db_module_id=info["new_db_module_id"],
-                cluster_type=cluster_class.cluster_type,
-            )
-            if new_charset != origin_chaset:
-                raise DBMetaException(
-                    message=_("{}升级前后字符集不一致,原字符集：{},新模块的字符集{}").format(
-                        cluster_class.immute_domain, origin_chaset, new_charset
-                    )
-                )
-            upgrade_version_check(origin_mysql_ver, new_mysql_ver)
+                    if mysql_version_parse(pkg_name) >= mysql_version_parse("8.0.0"):
+                        # 检查新节点操作系统版本
+                        new_master = info.get("new_master", {})
+                        new_slave = info.get("new_slave", {})
+                        ro_slaves = info.get("ro_slaves", [])
+
+                        nodes_to_check = []
+                        if new_master:
+                            nodes_to_check.append(new_master)
+                        if new_slave:
+                            nodes_to_check.append(new_slave)
+                        for ro_slave in ro_slaves:
+                            if ro_slave.get("new_ro_slave"):
+                                nodes_to_check.append(ro_slave["new_ro_slave"])
+
+                        for node in nodes_to_check:
+                            os_name = node.get("os_name", "").strip()
+                            ip = node.get("ip", "")
+
+                            if os_name == "tlinux-1.2":
+                                raise DBMetaException(
+                                    message=_(
+                                        "节点 {} (操作系统: {}) 的 tlinux 版本不满足要求。" "升级到 MySQL 8.0 版本需要 tlinux 版本大于 1.2"
+                                    ).format(ip, os_name)
+                                )
+                except Package.DoesNotExist:
+                    logger.warning(_("包ID {} 不存在，跳过操作系统版本检查").format(pkg_id))
 
     def upgrade_ro_slaves(self):
-        self.__precheck()
         cluster_ids = []
         for info in self.ticket_data["infos"]:
             cluster_ids.extend(info["cluster_ids"])
@@ -211,7 +143,7 @@ class TendbClusterUpgradeFlow(object):
             data=copy.deepcopy(self.ticket_data),
             need_random_pass_cluster_ids=list(set(cluster_ids)),
         )
-        subflows = []
+        sub_flows = []
         created_by = self.ticket_data["ticket_type"]
         for info in self.ticket_data["infos"]:
             subflow = non_standby_slaves_upgrade_subflow(
@@ -227,9 +159,9 @@ class TendbClusterUpgradeFlow(object):
                 created_by=created_by,
                 force_uninstall=False,
             )
-            subflows.append(subflow)
+            sub_flows.append(subflow)
 
-        p.add_parallel_sub_pipeline(subflows)
+        p.add_parallel_sub_pipeline(sub_flows)
 
         p.run_pipeline(init_trans_data_class=ClusterInfoContext(), is_drop_random_user=True)
 
@@ -279,7 +211,7 @@ class TendbClusterUpgradeFlow(object):
             ]
         }
         """
-        self.__precheck()
+        self.__pre_check()
         cluster_ids = []
         for info in self.ticket_data["infos"]:
             cluster_ids.extend(info["cluster_ids"])
@@ -289,8 +221,7 @@ class TendbClusterUpgradeFlow(object):
             data=copy.deepcopy(self.ticket_data),
             need_random_pass_cluster_ids=list(set(cluster_ids)),
         )
-        subflows = []
-        created_by = self.ticket_data["created_by"]
+        sub_flows = []
         for info in self.ticket_data["infos"]:
             subflow = tendbha_cluster_upgrade_subflow(
                 uid=str(self.ticket_data["uid"]),
@@ -302,14 +233,17 @@ class TendbClusterUpgradeFlow(object):
                 pkg_id=info["pkg_id"],
                 new_db_module_id=info["new_db_module_id"],
                 backup_source=self.ticket_data["backup_source"],
-                created_by=created_by,
+                created_by=self.created_by,
                 force_uninstall=False,
                 ticket_type=self.ticket_data["ticket_type"],
-                check_client_conn=self.check_client_conn,
+                check_client_conn=self.is_check_process,
+                is_verify_checksum=self.is_verify_checksum,
+                need_checksum=self.need_checksum,
+                ticket_info_data=copy.deepcopy(info),
             )
-            subflows.append(subflow)
+            sub_flows.append(subflow)
 
-        p.add_parallel_sub_pipeline(subflows)
+        p.add_parallel_sub_pipeline(sub_flows)
 
         p.run_pipeline(init_trans_data_class=ClusterInfoContext(), is_drop_random_user=True)
 
@@ -328,6 +262,9 @@ def tendbha_cluster_upgrade_subflow(
     force_uninstall: bool,
     ticket_type: str,
     check_client_conn: bool,
+    is_verify_checksum: bool,
+    need_checksum: bool,
+    ticket_info_data: dict,
 ):
     """
     一主多从，整个集群升级
@@ -364,6 +301,9 @@ def tendbha_cluster_upgrade_subflow(
         "force": force_uninstall,
         "ticket_type": ticket_type,
     }
+    for k, v in ticket_info_data.items():
+        if k not in parent_global_data:
+            parent_global_data[k] = v
     sub_pipeline = SubBuilder(root_id=root_id, data=parent_global_data)
     old_ro_slave_ips = []
     new_ro_slave_ips = []
@@ -373,10 +313,10 @@ def tendbha_cluster_upgrade_subflow(
         local_backup = True
 
     if len(ro_slaves) > 0:
-        ro_sub_piplelines = []
-        ro_switch_ro_sub_piplelines = []
+        ro_sub_pipelines = []
+        ro_switch_ro_sub_pipelines = []
         for ro_slave in ro_slaves:
-            ro_sub_pipleline = SubBuilder(root_id=root_id, data=parent_global_data)
+            ro_sub_pipeline = SubBuilder(root_id=root_id, data=parent_global_data)
             old_ro_slave = ro_slave["old_ro_slave"]
             new_ro_slave = ro_slave["new_ro_slave"]
             new_ro_slave_ip = new_ro_slave["ip"]
@@ -400,20 +340,20 @@ def tendbha_cluster_upgrade_subflow(
                 cluster_ids,
                 new_db_module_id,
             )
-            ro_sub_pipleline.add_sub_pipeline(sub_flow=install_ro_slave_sub_pipeline)
+            ro_sub_pipeline.add_sub_pipeline(sub_flow=install_ro_slave_sub_pipeline)
             # 恢复主从数据
             sync_data_sub_pipeline_list = build_sync_data_sub_pipelines(
                 root_id, parent_global_data, cluster_ids, new_ro_slave_ip, local_backup, charset
             )
-            ro_sub_pipleline.add_parallel_sub_pipeline(sync_data_sub_pipeline_list)
-            ro_sub_piplelines.append(ro_sub_pipleline.build_sub_process(sub_name=_("安装非stanbySlave节点并数据同步")))
-            # 切换换subpipeline
-            ro_switch_ro_sub_pipleline = SubBuilder(root_id=root_id, data=parent_global_data)
+            ro_sub_pipeline.add_parallel_sub_pipeline(sync_data_sub_pipeline_list)
+            ro_sub_pipelines.append(ro_sub_pipeline.build_sub_process(sub_name=_("安装非 standby Slave节点并数据同步")))
+            # 切换换sub pipeline
+            ro_switch_ro_sub_pipeline = SubBuilder(root_id=root_id, data=parent_global_data)
             switch_sub_pipeline_list = build_switch_sub_pipelines(
                 root_id, parent_global_data, cluster_ids, old_ro_slave_ip, new_ro_slave_ip
             )
-            ro_switch_ro_sub_pipleline.add_parallel_sub_pipeline(switch_sub_pipeline_list)
-            ro_switch_ro_sub_pipleline.add_act(
+            ro_switch_ro_sub_pipeline.add_parallel_sub_pipeline(switch_sub_pipeline_list)
+            ro_switch_ro_sub_pipeline.add_act(
                 act_name=_("更新[NewSlave]{} db module id".format(new_ro_slave_ip)),
                 act_component_code=MySQLDBMetaComponent.code,
                 kwargs=asdict(
@@ -427,7 +367,7 @@ def tendbha_cluster_upgrade_subflow(
                     )
                 ),
             )
-            ro_switch_ro_sub_piplelines.append(ro_switch_ro_sub_pipleline.build_sub_process(sub_name=_("切换RO从节点")))
+            ro_switch_ro_sub_pipelines.append(ro_switch_ro_sub_pipeline.build_sub_process(sub_name=_("切换RO从节点")))
     # 安装mysql
     ms_sub_pipeline = SubBuilder(root_id=root_id, data=parent_global_data)
     bk_host_ids = [new_master["bk_host_id"], new_slave["bk_host_id"]]
@@ -456,22 +396,30 @@ def tendbha_cluster_upgrade_subflow(
         parent_global_data=parent_global_data,
         relation_cluster_ids=cluster_ids,
         new_master_ip=new_master_ip,
+        new_master_bk_host_id=new_master["bk_host_id"],
         new_slave_ip=new_slave_ip,
         old_slave_ip=old_slave_ip,
         local_backup=local_backup,
         charset=charset,
+        backup_source=backup_source,
+        need_checksum=need_checksum,
+        created_by=created_by,
+        uid=uid,
     )
     ms_sub_pipeline.add_parallel_sub_pipeline(sub_flow_list=sync_data_sub_pipeline_list)
     ms_process = ms_sub_pipeline.build_sub_process(sub_name=_("安装主从节点,并同步数据"))
     if len(ro_slaves) > 0:
-        sub_pipeline.add_parallel_sub_pipeline(sub_flow_list=[ms_process] + ro_sub_piplelines)
+        sub_pipeline.add_parallel_sub_pipeline(sub_flow_list=[ms_process] + ro_sub_pipelines)
     else:
         sub_pipeline.add_parallel_sub_pipeline(sub_flow_list=[ms_process])
 
     sub_pipeline.add_sub_pipeline(
         sub_flow=standardize_mysql_cluster_subflow(
             root_id=root_id,
-            data=copy.deepcopy(parent_global_data),
+            data={
+                **copy.deepcopy(parent_global_data),
+                "cluster_ids": cluster_ids,
+            },
             bk_cloud_id=cluster_cls.bk_cloud_id,
             bk_biz_id=cluster_cls.bk_biz_id,
             instances=[
@@ -481,18 +429,18 @@ def tendbha_cluster_upgrade_subflow(
             with_actuator=False,
             with_bk_plugin=False,
             with_collect_sysinfo=False,
-            with_cc_standardize=False,
-            with_instance_standardize=False,
+            with_cc_standardize=True,
+            with_instance_standardize=True,
         )
     )
 
     sub_pipeline.add_act(act_name=_("人工确认切换"), act_component_code=PauseComponent.code, kwargs={})
     # 先切ro slaves
     if len(ro_slaves) > 0:
-        sub_pipeline.add_parallel_sub_pipeline(sub_flow_list=ro_switch_ro_sub_piplelines)
+        sub_pipeline.add_parallel_sub_pipeline(sub_flow_list=ro_switch_ro_sub_pipelines)
     logger.info(_("old_ro_slave ip list {}").format(old_ro_slave_ips))
     # 切换主从对
-    ms_switch_subflows = build_ms_pair_switch_sub_pipelines(
+    ms_switch_sub_flows = build_ms_pair_switch_sub_pipelines(
         root_id=root_id,
         parent_global_data=parent_global_data,
         relation_cluster_ids=cluster_ids,
@@ -503,14 +451,18 @@ def tendbha_cluster_upgrade_subflow(
         old_ro_slave_ips=old_ro_slave_ips,
         new_ro_slave_ips=new_ro_slave_ips,
         check_client_conn=check_client_conn,
+        is_verify_checksum=is_verify_checksum,
     )
-    sub_pipeline.add_parallel_sub_pipeline(sub_flow_list=ms_switch_subflows)
+    sub_pipeline.add_parallel_sub_pipeline(sub_flow_list=ms_switch_sub_flows)
 
     # 重新安装备份,监控等
     sub_pipeline.add_sub_pipeline(
         sub_flow=standardize_mysql_cluster_subflow(
             root_id=root_id,
-            data=copy.deepcopy(parent_global_data),
+            data={
+                **copy.deepcopy(parent_global_data),
+                "cluster_ids": cluster_ids,
+            },
             bk_cloud_id=cluster_cls.bk_cloud_id,
             bk_biz_id=cluster_cls.bk_biz_id,
             instances=[
@@ -520,7 +472,7 @@ def tendbha_cluster_upgrade_subflow(
             with_bk_plugin=False,
             with_backup_client=False,
             with_collect_sysinfo=False,
-            with_cc_standardize=False,
+            with_cc_standardize=True,
             with_instance_standardize=False,
         )
     )
@@ -536,6 +488,8 @@ def tendbha_cluster_upgrade_subflow(
     )
     sub_pipeline.add_sub_pipeline(sub_flow=uninstall_surrounding_sub_pipeline)
     # 更新集群模块信息
+    # 注意：这里只是添加流程节点，不会立即更新内存中的 cluster_cls 对象
+    # cluster_cls.db_module_id 仍然是旧的模块ID，这正是我们需要的源模块ID
     sub_pipeline.add_act(
         act_name=_("更新集群db模块信息"),
         act_component_code=MySQLDBMetaComponent.code,
@@ -549,6 +503,15 @@ def tendbha_cluster_upgrade_subflow(
                 },
             )
         ),
+    )
+
+    # 克隆模块配置
+    # 使用旧的模块ID作为源，新的模块ID作为目标
+    add_clone_storage_module_config_act(
+        sub_pipeline,
+        cluster_cls,
+        cluster_cls.db_module_id,  # 源模块ID（旧的）
+        new_db_module_id,  # 目标模块ID（新的）
     )
 
     # 下架确认节点
@@ -605,7 +568,7 @@ def non_standby_slaves_upgrade_subflow(
     force_uninstall: bool,
 ):
     """
-    一主多从非stanby slaves升级subflow
+    一主多从非standby slaves升级subflow
     """
     cluster_cls = Cluster.objects.get(id=relation_cluster_ids[0])
     ports = get_ports(relation_cluster_ids)
@@ -764,7 +727,7 @@ def build_install_slave_sub_pipeline(
             DownloadBackupClientKwargs(
                 bk_cloud_id=cluster.bk_cloud_id,
                 bk_biz_id=int(cluster.bk_biz_id),
-                download_host_list=[new_slave_ip],
+                ip_list=[new_slave_ip],
             )
         ),
     )
@@ -806,9 +769,7 @@ def build_sync_data_sub_pipelines(
         cluster_model = Cluster.objects.get(id=cluster_id)
         master = cluster_model.storageinstance_set.get(instance_inner_role=InstanceInnerRole.MASTER.value)
         cluster = {
-            "mysql_port": master.port,
             "cluster_id": cluster_model.id,
-            "cluster_type": cluster_model.cluster_type,
             "master_ip": master.machine.ip,
             "master_port": master.port,
             "new_slave_ip": new_slave_ip,
@@ -816,37 +777,30 @@ def build_sync_data_sub_pipelines(
             "bk_cloud_id": cluster_model.bk_cloud_id,
             "file_target_path": f"/data/dbbak/{root_id}/{master.port}",
             "charset": charset,
-            "change_master_force": True,
-            "change_master": True,
         }
+
         sync_data_sub_pipeline = SubBuilder(root_id=root_id, data=copy.deepcopy(parent_global_data))
         if local_backup:
-            # 获取本地备份并恢复
-            inst_list = ["{}{}{}".format(master.machine.ip, IP_PORT_DIVIDER, master.port)]
+            cluster["backup_source"] = MySQLBackupSource.LOCAL.value
+            filter_ips = [master.machine.ip]
             stand_by_slaves = cluster_model.storageinstance_set.filter(
                 instance_inner_role=InstanceInnerRole.SLAVE.value,
                 is_stand_by=True,
                 status=InstanceStatus.RUNNING.value,
-            ).exclude(machine__ip__in=[new_slave_ip])
-            if len(stand_by_slaves) > 0:
-                inst_list.append(
-                    "{}{}{}".format(stand_by_slaves[0].machine.ip, IP_PORT_DIVIDER, stand_by_slaves[0].port)
-                )
-            sync_data_sub_pipeline.add_sub_pipeline(
-                sub_flow=mysql_restore_data_sub_flow(
-                    root_id=root_id,
-                    ticket_data=copy.deepcopy(parent_global_data),
-                    cluster=cluster,
-                    cluster_model=cluster_model,
-                    ins_list=inst_list,
-                )
             )
+            filter_ips.extend([slave.machine.ip for slave in stand_by_slaves])
         else:
-            sync_data_sub_pipeline.add_sub_pipeline(
-                sub_flow=slave_recover_sub_flow(
-                    root_id=root_id, ticket_data=copy.deepcopy(parent_global_data), cluster_info=cluster
-                )
+            cluster["backup_source"] = MySQLBackupSource.REMOTE.value
+            filter_ips = None
+        sync_data_sub_pipeline.add_sub_pipeline(
+            sub_flow=mysql_restore_data_sub_flow(
+                root_id=root_id,
+                ticket_data=copy.deepcopy(parent_global_data),
+                cluster=cluster,
+                cluster_model=cluster_model,
+                filter_ips=filter_ips,
             )
+        )
 
         sync_data_sub_pipeline.add_act(
             act_name=_("同步完毕,写入主从关系,设置节点为running状态"),
@@ -1015,6 +969,7 @@ def build_install_ms_pair_sub_pipeline(
         "new_master_ip": new_master_ip,
         "new_slave_ip": new_slave_ip,
         "bk_cloud_id": cluster.bk_cloud_id,
+        "cluster_ids": [cluster.id],
     }
 
     install_sub_pipeline.add_act(
@@ -1036,7 +991,7 @@ def build_install_ms_pair_sub_pipeline(
             DownloadBackupClientKwargs(
                 bk_cloud_id=cluster.bk_cloud_id,
                 bk_biz_id=int(cluster.bk_biz_id),
-                download_host_list=[new_master_ip, new_slave_ip],
+                ip_list=[new_master_ip, new_slave_ip],
             )
         ),
     )
@@ -1062,68 +1017,54 @@ def build_ms_pair_sync_data_sub_pipelines(
     parent_global_data,
     relation_cluster_ids,
     new_master_ip,
+    new_master_bk_host_id,
     new_slave_ip,
     old_slave_ip,
     local_backup: bool,
+    backup_source: str,
     charset: str,
+    need_checksum: bool,
+    created_by: str,
+    uid: str,
 ):
     sync_data_sub_pipeline_list = []
     for cluster_id in relation_cluster_ids:
         cluster_model = Cluster.objects.get(id=cluster_id)
         master_model = cluster_model.storageinstance_set.get(instance_inner_role=InstanceInnerRole.MASTER.value)
-        rollback_time = datetime.now(timezone.utc)
-        rollback_handler = FixPointRollbackHandler(cluster_id=cluster_model.id)
-        backup_info = rollback_handler.query_latest_backup_log(rollback_time)
-        if backup_info is None:
-            logger.error("cluster {} backup info not exists".format(cluster_model.id))
-            raise TendbGetBackupInfoFailedException(message=_("获取集群 {} 的备份信息失败".format(cluster_id)))
         cluster = {
-            "backupinfo": backup_info,
             "new_master_ip": new_master_ip,
-            "new_slave_ip": new_slave_ip,
             "new_master_port": master_model.port,
+            "new_slave_ip": new_slave_ip,
             "new_slave_port": master_model.port,
-            "cluster_type": cluster_model.cluster_type,
             "master_ip": master_model.machine.ip,
-            "slave_ip": old_slave_ip,
             "master_port": master_model.port,
-            "slave_port": master_model.port,
-            "mysql_port": master_model.port,
             "file_target_path": f"/data/dbbak/{root_id}/{master_model.port}",
             "cluster_id": cluster_model.id,
             "bk_cloud_id": cluster_model.bk_cloud_id,
+            "backup_source": backup_source,
             "charset": charset,
-            "change_master_force": True,
-            "change_master": True,
         }
         sync_data_sub_pipeline = SubBuilder(root_id=root_id, data=copy.deepcopy(parent_global_data))
+        filter_ips = None
         if local_backup:
             stand_by_slaves = cluster_model.storageinstance_set.filter(
                 instance_inner_role=InstanceInnerRole.SLAVE.value,
                 is_stand_by=True,
                 status=InstanceStatus.RUNNING.value,
             ).exclude(machine__ip__in=[new_master_ip, new_slave_ip])
-            #     从standby从库找备份
-            inst_list = ["{}{}{}".format(master_model.machine.ip, IP_PORT_DIVIDER, master_model.port)]
-            if len(stand_by_slaves) > 0:
-                inst_list.append(
-                    "{}{}{}".format(stand_by_slaves[0].machine.ip, IP_PORT_DIVIDER, stand_by_slaves[0].port)
-                )
-            sync_data_sub_pipeline.add_sub_pipeline(
-                sub_flow=mysql_restore_master_slave_sub_flow(
-                    root_id=root_id,
-                    ticket_data=copy.deepcopy(parent_global_data),
-                    cluster=cluster,
-                    cluster_model=cluster_model,
-                    ins_list=inst_list,
-                )
+            # 从standby从库找备份
+            filter_ips = [master_model.machine.ip]
+            filter_ips.extend([slave.machine.ip for slave in stand_by_slaves])
+        sync_data_sub_pipeline.add_sub_pipeline(
+            sub_flow=mysql_restore_master_slave_sub_flow(
+                root_id=root_id,
+                ticket_data=copy.deepcopy(parent_global_data),
+                cluster=cluster,
+                cluster_model=cluster_model,
+                filter_ips=filter_ips,
             )
-        else:
-            sync_data_sub_pipeline.add_sub_pipeline(
-                sub_flow=remote_instance_migrate_sub_flow(
-                    root_id=root_id, ticket_data=copy.deepcopy(parent_global_data), cluster_info=cluster
-                )
-            )
+        )
+
         sync_data_sub_pipeline.add_act(
             act_name=_("同步完毕,写入主从关系,设置节点为running状态"),
             act_component_code=MySQLDBMetaComponent.code,
@@ -1135,9 +1076,88 @@ def build_ms_pair_sync_data_sub_pipelines(
                 )
             ),
         )
+        if need_checksum:
+            # 生成checksum信息
+            checksum_info = {
+                "bk_biz_id": cluster_model.bk_biz_id,
+                "ticket_type": TicketType.MYSQL_CHECKSUM_CRON,
+                "remark": _("mysql成对迁移升级生成checksum单据"),
+                "details": {
+                    "data_repair": {
+                        "is_repair": True,
+                        "mode": "manual",
+                    },
+                    "is_sync_non_innodb": True,
+                    "runtime_hour": 48,
+                    "infos": [],
+                },
+            }
+            checksum_info["details"]["infos"] = []
+            checksum_info["details"]["infos"].append(
+                {
+                    "cluster_id": cluster_model.id,
+                    "master": {
+                        "bk_biz_id": master_model.bk_biz_id,
+                        "bk_cloud_id": cluster_model.bk_cloud_id,
+                        "bk_host_id": master_model.machine_id,
+                        "ip": master_model.machine.ip,
+                        "port": master_model.port,
+                        "instance_inner_role": InstanceInnerRole.MASTER,
+                    },
+                    "slaves": [
+                        {
+                            "bk_biz_id": cluster_model.bk_biz_id,
+                            "bk_cloud_id": cluster_model.bk_cloud_id,
+                            "ip": new_master_ip,
+                            "bk_host_id": new_master_bk_host_id,
+                            "port": master_model.port,
+                            "instance_inner_role": InstanceInnerRole.REPEATER,
+                        },
+                    ],
+                    "db_patterns": ["*"],
+                    "ignore_dbs": [],
+                    "table_patterns": ["*"],
+                    "ignore_tables": [],
+                }
+            )
+            # 构建 checksum_pairs
+            checksum_pairs = [
+                {
+                    "master": master_model.ip_port,
+                    "slave": f"{new_master_ip}{IP_PORT_DIVIDER}{master_model.port}",
+                }
+            ]
+            # 恢复完毕,checksum校验数据。
+            sync_data_sub_pipeline.add_act(
+                act_name=MySQLCheckSumTicketComponent.node_name,
+                act_component_code=MySQLCheckSumTicketComponent.code,
+                kwargs=asdict(
+                    MysqlCheckSumKwargs(
+                        uid=uid,
+                        bk_biz_id=cluster_model.bk_biz_id,
+                        created_by=created_by,
+                        checksum_info=copy.deepcopy(checksum_info),
+                    )
+                ),
+            )
+            sync_data_sub_pipeline.add_act(
+                act_name=MySQLCheckSumTicketProbeComponent.node_name,
+                act_component_code=MySQLCheckSumTicketProbeComponent.code,
+                kwargs={},
+            )
+            sync_data_sub_pipeline.add_act(
+                act_name=MySQLCheckSumTicketResultComponent.node_name,
+                act_component_code=MySQLCheckSumTicketResultComponent.code,
+                kwargs={
+                    "bk_cloud_id": cluster_model.bk_cloud_id,
+                    "checksum_pairs": checksum_pairs,
+                    "cluster_id": cluster_model.id,
+                },
+            )
         sync_data_sub_pipeline_list.append(
-            sync_data_sub_pipeline.build_sub_process(sub_name=_("{}:恢复实例数据").format(cluster_model.immute_domain))
+            sync_data_sub_pipeline.build_sub_process(sub_name=_("{} 集群恢复数据").format(cluster_model.name))
         )
+
     return sync_data_sub_pipeline_list
 
 
@@ -1152,6 +1172,7 @@ def build_ms_pair_switch_sub_pipelines(
     old_ro_slave_ips: list,
     new_ro_slave_ips: list,
     check_client_conn: bool,
+    is_verify_checksum: bool,
 ):
     switch_sub_pipeline_list = []
     for cluster_id in relation_cluster_ids:
@@ -1181,6 +1202,7 @@ def build_ms_pair_switch_sub_pipelines(
                 cluster=cluster_model,
                 cluster_info=copy.deepcopy(cluster_info),
                 check_client_conn=check_client_conn,
+                is_verify_checksum=is_verify_checksum,
             )
         )
         switch_sub_pipeline.add_act(
@@ -1240,3 +1262,92 @@ def build_uninstall_surrounding_sub_pipeline(
         acts_list=acts,
     )
     return sub_pipeline.build_sub_process(sub_name=_("清理实例级别周边配置"))
+
+
+class DestroyNonStanbySlaveMySQLFlow(object):
+    """
+    下架非standby slave MySQL实例的流程
+    """
+
+    def __init__(self, root_id: str, ticket_data: Optional[Dict]):
+        """
+        @param root_id : 任务流程定义的root_id
+        @param tick_data : 单据传递过来的参数列表，是dict格式
+        """
+        self.root_id = root_id
+        self.ticket_data = ticket_data
+        if not self.ticket_data.get("force"):
+            self.ticket_data["force"] = False
+
+    def destroy(self):
+        """
+        {
+            "uid": "2022051612120001",
+            "created_by": "xxxx",
+            "bk_biz_id": "152",
+            "ticket_type": "MYSQL_RESTORE_SLAVE",
+            "infos": {
+                    "cluster_ids": [1001,1002],
+                    "slave_ip": "1.1.1.1",
+            }
+        }
+        """
+        cluster_ids = self.ticket_data["infos"]["cluster_ids"]
+        slave_ip = self.ticket_data["infos"]["slave_ip"]
+        cluster_class = Cluster.objects.get(id=cluster_ids[0])
+        ports = get_ports(cluster_ids)
+        slave_ins_list = StorageInstance.objects.filter(machine__ip=slave_ip)
+
+        for slave_ins in slave_ins_list:
+            if slave_ins.is_stand_by:
+                raise DBMetaException(message=_("{}:{}实例是standby slave,请确认").format(slave_ip, slave_ins.port))
+
+        p = Builder(
+            root_id=self.root_id,
+            data=copy.deepcopy(self.ticket_data),
+            need_random_pass_cluster_ids=list(set(cluster_ids)),
+        )
+
+        p.add_act(
+            act_name=_("卸载实例前先删除元数据"),
+            act_component_code=MySQLDBMetaComponent.code,
+            kwargs=asdict(
+                DBMetaOPKwargs(
+                    db_meta_class_func=MySQLDBMeta.ro_slave_recover_del_instance.__name__,
+                    cluster={"uninstall_ip": slave_ip, "cluster_ids": cluster_ids},
+                )
+            ),
+        )
+
+        p.add_act(
+            act_name=_("下发db-actor到节点{}").format(slave_ip),
+            act_component_code=TransFileComponent.code,
+            kwargs=asdict(
+                DownloadMediaKwargs(
+                    bk_cloud_id=cluster_class.bk_cloud_id,
+                    exec_ip=slave_ip,
+                    file_list=GetFileList(db_type=DBType.MySQL).get_db_actuator_package(),
+                )
+            ),
+        )
+
+        p.add_act(
+            act_name=_("清理机器配置"),
+            act_component_code=MySQLClearMachineComponent.code,
+            kwargs=asdict(
+                ClearMachineKwargs(
+                    exec_ip=slave_ip,
+                    bk_cloud_id=cluster_class.bk_cloud_id,
+                )
+            ),
+        )
+
+        p.add_sub_pipeline(
+            sub_flow=uninstall_instance_sub_flow(
+                root_id=self.root_id,
+                ticket_data=copy.deepcopy(self.ticket_data),
+                ip=slave_ip,
+                ports=ports,
+            )
+        )
+        p.run_pipeline(is_drop_random_user=False)

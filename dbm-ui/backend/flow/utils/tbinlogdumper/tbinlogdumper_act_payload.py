@@ -11,7 +11,7 @@ import copy
 import json
 import logging
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.components import DBConfigApi
 from backend.components.dbconfig.constants import FormatType, LevelName
@@ -24,6 +24,8 @@ from backend.flow.consts import (
     DBActuatorActionEnum,
     DBActuatorTypeEnum,
     MediumEnum,
+    MySQLBackupFileTagEnum,
+    MySQLBackupTypeEnum,
     TBinlogDumperProtocolType,
 )
 from backend.flow.engine.bamboo.scene.common.get_real_version import get_mysql_real_version
@@ -194,12 +196,16 @@ class TBinlogDumperActPayload(object):
                     "host": kwargs["ip"],
                     "port": self.ticket_data["port"],
                     "role": self.ticket_data["role"],
-                    "backup_type": "logical",
+                    "backup_type": MySQLBackupTypeEnum.LOGICAL.value,
                     "backup_gsd": ["data"],
-                    "regex": self.ticket_data["db_table_filter_regex"],
                     "backup_id": self.ticket_data["backup_id"].__str__(),
                     "bill_id": str(self.ticket_data["uid"]),
                     "custom_backup_dir": "tbinlogdumper",
+                    "backup_file_tag": MySQLBackupFileTagEnum.DBFILE1M.value,
+                    "db_patterns": self.ticket_data["db_patterns"],
+                    "ignore_dbs": [],
+                    "table_patterns": self.ticket_data["table_patterns"],
+                    "ignore_tables": [],
                 },
             },
         }
@@ -211,12 +217,13 @@ class TBinlogDumperActPayload(object):
         cluster = Cluster.objects.get(id=self.ticket_data["cluster_id"])
         master = cluster.storageinstance_set.get(instance_role=InstanceRole.BACKEND_MASTER)
         index_file = kwargs["trans_data"]["backup_info"]["backup_index"]
+        dumper_account = PayloadHandler.get_tbinlogdumper_account()
 
         return {
             "db_type": DBActuatorTypeEnum.MySQL.value,
             "action": DBActuatorActionEnum.RestoreSlave.value,
             "payload": {
-                "general": {"runtime_account": {**self.account, **PayloadHandler.get_tbinlogdumper_account()}},
+                "general": {"runtime_account": {**self.account, **dumper_account}},
                 "extend": {
                     "work_dir": kwargs["trans_data"]["backup_info"]["backup_dir"],
                     "backup_dir": kwargs["trans_data"]["backup_info"]["backup_dir"],
@@ -226,8 +233,8 @@ class TBinlogDumperActPayload(object):
                     "tgt_instance": {
                         "host": kwargs["ip"],
                         "port": self.ticket_data["add_tbinlogdumper_conf"]["port"],
-                        "user": self.account["tbinlogdumper_admin_user"],
-                        "pwd": self.account["tbinlogdumper_admin_pwd"],
+                        "user": dumper_account["tbinlogdumper_admin_user"],
+                        "pwd": dumper_account["tbinlogdumper_admin_pwd"],
                         "socket": None,
                         "charset": "",
                         "options": "",

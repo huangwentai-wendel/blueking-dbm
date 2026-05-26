@@ -8,6 +8,8 @@ const (
 	TendisTypePredixyRedisCluster = "PredixyRedisCluster"
 	// TendisTypePredixyTendisplusCluster predixy + TendisplusCluster架构
 	TendisTypePredixyTendisplusCluster = "PredixyTendisplusCluster"
+	// TendisTypePredixyTendisplusInstance predixy + TendisplusInstance架构(Standalone模式)
+	TendisTypePredixyTendisplusInstance = "PredixyTendisplusInstance"
 	// TendisTypeTwemproxyRedisInstance twemproxy + RedisInstance架构
 	TendisTypeTwemproxyRedisInstance = "TwemproxyRedisInstance"
 	// TendisTypeTwemproxyTendisplusInstance twemproxy+ TendisplusInstance架构
@@ -81,6 +83,10 @@ const (
 	ClusterStateOK = "ok"
 	// ClusterStateFail command 'cluster info',cluster_state
 	ClusterStateFail = "fail"
+
+	// ClusterEnable info cluster cluster_enabled
+	ClusterEnable   = "1"
+	ClusterUnEnable = "0"
 )
 const (
 	// DefaultMinSlots  0
@@ -124,6 +130,7 @@ const (
 
 // tool path
 const (
+	ReverseAPIConfigName     = ".nginx_proxy.list"
 	DbToolsPath              = "/home/mysql/dbtools"
 	RedisShakeBin            = "/home/mysql/dbtools/redis-shake"
 	RedisSafeDeleteToolBin   = "/home/mysql/dbtools/redisSafeDeleteTool"
@@ -245,6 +252,11 @@ const (
 	ModuleRedisJson  = "redisjson"
 )
 
+// redis status
+const (
+	REDISLOADDATAINFO = "LOADING Redis is loading the dataset in memory"
+)
+
 // IsKnownModule 是否是认识的module
 func IsKnownModule(module string) bool {
 	return module == ModuleRedisCell ||
@@ -299,7 +311,8 @@ func IsTwemproxyClusterType(dbType string) bool {
 // IsPredixyClusterType 检查proxy是否为Predixy
 func IsPredixyClusterType(dbType string) bool {
 	if dbType == TendisTypePredixyRedisCluster ||
-		dbType == TendisTypePredixyTendisplusCluster {
+		dbType == TendisTypePredixyTendisplusCluster ||
+		dbType == TendisTypePredixyTendisplusInstance {
 		return true
 	}
 	return false
@@ -310,7 +323,18 @@ func IsTendisplusInstanceDbType(dbType string) bool {
 	if dbType == TendisTypePredixyTendisplusCluster ||
 		dbType == TendisTypeTwemproxyTendisplusInstance ||
 		dbType == TendisTypeTendisplusInsance ||
-		dbType == TendisTypeTendisplusCluster {
+		dbType == TendisTypeTendisplusCluster ||
+		dbType == TendisTypePredixyTendisplusInstance {
+		return true
+	}
+	return false
+}
+
+// IsRedisClusterProtocal 存储端是否支持rediscluster协议
+func IsRedisClusterProtocal(dbType string) bool {
+	if dbType == TendisTypePredixyRedisCluster ||
+		dbType == TendisTypeRedisCluster ||
+		dbType == TendisTypePredixyTendisplusCluster {
 		return true
 	}
 	return false
@@ -328,7 +352,8 @@ func IsTendisSSDInstanceDbType(dbType string) bool {
 // IsAllowFlushMoreDB 是否支持flush 多DB
 func IsAllowFlushMoreDB(dbType string) bool {
 	if dbType == TendisTypeRedisInstance ||
-		dbType == TendisTypeTendisplusInsance {
+		dbType == TendisTypeTendisplusInsance ||
+		dbType == TendisTypePredixyTendisplusInstance {
 		return true
 	}
 	return false
@@ -339,7 +364,8 @@ func IsAllowRandomkey(dbType string) bool {
 	if dbType == TendisTypePredixyTendisplusCluster ||
 		dbType == TendisTypeTwemproxyTendisplusInstance ||
 		dbType == TendisTypeTendisplusInsance ||
-		dbType == TendisTypeTendisplusCluster {
+		dbType == TendisTypeTendisplusCluster ||
+		dbType == TendisTypePredixyTendisplusInstance {
 		return false
 	}
 	return true

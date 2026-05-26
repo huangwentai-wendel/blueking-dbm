@@ -136,8 +136,8 @@
   import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
   import { useI18n } from 'vue-i18n';
 
+  import BackupLogRecordModel from '@services/model/mysql/backup-log-record';
   import {
-    type BackupLogRecord,
     queryBackupLogFromBklog,
     queryBackupLogFromLoacal,
     queryLatesBackupLog,
@@ -162,18 +162,16 @@
   }
 
   interface Exposes {
-    getData: (backupid: string) => Promise<BackupLogRecord>;
+    getData: (backupid: string) => Promise<BackupLogRecordModel> | undefined;
   }
 
   const props = withDefaults(defineProps<Props>(), {
-    backupid: '',
     backupSource: '',
     clearable: false,
     disabled: false,
-    modelValue: '',
   });
 
-  const backupinfo = defineModel<BackupLogRecord>('backupinfo');
+  const backupinfo = defineModel<BackupLogRecordModel>('backupinfo');
 
   const { t } = useI18n();
 
@@ -208,7 +206,7 @@
   const open = ref(false);
   const recordType = ref(OperateType.MANUAL);
   const logRecordOptions = shallowRef<Array<{ id: string; name: string }>>([]);
-  const logRecordList = shallowRef<BackupLogRecord[]>([]);
+  const logRecordList = shallowRef<BackupLogRecordModel[]>([]);
 
   const isDateType = (value: string) => {
     const YYYYMMDDHHmmssReg = /[\d]{4}[\\/-]{1}[\d]{1,2}[\\/-]{1}[\d]{1,2}\s[\d]{1,2}[:][\d]{1,2}[:][\d]{1,2}/g;
@@ -220,7 +218,7 @@
   const rules: Rules = [
     {
       message: t('备份记录不能为空'),
-      validator: (value: string) => !!value,
+      validator: () => !!localValue.value,
     },
     {
       message: t('暂无与指定时间最近的备份记录'),
@@ -259,7 +257,7 @@
   );
 
   const renderText = computed(() => {
-    const item = _.find(logRecordList.value, (i) => i.backup_id === localValue.value) as BackupLogRecord;
+    const item = _.find(logRecordList.value, (i) => i.backup_id === localValue.value) as BackupLogRecordModel;
     return !item
       ? ''
       : `${item.mysql_role ? `${item.mysql_role} ` : ' '}${dayjs(item.backup_time).tz(timeZone.value.label).format('YYYY-MM-DD HH:mm:ss ZZ')}`;
@@ -342,6 +340,7 @@
   );
 
   onMounted(() => {
+    localValue.value = (backupinfo.value?.backup_id as string) || '';
     tippyIns = tippy(rootRef.value as SingleTarget, {
       appendTo: () => document.body,
       arrow: false,
@@ -355,7 +354,7 @@
         backupinfo.value = _.find(
           logRecordList.value,
           (item) => item.backup_id === localValue.value,
-        ) as BackupLogRecord;
+        ) as BackupLogRecordModel;
       },
       onShow: () => {
         isShowPop.value = true;
@@ -377,6 +376,9 @@
 
   defineExpose<Exposes>({
     getData(backupid: string) {
+      if (!isDateType(backupid)) {
+        return;
+      }
       return queryLatesBackupLog({
         bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
         cluster_id: props.clusterId,
@@ -398,11 +400,12 @@
   .rollback-mode-select {
     position: relative;
     display: flex;
-    height: 42px;
+    height: 40px;
     overflow: hidden;
     color: #63656e;
     cursor: pointer;
-    border: 1px solid transparent;
+    border: none;
+    box-sizing: border-box;
     transition: all 0.15s;
     align-items: center;
 

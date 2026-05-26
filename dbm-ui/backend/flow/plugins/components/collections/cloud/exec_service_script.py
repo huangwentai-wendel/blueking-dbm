@@ -12,7 +12,7 @@ specific language governing permissions and limitations under the License.
 import logging
 from typing import List
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from jinja2.sandbox import SandboxedEnvironment as Environment
 from pipeline.component_framework.component import Component
 from pipeline.core.flow.activity import Service
@@ -91,7 +91,8 @@ class ExecCloudScriptService(BkJobService):
         template = jinja_env.from_string(script_tpl)
 
         body = {
-            "bk_biz_id": env.JOB_BLUEKING_BIZ_ID,
+            "bk_scope_type": "biz_set",
+            "bk_scope_id": env.JOB_BLUEKING_BIZ_ID,
             "task_name": f"DBM_{kwargs['node_name']}_{kwargs['node_id']}",
             "script_content": base64_encode(template.render(service_act_payload)),
             "script_language": 1,

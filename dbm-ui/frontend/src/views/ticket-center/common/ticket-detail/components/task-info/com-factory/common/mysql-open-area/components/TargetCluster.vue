@@ -12,10 +12,31 @@
 -->
 
 <template>
-  <DbOriginalTable
+  <TicketInfoTable
     class="target-cluster-table"
-    :columns="columns"
-    :data="tableData" />
+    :data="tableData"
+    row-key="row_key">
+    <TicketInfoTableColumn
+      col-key="cluster_domain"
+      :get-copy-value="(row: RowData) => row.cluster_domain"
+      :min-width="200"
+      :title="t('目标集群')"
+      :width="250" />
+    <TicketInfoTableColumn
+      col-key="target_db"
+      :min-width="150"
+      :title="t('新DB')"
+      :width="200" />
+    <TicketInfoTableColumn
+      col-key="ips"
+      ellipsis
+      :get-copy-value="(row: RowData) => row.ips.split(',')"
+      :title="t('授权的IP')">
+      <template #default="{ row }: { row: RowData }">
+        {{ row.ips || '--' }}
+      </template>
+    </TicketInfoTableColumn>
+  </TicketInfoTable>
 </template>
 
 <script setup lang="tsx">
@@ -24,16 +45,20 @@
 
   import TicketModel, { type Mysql } from '@services/model/ticket/ticket';
 
-  import { execCopy } from '@utils';
+  import { random } from '@utils';
 
   interface Props {
     ticketDetails: TicketModel<Mysql.OpenArea>;
   }
 
   interface RowData {
+    cluster_domain: string;
+    data_tblist: string[];
     ips: string;
-    newDb: string;
-    targetCluster: string;
+    row_key: string;
+    schema_tblist: string[];
+    source_db: string;
+    target_db: string;
   }
 
   const props = defineProps<Props>();
@@ -55,55 +80,18 @@
       _.sortBy(
         props.ticketDetails.details.config_data.map((item) => {
           const cluster = clustersMap[item.cluster_id]?.immute_domain;
-          return item.execute_objects.map((executeObject) => ({
-            ips: clusterIpsMap[cluster]?.join(',') || '',
-            newDb: executeObject.target_db,
-            targetCluster: cluster,
-          }));
+          return item.execute_objects.map((executeObject) =>
+            Object.assign({}, executeObject, {
+              cluster_domain: cluster,
+              ips: clusterIpsMap[cluster]?.join(',') || '',
+              row_key: random(),
+            }),
+          );
         }),
         'newDb',
       ),
     ),
   );
-
-  const columns = computed(() => [
-    {
-      field: 'targetCluster',
-      label: t('目标集群'),
-      minWidth: 200,
-      rowspan: ({ row }: { row: RowData }) => {
-        const { targetCluster } = row;
-        const rowSpan = tableData.value.filter((item) => item.targetCluster === targetCluster).length;
-        return rowSpan > 1 ? rowSpan : 1;
-      },
-      width: 250,
-    },
-    {
-      field: 'newDb',
-      label: t('新DB'),
-      minWidth: 150,
-      width: 200,
-    },
-    {
-      field: 'ips',
-      label: t('授权的IP'),
-      render: ({ data }: { data: RowData }) => {
-        const ipList = data.ips.replace(/,/g, '\n');
-        return (
-          <span>
-            {data.ips || '--'}
-            <db-icon
-              class='copy-btn'
-              is-show={data.ips.length > 0}
-              type='copy'
-              onClick={() => execCopy(ipList, t('复制成功，共n条', { n: ipList.split('\n').length }))}
-            />
-          </span>
-        );
-      },
-      showOverflowTooltip: true,
-    },
-  ]);
 </script>
 
 <style lang="less" scoped>

@@ -11,13 +11,13 @@ specific language governing permissions and limitations under the License.
 
 import logging
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 
 from backend.db_meta.models import Cluster
 from backend.flow.engine.controller.riak import RiakController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import HostInfoSerializer, HostRecycleSerializer
+from backend.ticket.builders.common.base import HostInfoSerializer
 from backend.ticket.builders.common.bigdata import BigDataSingleClusterOpsDetailsSerializer
 from backend.ticket.builders.riak.base import BaseRiakTicketFlowBuilder
 from backend.ticket.constants import TicketType
@@ -31,9 +31,9 @@ class RiakShrinkDetailSerializer(BigDataSingleClusterOpsDetailsSerializer):
 
     cluster_id = serializers.IntegerField(help_text=_("集群ID"))
     old_nodes = RiakNodeSerializer(help_text=_("缩容信息"))
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.DEFAULT)
 
     def validate(self, attrs):
+        attrs = super(BigDataSingleClusterOpsDetailsSerializer, self).validate(attrs)
         return attrs
 
 

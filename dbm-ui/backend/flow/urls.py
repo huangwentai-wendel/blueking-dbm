@@ -8,9 +8,9 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from django.conf.urls import url
+from django.urls import re_path as url
 
-from backend.flow.views.append_deploy_ctl import AppendDeployCTLView
+from backend.flow.views.baseline_disk_benchmark import BaselineDiskBenchmarkSceneApiView
 from backend.flow.views.client_set_dns_server import ClientSetDnsServerSceneApiView
 from backend.flow.views.cloud_dbha_apply import CloudDBHAApplySceneApiView
 from backend.flow.views.cloud_dns_bind_apply import CloudDNSApplySceneApiView
@@ -76,6 +76,8 @@ from backend.flow.views.kafka_reboot import RebootKafkaSceneApiView
 from backend.flow.views.kafka_replace import ReplaceKafkaSceneApiView
 from backend.flow.views.kafka_scale_up import ScaleUpKafkaSceneApiView
 from backend.flow.views.kafka_shrink import ShrinkKafkaSceneApiView
+from backend.flow.views.machine_idle_check import MachineIdleCheckFlowApiView
+from backend.flow.views.migrate_views.doris_fake_apply import FakeInstallDorisSceneApiView
 from backend.flow.views.migrate_views.es_fake_apply import FakeInstallEsSceneApiView
 from backend.flow.views.migrate_views.hdfs_fake_apply import FakeInstallHdfsSceneApiView
 from backend.flow.views.migrate_views.influxdb_fake_apply import FakeInstallInfluxdbSceneApiView
@@ -90,6 +92,8 @@ from backend.flow.views.migrate_views.riak_migrate import RiakClusterMigrateApiV
 from backend.flow.views.mongodb_scene import (
     ClusterInstallApiView,
     MongoBackupApiView,
+    MongoDataExportApiView,
+    MongoDBClusterAddShardView,
     MongoDBClusterMigrateView,
     MongoDBCreateUserView,
     MongoDBDeInstallView,
@@ -100,20 +104,25 @@ from backend.flow.views.mongodb_scene import (
     MongoDBIncreaseMongoSView,
     MongoDBIncreaseNodeView,
     MongoDBInstanceDeInstallView,
+    MongoDBInstanceFixStatusView,
+    MongoDBInstanceMigrateView,
     MongoDBInstanceRestartView,
     MongoDBReduceMongoSView,
     MongoDBReduceNodeView,
     MongoDBReplaceView,
     MongoDBScaleView,
+    MongoDBStandardizationView,
     MongoFakeInstallApiView,
     MongoInstallDbmonApiView,
     MongoPitrRestoreApiView,
     MongoRemoveNsApiView,
     MongoRestoreApiView,
+    MongoUpgradeVersionApiView,
     MultiReplicasetInstallApiView,
 )
 from backend.flow.views.mysql import MysqlMachineClearApiView
 from backend.flow.views.mysql_add_slave_remote import AddMysqlSlaveRemoteSceneApiView
+from backend.flow.views.mysql_backup_data_recovery_exercise import MySQLBackupDataRecoveryExerciseSceneApiView
 from backend.flow.views.mysql_checksum import MysqlChecksumSceneApiView
 from backend.flow.views.mysql_clb_operation import (
     MysqlClbCreateSceneApiView,
@@ -121,8 +130,10 @@ from backend.flow.views.mysql_clb_operation import (
     MysqlDomainBindClbIpSceneApiView,
     MysqlDomainUnBindClbIpSceneApiView,
 )
+from backend.flow.views.mysql_clone_cluster import MysqlCloneClusterSceneApiView
 from backend.flow.views.mysql_data_migrate import MysqlDataMigrateSceneApiView
 from backend.flow.views.mysql_edit_config import MysqlEditConfigSceneApiView
+from backend.flow.views.mysql_failover_drill import MysqlFailoverDrillSceneApiView
 from backend.flow.views.mysql_flashback import MysqlFlashbackSceneApiView
 from backend.flow.views.mysql_ha_apply import InstallMySQLHASceneApiView
 from backend.flow.views.mysql_ha_db_table_backup import MySQLHADBTableBackup
@@ -142,6 +153,8 @@ from backend.flow.views.mysql_partition import MysqlPartitionSceneApiView
 from backend.flow.views.mysql_partition_cron import MysqlPartitionCronSceneApiView
 from backend.flow.views.mysql_porxy_reduce import ReduceMySQLProxySceneApiView
 from backend.flow.views.mysql_proxy_add import AddMySQLProxySceneApiView
+from backend.flow.views.mysql_proxy_rescue import RescueMySQLProxySceneApiView
+from backend.flow.views.mysql_proxy_rebuild import RebuildMySQLProxySceneApiView
 from backend.flow.views.mysql_proxy_switch import SwitchMySQLProxySceneApiView
 from backend.flow.views.mysql_proxy_upgrade import UpgradeMySQLProxySceneApiView
 from backend.flow.views.mysql_pt_table_sync import MySQLPtTableSyncApiView
@@ -158,7 +171,6 @@ from backend.flow.views.mysql_single_destroy import (
 from backend.flow.views.mysql_single_rename_database import MySQLSingleRenameDatabaseView
 from backend.flow.views.mysql_single_truncate_data import MySQLSingleTruncateDataView
 from backend.flow.views.mysql_upgrade import (
-    MigrateUpgradeMySQLSceneApiView,
     NonStanbySlavesDestorySceneApiView,
     NonStanbySlavesUpgradeMySQLSceneApiView,
     TendbHaMigrateUpgradeSceneApiView,
@@ -184,6 +196,7 @@ from backend.flow.views.pulsar_scale_up import ScaleUpPulsarSceneApiView
 from backend.flow.views.pulsar_shrink import ShrinkPulsarSceneApiView
 from backend.flow.views.redis_cluster import (
     InstallPredixyClusterSceneApiView,
+    InstallPredixyTendisPlusInsSceneApiView,
     InstallRedisInstanceSceneApiView,
     InstallTwemproxyClusterSceneApiView,
     RedisAddDtsServerSceneApiView,
@@ -203,10 +216,12 @@ from backend.flow.views.redis_cluster import (
     RedisDataStructureTaskDeleteSceneApiView,
     RedisFlushDataSceneApiView,
     RedisInsShutdownSceneApiView,
+    RedisKeystatApiView,
     RedisProxyScaleSceneApiView,
     RedisRemoveDtsServerSceneApiView,
     RedisSingleInsMigrateApiView,
     RedisSlotsMigrateForHotkeySceneApiView,
+    RedisSlotsMigrateScaleSceneApiView,
     SingleProxyShutdownSceneApiView,
 )
 from backend.flow.views.redis_keys import RedisKeysDeleteSceneApiView, RedisKeysExtractSceneApiView
@@ -214,6 +229,7 @@ from backend.flow.views.redis_scene import (
     RedisClusterCompleteReplaceSceneApiView,
     RedisClusterMSSwitchSceneApiView,
     RedisClusterReinstallDbmonSceneApiView,
+    RedisFailoverDrillApiView,
     RedisInstallDbmonSceneApiView,
 )
 from backend.flow.views.riak_apply import RiakApplySceneApiView
@@ -239,8 +255,11 @@ from backend.flow.views.spider_cluster_rename_database import TenDBClusterRename
 from backend.flow.views.spider_cluster_truncate_database import TenDBClusterTruncateDatabaseView
 from backend.flow.views.spider_partition import SpiderPartitionSceneApiView
 from backend.flow.views.spider_partition_cron import SpiderPartitionCronSceneApiView
+from backend.flow.views.spider_rebuild_nodes import RebuildSpiderNodesSceneApiView
 from backend.flow.views.spider_reduce_mnt import ReduceSpiderMNTSceneApiView
 from backend.flow.views.spider_reduce_nodes import ReduceSpiderNodesSceneApiView
+from backend.flow.views.spider_schema_check import SpiderSchemaCheckSceneApiView
+from backend.flow.views.spider_schema_repair import SpiderSchemaRepairSceneApiView
 from backend.flow.views.spider_semantic_check import SpiderSemanticCheckSceneApiView
 from backend.flow.views.spider_slave_apply import InstallSpiderSlaveClusterSceneApiView
 from backend.flow.views.spider_slave_destroy import DestroySpiderSlaveClusterSceneApiView
@@ -282,10 +301,11 @@ from backend.flow.views.tendb_cluster_remote_rebalance import RemoteRebalanceSce
 from backend.flow.views.tendb_cluster_remote_slave_recover import RemoteSlaveRecoverSceneApiView
 from backend.flow.views.tendb_cluster_remote_switch import RemoteSwitchSceneApiView
 from backend.flow.views.tendb_cluster_rollback_data import TendbClusterRollbackDataSceneApiView
-from backend.flow.views.tendb_ha_standardize import TenDBHAStandardizeView
 from backend.flow.views.tendbcluster_upgrade import (
+    SpiderKeywordCheckSceneApiView,
     UpgradeTendbClusterRemoteSceneApiView,
     UpgradeTendbClusterSpiderSceneApiView,
+    UpgradeTendbClusterTdbctlSceneApiView,
 )
 from backend.flow.views.vm_apply import InstallVmSceneApiView
 from backend.flow.views.vm_destroy import DestroyVmSceneApiView
@@ -302,6 +322,7 @@ urlpatterns = [
     url(r"^scene/install_redis_cache_cluster_apply$", InstallTwemproxyClusterSceneApiView.as_view()),
     url(r"^scene/install_redis_ssd_cluster_apply$", InstallTwemproxyClusterSceneApiView.as_view()),
     url(r"^scene/install_tendisplus_cluster_apply$", InstallPredixyClusterSceneApiView.as_view()),
+    url(r"^scene/install_predixy_tendisplus_ins_apply$", InstallPredixyTendisPlusInsSceneApiView.as_view()),
     url(r"^scene/install_redis_cluster_apply$", InstallPredixyClusterSceneApiView.as_view()),
     url(r"^scene/install_redis_instance_apply$", InstallRedisInstanceSceneApiView.as_view()),
     url(r"^scene/redis_keys_extract$", RedisKeysExtractSceneApiView.as_view()),
@@ -318,6 +339,7 @@ urlpatterns = [
     url(r"^scene/single_proxy_shutdown$", SingleProxyShutdownSceneApiView.as_view()),
     url(r"^scene/cutoff/redis_cluster$", RedisClusterCompleteReplaceSceneApiView.as_view()),
     url(r"^scene/switch/redis_cluster$", RedisClusterMSSwitchSceneApiView.as_view()),
+    url(r"^scene/redis_failover_drill$", RedisFailoverDrillApiView.as_view()),
     url(r"^scene/install/dbmon$", RedisInstallDbmonSceneApiView.as_view()),
     url(r"^scene/redis_clusters_reinstall_dbmon$", RedisClusterReinstallDbmonSceneApiView.as_view()),
     url(r"^scene/redis_cluster_data_copy$", RedisClusterDataCopySceneApiView.as_view()),
@@ -335,6 +357,8 @@ urlpatterns = [
     url(r"^scene/redis_cluster_version_update_online$", RedisClusterVersionUpdateOnlineApiView.as_view()),
     url(r"^scene/redis_cluster_proxys_upgrade$", RedisClusterProxysUpgradeApiView.as_view()),
     url(r"^scene/redis_slots_migrate_for_hotkey$", RedisSlotsMigrateForHotkeySceneApiView.as_view()),
+    url(r"^scene/redis_slots_migrate_scale$", RedisSlotsMigrateScaleSceneApiView.as_view()),
+    url(r"^scene/redis_keystat$", RedisKeystatApiView.as_view()),
     # redis api url end
     # dns api
     url(r"^scene/client_set_dns_server$", ClientSetDnsServerSceneApiView.as_view()),
@@ -358,8 +382,10 @@ urlpatterns = [
     url(r"^scene/multi_replicaset_create$", MultiReplicasetInstallApiView.as_view()),
     url(r"^scene/cluster_create$", ClusterInstallApiView.as_view()),
     url(r"^scene/mongo_backup$", MongoBackupApiView.as_view()),
+    url(r"^scene/mongo_data_export$", MongoDataExportApiView.as_view()),
     url(r"^scene/mongo_restore$", MongoRestoreApiView.as_view()),
     url(r"^scene/mongo_pitr_restore$", MongoPitrRestoreApiView.as_view()),
+    url(r"^scene/mongo_upgrade_version$", MongoUpgradeVersionApiView.as_view()),
     url(r"^scene/mongo_remove_ns$", MongoRemoveNsApiView.as_view()),
     url(r"^scene/mongo_install_dbmon$", MongoInstallDbmonApiView.as_view()),
     url(r"^scene/install_rs_fake$", MongoFakeInstallApiView.as_view()),
@@ -378,6 +404,10 @@ urlpatterns = [
     url(r"^scene/multi_cluster_disable$", MongoDBDisableClusterView.as_view()),
     url(r"^scene/multi_cluster_migrate_meta$", MongoDBClusterMigrateView.as_view()),
     url(r"^scene/multi_instance_deinstall$", MongoDBInstanceDeInstallView.as_view()),
+    url(r"^scene/multi_cluster_add_shard$", MongoDBClusterAddShardView.as_view()),
+    url(r"^scene/multi_instance_migrate$", MongoDBInstanceMigrateView.as_view()),
+    url(r"^scene/mongo_instance_fix_status$", MongoDBInstanceFixStatusView.as_view()),
+    url(r"^scene/mongo_cluster_standardization$", MongoDBStandardizationView.as_view()),
     # mongodb end
     # oracle start
     url(r"^scene/multi_oracle_execute_script$", MultiOracleExecuteScriptApiView.as_view()),
@@ -385,18 +415,21 @@ urlpatterns = [
     # mysql upgrade
     url(r"^scene/upgrade_mysql_proxy$", UpgradeMySQLProxySceneApiView.as_view()),
     url(r"^scene/upgrade_mysql$", UpgradeMySQLSceneApiView.as_view()),
-    url(r"^scene/migrate_upgrade_mysql$", MigrateUpgradeMySQLSceneApiView.as_view()),
     url(r"^scene/migrate_upgrade_tendbha_cluster$", TendbHaMigrateUpgradeSceneApiView.as_view()),
     url(r"^scene/non_stanby_slave_upgrade_mysql$", NonStanbySlavesUpgradeMySQLSceneApiView.as_view()),
     url(r"^scene/uninstall_non_standby_slave$", NonStanbySlavesDestorySceneApiView.as_view()),
     # tendbcluster upgrade
     url(r"^scene/tendbcluster/upgrade_spider$", UpgradeTendbClusterSpiderSceneApiView.as_view()),
     url(r"^scene/tendbcluster/upgrade_remote$", UpgradeTendbClusterRemoteSceneApiView.as_view()),
+    url(r"^scene/tendbcluster/upgrade_tdbctl$", UpgradeTendbClusterTdbctlSceneApiView.as_view()),
+    url(r"^scene/tendbcluster/spider_keyword_check$", SpiderKeywordCheckSceneApiView.as_view()),
     # mysql clb operation
     url(r"^scene/mysql/clb_create$", MysqlClbCreateSceneApiView.as_view()),
     url(r"^scene/mysql/clb_delete$", MysqlClbDeleteSceneApiView.as_view()),
     url(r"^scene/mysql/domain_bind_clb_ip$", MysqlDomainBindClbIpSceneApiView.as_view()),
     url(r"^scene/mysql/domain_unbind_clb_ip$", MysqlDomainUnBindClbIpSceneApiView.as_view()),
+    # mysql backup file recovery exercise
+    url(r"^scene/mysql/backup/recovery/exercise$", MySQLBackupDataRecoveryExerciseSceneApiView.as_view()),
     # mysql
     url(r"^scene/dbconsole_dump$", DbConsoleDumpApiView.as_view()),
     url(r"^scene/install_mysql_apply$", InstallMySQLSingleSceneApiView.as_view()),
@@ -413,8 +446,10 @@ urlpatterns = [
     url(r"^scene/tendbha_truncate_data$", MySQLHATruncateDataView.as_view()),
     url(r"^scene/import_sqlfile$", ImportSQLFileSceneApiView.as_view()),
     url(r"^scene/switch_mysql_proxy$", SwitchMySQLProxySceneApiView.as_view()),
+    url(r"^scene/rescue_mysql_proxy$", RescueMySQLProxySceneApiView.as_view()),
     url(r"^scene/reduce_mysql_proxy$", ReduceMySQLProxySceneApiView.as_view()),
     url(r"^scene/add_mysql_proxy$", AddMySQLProxySceneApiView.as_view()),
+    url(r"^scene/rebuild_mysql_proxy$", RebuildMySQLProxySceneApiView.as_view()),
     url(r"^scene/install_influxdb$", InstallInfluxdbSceneApiView.as_view()),
     url(r"^scene/enable_influxdb$", EnableInfluxdbSceneApiView.as_view()),
     url(r"^scene/disable_influxdb$", DisableInfluxdbSceneApiView.as_view()),
@@ -449,15 +484,14 @@ urlpatterns = [
     url(r"^scene/redis_backup$", RedisClusterBackupSceneApiView.as_view()),
     url(r"^scene/tendbha_db_table_backup", MySQLHADBTableBackup.as_view()),
     url(r"^scene/install_hdfs$", InstallHdfsSceneApiView.as_view()),
-    url(r"^scene/tendbha_truncate_data$", MySQLHATruncateDataView),
     url(r"^scene/import_sqlfile$", ImportSQLFileSceneApiView.as_view()),
-    url(r"^scene/switch_mysql_proxy$", SwitchMySQLProxySceneApiView.as_view()),
-    url(r"^scene/add_mysql_proxy$", AddMySQLProxySceneApiView.as_view()),
+    url(r"^scene/mysql_failover_drill$", MysqlFailoverDrillSceneApiView.as_view()),
     # 从节点数据恢复(接入备份系统)
     url(r"^scene/restore_slave_remote$", RestoreMysqlSlaveRemoteSceneApiView.as_view()),
     url(r"^scene/add_slave_remote$", AddMysqlSlaveRemoteSceneApiView.as_view()),
     url(r"^scene/restore_local_slave_remote$", RestoreMysqlLocalRemoteSceneApiView.as_view()),
     url(r"^scene/migrate_cluster_remote$", MysqlMigrateRemoteSceneApiView.as_view()),
+    url(r"^scene/mysql/clone_cluster$", MysqlCloneClusterSceneApiView.as_view()),
     url(r"^scene/mysql_rollback_data", MysqlRollbackDataSceneApiView.as_view()),
     url(r"^scene/mysql_rollback_to_cluster", MysqlRollbackToClusterSceneApiView.as_view()),
     url(r"^scene/install_es$", InstallEsSceneApiView.as_view()),
@@ -497,6 +531,8 @@ urlpatterns = [
     url(r"^scene/fake_install_pulsar$", FakeInstallPulsarSceneApiView.as_view()),
     url(r"^scene/pulsar_machine_clear$", PulsarMachineClearApiView.as_view()),
     url(r"^scene/import_resource_init$", ImportResourceInitStepApiView.as_view()),
+    url(r"^scene/machine_idle_check$", MachineIdleCheckFlowApiView.as_view()),
+    url(r"^scene/baseline_disk_benchmark$", BaselineDiskBenchmarkSceneApiView.as_view()),
     url("^scene/mysql_data_migrate$", MysqlDataMigrateSceneApiView.as_view()),
     url("^scene/mysql_machine_clear$", MysqlMachineClearApiView.as_view()),
     # spider
@@ -504,6 +540,8 @@ urlpatterns = [
     url(r"^scene/install_tendb_cluster$", InstallSpiderClusterSceneApiView.as_view()),
     url(r"^scene/destroy_tendb_cluster$", DestroySpiderClusterSceneApiView.as_view()),
     url(r"^scene/spider_checksum$", SpiderChecksumSceneApiView.as_view()),
+    url(r"^scene/spider_schema_check$", SpiderSchemaCheckSceneApiView.as_view()),
+    url(r"^scene/spider_schema_repair$", SpiderSchemaRepairSceneApiView.as_view()),
     url(r"^scene/disable_spider_cluster$", DisableSpiderSceneApiView.as_view()),
     url(r"^scene/enable_spider_cluster$", EnableSpiderSceneApiView.as_view()),
     url(r"^scene/install_tendb_slave_cluster$", InstallSpiderSlaveClusterSceneApiView.as_view()),
@@ -524,6 +562,8 @@ urlpatterns = [
     url(r"^scene/tendbcluster_full_backup$", TenDBClusterFullBackupView.as_view()),
     # spider 减少
     url(r"^scene/reduce_spider_nodes$", ReduceSpiderNodesSceneApiView.as_view()),
+    # spider 重建
+    url(r"^scene/rebuild_spider_nodes$", RebuildSpiderNodesSceneApiView.as_view()),
     # riak
     url(r"^scene/riak_cluster_apply$", RiakApplySceneApiView.as_view()),
     url(r"^scene/tendbcluster_flashback$", TenDBClusterFlashbackView.as_view()),
@@ -551,10 +591,7 @@ urlpatterns = [
     url("^scene/switch_tbinlogumper$", SwitchTBinlogDumperSceneApiView.as_view()),
     url("^scene/enable_tbinlogumper$", EnableTBinlogDumperSceneApiView.as_view()),
     url("^scene/disable_tbinlogumper$", DisableTBinlogDumperSceneApiView.as_view()),
-    url("^scene/tendbha_standardize$", TenDBHAStandardizeView.as_view()),
     url("^scene/mysql_open_area$", MysqlOpenAreaSceneApiView.as_view()),
-    # migrate
-    url("^scene/append_deploy_ctl$", AppendDeployCTLView.as_view()),
     # sqlserver
     url("^scene/sqlserver_single_apply$", SqlserverSingleApplySceneApiView.as_view()),
     url("^scene/sqlserver_ha_apply$", SqlserverHAApplySceneApiView.as_view()),
@@ -589,6 +626,7 @@ urlpatterns = [
     url("^scene/download_dbactor$", DownloadDbactorApiView.as_view()),
     url("^scene/download_file$", DownloadFileApiView.as_view()),
     url("^scene/doris_machine_clear$", DorisMachineClearApiView.as_view()),
+    url(r"^scene/fake_install_doris$", FakeInstallDorisSceneApiView.as_view()),
     # vm
     url(r"^scene/install_vm$", InstallVmSceneApiView.as_view()),
     url(r"^scene/scale_up_vm$", ScaleUpVmSceneApiView.as_view()),

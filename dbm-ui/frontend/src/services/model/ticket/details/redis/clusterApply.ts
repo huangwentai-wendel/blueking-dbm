@@ -2,10 +2,11 @@ import type { HostInfo } from '@services/types';
 
 import type { ClusterTypes } from '@common/const';
 
-import type { DetailBase, SpecInfo } from '../common';
+import type { ApplySpecInfo, DetailBase } from '../common';
 
 export interface ClusterApply extends DetailBase {
   bk_cloud_id: number;
+  bk_cloud_name: string;
   cap_key: string;
   cap_spec: string;
   city_code: string;
@@ -28,6 +29,8 @@ export interface ClusterApply extends DetailBase {
     backend_group: {
       affinity: string;
       count: number;
+      label_names: ApplySpecInfo['label_names'];
+      labels: ApplySpecInfo['labels'];
       location_spec: {
         city: string;
         sub_zone_ids: number[];
@@ -37,13 +40,8 @@ export interface ClusterApply extends DetailBase {
         cluster_capacity: number;
         cluster_shard_num: number;
         machine_pair: number;
-        qps: {
-          max: number;
-          min: number;
-        };
-        spec_name: string;
-      };
+      } & ApplySpecInfo;
     };
-    proxy: SpecInfo;
+    proxy: ApplySpecInfo;
   };
 }

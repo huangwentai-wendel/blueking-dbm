@@ -16,7 +16,7 @@ from typing import Any
 from django.db import transaction
 from django.db.models import Q
 from django.db.transaction import atomic
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.components import DBConfigApi
 from backend.components.dbconfig.constants import FormatType, LevelName
@@ -26,6 +26,7 @@ from backend.db_meta.api.cluster.nosqlcomm.create_cluster import update_cluster_
 from backend.db_meta.api.cluster.rediscluster.handler import RedisClusterHandler
 from backend.db_meta.api.cluster.tendiscache.handler import TendisCacheClusterHandler
 from backend.db_meta.api.cluster.tendispluscluster.handler import TendisPlusClusterHandler
+from backend.db_meta.api.cluster.tendisplusinstance.handler import TendisPredixyTendisplusInstanceHandler
 from backend.db_meta.api.cluster.tendissingle.handler import TendisSingleHandler
 from backend.db_meta.api.cluster.tendisssd.handler import TendisSSDClusterHandler
 from backend.db_meta.enums import (
@@ -42,6 +43,7 @@ from backend.db_meta.models import (
     CLBEntryDetail,
     Cluster,
     ClusterEntry,
+    ClusterMonitorTopo,
     Machine,
     PolarisEntryDetail,
     ProxyInstance,
@@ -52,14 +54,20 @@ from backend.db_services.dbbase.constants import IP_PORT_DIVIDER, SPACE_DIVIDER
 from backend.db_services.redis.rollback.models import TbTendisRollbackTasks
 from backend.db_services.redis.slots_migrate.models import TbTendisSlotsMigrateRecord
 from backend.db_services.redis.util import (
+    is_predixy_proxy_type,
     is_redis_cluster_protocal,
     is_redis_instance_type,
     is_tendisplus_instance_type,
     is_tendisssd_instance_type,
 )
-from backend.flow.consts import DEFAULT_DB_MODULE_ID, DEFAULT_REDIS_START_PORT, InstanceStatus
+from backend.flow.consts import (
+    DEFAULT_DB_MODULE_ID,
+    DEFAULT_REDIS_START_PORT,
+    InstanceStatus,
+    OperateCollectorActionEnum,
+)
 from backend.flow.utils.base.payload_handler import PayloadHandler
-from backend.flow.utils.cc_manage import CcManage
+from backend.flow.utils.cc_manage import CcManage, trigger_operate_collector
 from backend.flow.utils.dns_manage import DnsManage
 from backend.flow.utils.redis.redis_module_operate import RedisCCTopoOperator
 from backend.ticket.constants import TicketType
@@ -95,6 +103,9 @@ class RedisDBMeta(object):
             return getattr(self, function_name)()
 
         logger.error(_("找不到单据类型需要查询的cmdb函数，请联系系统管理员"))
+
+    def _get_install_cluster_type(self) -> str:
+        return self.cluster.get("cluster_type") or self.ticket_data.get("cluster_type") or ""
 
     def proxy_install(self) -> bool:
         """
@@ -244,10 +255,7 @@ class RedisDBMeta(object):
         ips = [self.cluster["master_ip"], self.cluster["slave_ip"]]
         m = Machine.objects.filter(ip__in=ips).values("ip")
         if len(m) != 2:
-            if "cluster_type" in self.ticket_data:
-                cluster_type = self.ticket_data["cluster_type"]
-            else:
-                cluster_type = self.cluster["cluster_type"]
+            cluster_type = self._get_install_cluster_type()
 
             if is_redis_instance_type(cluster_type):
                 machine_type = MachineType.TENDISCACHE.value
@@ -301,11 +309,8 @@ class RedisDBMeta(object):
         else:
             bk_cloud_id = self.cluster["bk_cloud_id"]
 
-        machines, ins, cluster_type = [], [], ""
-        if "cluster_type" in self.ticket_data:
-            cluster_type = self.ticket_data["cluster_type"]
-        else:
-            cluster_type = self.cluster["cluster_type"]
+        machines, ins = [], []
+        cluster_type = self._get_install_cluster_type()
 
         if is_redis_instance_type(cluster_type):
             machine_type = MachineType.TENDISCACHE.value
@@ -497,6 +502,7 @@ class RedisDBMeta(object):
                 "creator": self.cluster["created_by"],
                 "region": self.cluster.get("region", ""),
                 "disaster_tolerance_level": self.cluster.get("disaster_tolerance_level", ""),
+                "zone_list": self.cluster.get("zone_list", []),
             }
         )
         return True
@@ -509,32 +515,51 @@ class RedisDBMeta(object):
         proxies = [{"ip": proxy_ip, "port": proxy_port} for proxy_ip in self.cluster["new_proxy_ips"]]
 
         storages = []
-        for server in self.cluster["servers"]:
-            ip_port, _, seg_range, _ = server.split(SPACE_DIVIDER)
-            ip, port = ip_port.split(IP_PORT_DIVIDER)
-            storages.append({"ip": ip, "port": port, "seg_range": seg_range})
+        if is_predixy_proxy_type(self.cluster["cluster_type"]):
+            for server in self.cluster["servers"]:
+                ip_port, seg_range = server.split(SPACE_DIVIDER)
+                ip, port = ip_port.split(IP_PORT_DIVIDER)
+                storages.append({"ip": ip, "port": port, "seg_range": seg_range})
+        else:
+            for server in self.cluster["servers"]:
+                ip_port, _, seg_range, _ = server.split(SPACE_DIVIDER)
+                ip, port = ip_port.split(IP_PORT_DIVIDER)
+                storages.append({"ip": ip, "port": port, "seg_range": seg_range})
         if self.cluster["cluster_type"] == ClusterType.TendisTwemproxyRedisInstance.value:
             handler = TendisCacheClusterHandler
         elif self.cluster["cluster_type"] == ClusterType.TwemproxyTendisSSDInstance.value:
             handler = TendisSSDClusterHandler
+        elif self.cluster["cluster_type"] == ClusterType.TendisPredixyTendisplusInstance.value:
+            handler = TendisPredixyTendisplusInstanceHandler
         else:
             raise Exception("unknown cluster type")
-        handler.create(
-            **{
-                "bk_biz_id": self.cluster["bk_biz_id"],
-                "bk_cloud_id": self.cluster["bk_cloud_id"],
-                "name": self.cluster["cluster_name"],
-                "alias": self.cluster["cluster_alias"],
-                "major_version": self.cluster["db_version"],
-                "immute_domain": self.cluster["immute_domain"],
-                "db_module_id": DEFAULT_DB_MODULE_ID,
-                "proxies": proxies,
-                "storages": storages,
-                "creator": self.cluster["created_by"],
-                "region": self.cluster.get("region", ""),
-                "disaster_tolerance_level": self.cluster.get("disaster_tolerance_level", ""),
-            }
-        )
+
+        # 构建 ip_port_storages 用于写入分片规则到 db_meta_nosqlstoragesetdtl 表
+        ip_port_storages = {}
+        for s in storages:
+            key = "{}{}{}".format(s["ip"], IP_PORT_DIVIDER, s["port"])
+            ip_port_storages[key] = {"seg_range": s["seg_range"]}
+
+        # 只有 TendisPredixyTendisplusInstance 类型才需要 ip_port_storages 参数
+        create_params = {
+            "bk_biz_id": self.cluster["bk_biz_id"],
+            "bk_cloud_id": self.cluster["bk_cloud_id"],
+            "name": self.cluster["cluster_name"],
+            "alias": self.cluster["cluster_alias"],
+            "major_version": self.cluster["db_version"],
+            "immute_domain": self.cluster["immute_domain"],
+            "db_module_id": DEFAULT_DB_MODULE_ID,
+            "proxies": proxies,
+            "storages": storages,
+            "creator": self.cluster["created_by"],
+            "region": self.cluster.get("region", ""),
+            "disaster_tolerance_level": self.cluster.get("disaster_tolerance_level", ""),
+            "zone_list": self.cluster.get("zone_list", []),
+        }
+        if self.cluster["cluster_type"] == ClusterType.TendisPredixyTendisplusInstance.value:
+            create_params["ip_port_storages"] = ip_port_storages
+
+        handler.create(**create_params)
         return True
 
     def redis_origin_make_cluster(self) -> bool:
@@ -566,6 +591,7 @@ class RedisDBMeta(object):
                 "creator": self.cluster["created_by"],
                 "region": self.cluster.get("region", ""),
                 "disaster_tolerance_level": self.cluster.get("disaster_tolerance_level", ""),
+                "zone_list": self.cluster.get("zone_list", []),
             }
         )
         return True
@@ -761,6 +787,18 @@ class RedisDBMeta(object):
                 cluster.major_version = self.cluster["db_version"]
                 cluster.save()
 
+    def update_cluster_proxy_status(self) -> bool:
+        """
+        更新proxy 状态
+        """
+        #         act_kwargs.cluster["proxy_ips"] = op_proxies
+        # act_kwargs.cluster["meta_update_status"] = InstanceStatus.RUNNING.value
+        cluster = Cluster.objects.get(id=self.cluster["cluster_id"])
+        for proxy in cluster.proxyinstance_set.all():
+            if proxy.machine.ip in self.cluster["proxy_ips"]:
+                proxy.status = self.cluster["meta_update_status"]
+                proxy.save()
+
     def update_rollback_task_status(self) -> bool:
         """
         更新构造记录为已销毁
@@ -835,6 +873,35 @@ class RedisDBMeta(object):
             cluster = Cluster.objects.get(
                 bk_cloud_id=self.cluster["bk_cloud_id"], immute_domain=self.cluster["immute_domain"]
             )
+            available_machine_types = list(
+                ClusterMonitorTopo.objects.filter(cluster_id=cluster.id)
+                .values_list("machine_type", flat=True)
+                .distinct()
+            )
+            missing_type_instances = {}
+            for receiver_obj in receiver_objs:
+                if receiver_obj.machine_type not in available_machine_types:
+                    missing_type_instances.setdefault(receiver_obj.machine_type, []).append(
+                        "{}{}{}".format(receiver_obj.machine.ip, IP_PORT_DIVIDER, receiver_obj.port)
+                    )
+            if missing_type_instances:
+                temp_details = "; ".join(
+                    [
+                        "machine_type={}, instances={}".format(machine_type, instances)
+                        for machine_type, instances in missing_type_instances.items()
+                    ]
+                )
+                raise Exception(
+                    _(
+                        "Redis数据构造临时节点无法转移到源集群CC模块: cluster_id={}, domain={}, "
+                        "临时实例及machine_type={}, 源集群可用machine_type={}".format(
+                            cluster.id,
+                            cluster.immute_domain,
+                            temp_details,
+                            sorted(available_machine_types),
+                        )
+                    )
+                )
             RedisCCTopoOperator(cluster).transfer_instances_to_cluster_module(receiver_objs)
         return True
 
@@ -851,6 +918,31 @@ class RedisDBMeta(object):
         RedisCCTopoOperator(cluster).transfer_instances_to_cluster_module(
             cluster.storageinstance_set.all(), is_increment=cc_mutil_module
         )
+        return True
+
+    # 刷新bkcc 服务实例，触发gse 重新下发GSE，插件配置
+    def trigger_operate_collector_reinstall(self) -> bool:
+        from backend.flow.utils.cc_manage import trigger_operate_collector
+
+        # 查询BACKEND,下发的实例
+        instance_model = StorageInstance  # if role == "backend" else ProxyInstance
+        instances = instance_model.objects.filter(cluster=self.cluster["cluster_id"])
+        first_instance = instances.first()
+        if first_instance:
+            machine_type = first_instance.machine.machine_type
+            bk_instance_ids = list(instances.values_list("bk_instance_id", flat=True))
+            # 触发采集器下发，异步任务，1min后生效
+            trigger_operate_collector("redis", machine_type, bk_instance_ids, "INSTALL")
+
+        # 查询PROXY,下发的实例
+        instance_model = ProxyInstance
+        instances = instance_model.objects.filter(cluster=self.cluster["cluster_id"])
+        first_instance = instances.first()
+        if first_instance:
+            machine_type = first_instance.machine.machine_type
+            bk_instance_ids = list(instances.values_list("bk_instance_id", flat=True))
+            # 触发采集器下发，异步任务，1min后生效
+            trigger_operate_collector("redis", machine_type, bk_instance_ids, "INSTALL")
         return True
 
     def redis_role_swap_4_scene(self) -> bool:
@@ -1325,8 +1417,10 @@ class RedisDBMeta(object):
                 logger.info("cluster_slave_entry {} add {},remove {}".format(entry_obj, new_slave_obj, new_master_obj))
 
             # 修改模块
+            # RedisInstance 主从升级场景中同一主机可能同时归属多个集群模块;
+            # 增量转移避免覆盖式移动清掉其它集群的模块关系.
             RedisCCTopoOperator(cluster).transfer_instances_to_cluster_module(
-                [new_master_obj, new_slave_obj], is_increment=False
+                [new_master_obj, new_slave_obj], is_increment=True
             )
         CcManage(cluster.bk_biz_id, cluster.cluster_type).update_host_properties(bk_host_ids)
 
@@ -1575,24 +1669,51 @@ class RedisDBMeta(object):
             self.dts_switch_update_cluster_entry(src_cluster)
             self.dts_switch_update_cluster_entry(dst_cluster)
 
+        return True
+
+    def dts_online_switch_swap_cc(self):
+        """
+        将重操作挪cc的操作独立出来，避免元数据锁等待问题
+        到这一步的时候元数据已经被修改成预期的了
+        """
+        src_cluster_id: int = self.cluster["src_cluster_id"]
+        dst_cluster_id: int = self.cluster["dst_cluster_id"]
+        src_cluster = Cluster.objects.get(id=src_cluster_id)
+        dst_cluster = Cluster.objects.get(id=dst_cluster_id)
+        src_proxyinstances = copy.deepcopy(src_cluster.proxyinstance_set.all())
+        dst_proxyinstances = copy.deepcopy(dst_cluster.proxyinstance_set.all())
+
+        src_storageinstances = copy.deepcopy(src_cluster.storageinstance_set.all())
+        dst_storageinstances = copy.deepcopy(dst_cluster.storageinstance_set.all())
+
+        # 提前卸载实例采集配置
+        instance_model = StorageInstance
+        instances = instance_model.objects.filter(cluster__in=[src_cluster_id, dst_cluster_id])
+        machine_type = instances.first().machine.machine_type
+        bk_instance_ids = list(instances.values_list("bk_instance_id", flat=True))
+        db_type = ClusterType.cluster_type_to_db_type(src_cluster.cluster_type)
+        action = OperateCollectorActionEnum.UNINSTALL.value
+        trigger_operate_collector(db_type, machine_type, bk_instance_ids, action)
+
+        with atomic():
             # 交换 cc module
             logger.info(_("dts 交换两个集群的 cc module"))
             logger.info(
                 _(
                     "dts_online_switch_swap_two_cluster_storage 3333 转移目标机器模块到源集群下,src_cluster:{} dst_inst_list:{}"
-                ).format(src_cluster.immute_domain, self.get_inst_list(dst_storageinstances))
+                ).format(src_cluster.immute_domain, self.get_inst_list(src_storageinstances))
             )
-            RedisCCTopoOperator(src_cluster).transfer_instances_to_cluster_module(dst_storageinstances)
+            RedisCCTopoOperator(src_cluster).transfer_instances_to_cluster_module(src_storageinstances)
             logger.info(
                 _(
                     "dts_online_switch_swap_two_cluster_storage 3333 转移源机器模块到目标集群下,dst_cluster:{} src_inst_list:{}"
-                ).format(dst_cluster.immute_domain, self.get_inst_list(src_storageinstances))
+                ).format(dst_cluster.immute_domain, self.get_inst_list(dst_storageinstances))
             )
-            RedisCCTopoOperator(dst_cluster).transfer_instances_to_cluster_module(src_storageinstances)
+            RedisCCTopoOperator(dst_cluster).transfer_instances_to_cluster_module(dst_storageinstances)
             # 两个集群的 proxy ip均是不变的,但类型变化后,模块信息需变化
+            # 这一步默认会下发安装export的操作，但是没有卸载的操作
             RedisCCTopoOperator(src_cluster).transfer_instances_to_cluster_module(src_proxyinstances)
             RedisCCTopoOperator(dst_cluster).transfer_instances_to_cluster_module(dst_proxyinstances)
-
         return True
 
     def dts_online_switch_update_nodes_domain(self):

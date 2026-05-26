@@ -15,6 +15,7 @@
   <div class="search-item-mem">
     <BkInput
       v-model="min"
+      allow-empty-value
       :disabled="Boolean(model.spec_id)"
       :min="1"
       type="number"
@@ -22,6 +23,7 @@
     <div class="ml-12 mr-12">至</div>
     <BkInput
       v-model="max"
+      allow-empty-value
       :disabled="Boolean(model.spec_id)"
       :min="1"
       type="number"
@@ -36,17 +38,15 @@
     model: Record<string, any>;
   }
 
-  interface Emits {
-    (e: 'change', value: Props['defaultValue']): void;
-  }
-
-  const props = defineProps<Props>();
-
-  const emits = defineEmits<Emits>();
+  type Emits = (e: 'change', value: Props['defaultValue']) => void;
 
   defineOptions({
     inheritAttrs: false,
   });
+
+  const props = defineProps<Props>();
+
+  const emits = defineEmits<Emits>();
 
   const min = ref();
   const max = ref();

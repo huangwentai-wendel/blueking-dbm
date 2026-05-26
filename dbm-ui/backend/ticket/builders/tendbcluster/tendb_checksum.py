@@ -17,7 +17,8 @@ from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.configuration.constants import DBType
-from backend.db_meta.models import Cluster, StorageInstance, TenDBClusterStorageSet
+from backend.db_meta.enums import InstanceInnerRole
+from backend.db_meta.models import Cluster, StorageInstance, StorageInstanceTuple, TenDBClusterStorageSet
 from backend.flow.engine.controller.mysql import MySQLController
 from backend.flow.engine.controller.spider import SpiderController
 from backend.ticket import builders
@@ -56,20 +57,24 @@ class TendbChecksumDetailSerializer(TendbBaseOperateDetailSerializer):
         cluster_id = serializers.IntegerField(help_text=_("集群ID"))
         checksum_scope = serializers.ChoiceField(help_text=_("校验范围"), choices=TendbChecksumScope.get_choices())
         backup_infos = serializers.ListSerializer(help_text=_("备份信息"), child=BackupInfoSerializer())
+        repl_table = serializers.CharField(help_text=_("校验结果表名"), default=None, required=False, allow_blank=True)
 
     data_repair = DataRepairSerializer(help_text=_("数据修复信息"))
     runtime_hour = serializers.IntegerField(help_text=_("超时时间"))
     timing = DBTimezoneField(help_text=_("定时触发时间"))
     infos = serializers.ListField(help_text=_("全备信息列表"), child=ChecksumDataInfoSerializer())
     is_sync_non_innodb = serializers.BooleanField(help_text=_("非innodb表是否修复"), required=False, default=False)
+    need_manual_confirm = serializers.BooleanField(help_text=_("是否需要人工确认"), default=False)
 
     def validate(self, attrs):
+        attrs = super(TendbBaseOperateDetailSerializer, self).validate(attrs)
         # 库表选择校验
         super().validate_checksum_database_selector(attrs)
 
         # 校验定时时间不能早于当前时间
-        if str2datetime(attrs["timing"]) < datetime.now(timezone.utc):
-            raise serializers.ValidationError(_("定时时间必须晚于当前时间"))
+        if attrs["need_manual_confirm"] is False:
+            if str2datetime(attrs["timing"]) < datetime.now(timezone.utc):
+                raise serializers.ValidationError(_("定时时间必须晚于当前时间"))
 
         return attrs
 
@@ -95,25 +100,52 @@ class TendbChecksumParamBuilder(MySQLChecksumFlowParamBuilder):
 
     def fetch_cluster_shard_infos(self, cluster, backup_table_info):
         storage_set = TenDBClusterStorageSet.objects.select_related("storage_instance_tuple").filter(cluster=cluster)
-        shard_infos: List[Dict[str, Any]] = []
+        # 获取所有从节点信息
+        ejector_ids = [shard.storage_instance_tuple.ejector for shard in storage_set]
+        all_slaves = StorageInstanceTuple.objects.filter(ejector__in=ejector_ids)
+
+        # 构建 master 到 slave list 的字典映射
+        master_to_slaves_map = {}
+        for slave in all_slaves:
+            ejector = slave.ejector
+            if ejector not in master_to_slaves_map:
+                master_to_slaves_map[ejector] = []
+            master_to_slaves_map[ejector].append(slave.receiver)
+
+        shard_infos = []
         for shard in storage_set:
-            # 排除spider集群迁移的情况(这个放到具体场景下做)。正常checksum提单，一个分片只有一主一从
-            master = self._get_instance_related_info(shard.storage_instance_tuple.ejector)
-            slave = self._get_instance_related_info(shard.storage_instance_tuple.receiver)
-            shard_infos.append({"shard_id": shard.shard_id, "master": master, "slaves": [slave], **backup_table_info})
+            # 获取主节点相关信息
+            ejector = shard.storage_instance_tuple.ejector
+            master = self._get_instance_related_info(ejector)
+
+            # 使用映射获取从节点相关信息
+            slaves = master_to_slaves_map.get(ejector, [])
+            slave_info = [self._get_instance_related_info(slave) for slave in slaves]
+
+            shard_info = {"shard_id": shard.shard_id, "master": master, "slaves": slave_info, **backup_table_info}
+            shard_infos.append(shard_info)
 
         return shard_infos
 
-    def fetch_instance_shard_infos(self, cluster, master, backup_table_info):
-        master_inst = StorageInstance.find_insts_by_addresses([master]).first()
+    def fetch_instance_shard_infos(self, cluster, master, slave, backup_table_info):
+        master_inst = (
+            StorageInstance.find_insts_by_addresses([master]).prefetch_related("as_receiver__ejector").first()
+        )
+        slave_insts = StorageInstance.find_insts_by_addresses(slave.split(",")).prefetch_related(
+            "as_receiver__ejector"
+        )
         inst_tuple = master_inst.as_ejector.first()
         master_info = self._get_instance_related_info(master_inst)
-        slave_info = self._get_instance_related_info(inst_tuple.receiver)
-
+        slave_info = [self._get_instance_related_info(slave) for slave in slave_insts]
+        # 如果master是repeater角色，需获取旧主机的分片信息
+        if master_inst.instance_inner_role == InstanceInnerRole.REPEATER.value:
+            shard_id = master_inst.as_receiver.get().ejector.as_ejector.first().tendbclusterstorageset.shard_id
+        else:
+            shard_id = inst_tuple.tendbclusterstorageset.shard_id
         shard_info = {
-            "shard_id": inst_tuple.tendbclusterstorageset.shard_id,
+            "shard_id": shard_id,
             "master": master_info,
-            "slaves": [slave_info],
+            "slaves": slave_info,
             **backup_table_info,
         }
 
@@ -133,7 +165,9 @@ class TendbChecksumParamBuilder(MySQLChecksumFlowParamBuilder):
                 shard_infos: List[Dict[str, Any]] = []
                 for backup_info in info["backup_infos"]:
                     backup_table_info = self._get_backup_table_info(backup_info)
-                    sub_shard_info = self.fetch_instance_shard_infos(cluster, backup_info["master"], backup_table_info)
+                    sub_shard_info = self.fetch_instance_shard_infos(
+                        cluster, backup_info["master"], backup_info["slave"], backup_table_info
+                    )
                     shard_infos.append(sub_shard_info)
 
             # 填充校验的分片信息，填充时区，域名和云区域
@@ -203,6 +237,21 @@ class TendbChecksumFlowBuilder(MySQLChecksumFlowBuilder):
 
     def patch_ticket_detail(self):
         BaseMySQLTicketFlowBuilder.patch_ticket_detail(self)
+        self.ticket.details["trigger_time"] = self.ticket.details["timing"]
+        self.ticket.save(update_fields=["details"])
+
+    @property
+    def need_manual_confirm(self):
+        """是否需要人工确认节点。后续默认从单据配置表获取。子类可覆写，覆写以后editable为False"""
+        return self.ticket.details["need_manual_confirm"]
+
+    @property
+    def need_timer(self):
+        return not self.ticket.details["need_manual_confirm"]
+
+    @property
+    def need_itsm(self):
+        return True
 
     def custom_ticket_flows(self):
         return super().custom_ticket_flows()

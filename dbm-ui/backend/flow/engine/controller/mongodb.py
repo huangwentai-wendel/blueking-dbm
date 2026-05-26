@@ -10,7 +10,9 @@ specific language governing permissions and limitations under the License.
 """
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_autofix import MongoAutofixFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_backup import MongoBackupFlow
+from backend.flow.engine.bamboo.scene.mongodb.mongodb_cluster_add_shard import MongoDBClusterAddShardFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_cluster_scale_mongos import ScaleMongoSFlow
+from backend.flow.engine.bamboo.scene.mongodb.mongodb_data_export import MongoDataExportFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_deinstall import MongoDBDeInstallFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_enable_disable import MongoEnableDisableFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_exec_script import MongoExecScriptFlow
@@ -18,6 +20,8 @@ from backend.flow.engine.bamboo.scene.mongodb.mongodb_fake_install import MongoF
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_install import MongoDBInstallFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_install_dbmon import MongoInstallDBMonFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_instance_deinstall import MongoInstanceDeInstallFlow
+from backend.flow.engine.bamboo.scene.mongodb.mongodb_instance_fix_status import MongoDBInstanceFixStatusFlow
+from backend.flow.engine.bamboo.scene.mongodb.mongodb_instance_migrate import MongoDBInstanceMigrateFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_instance_restart import MongoRestartInstanceFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_migrate import MongoDBMigrateMetaFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_pitr_restore import MongoPitrRestoreFlow
@@ -26,8 +30,14 @@ from backend.flow.engine.bamboo.scene.mongodb.mongodb_replace import MongoReplac
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_restore import MongoRestoreFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_scale_node import MongoScaleNodeFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_scale_storage import MongoScaleFlow
+from backend.flow.engine.bamboo.scene.mongodb.mongodb_standardization import MongoInstallDBmonAndOperatorCCFlow
+from backend.flow.engine.bamboo.scene.mongodb.mongodb_upgrade_version import MongoUpgradeVersionFlow
 from backend.flow.engine.bamboo.scene.mongodb.mongodb_user import MongoUserFlow
+from backend.flow.engine.bamboo.scene.mongodb.validate.mongodb_instance_migrate_validate import (
+    MongodbInstanceMigrateValidator,
+)
 from backend.flow.engine.controller.base import BaseController
+from backend.flow.engine.validate.base_validate import validates_with
 
 
 class MongoDBController(BaseController):
@@ -61,6 +71,10 @@ class MongoDBController(BaseController):
     def mongo_pitr_restore(self):
         # 发起PITR恢复任务
         MongoPitrRestoreFlow(root_id=self.root_id, data=self.ticket_data).start()
+
+    def mongo_upgrade_version(self):
+        # 发起版本升级任务
+        MongoUpgradeVersionFlow(root_id=self.root_id, data=self.ticket_data).start()
 
     def install_dbmon(self):
         # 部署MongoDB bk-dbmon
@@ -206,3 +220,42 @@ class MongoDBController(BaseController):
 
         flow = MongoDBMigrateMetaFlow(root_id=self.root_id, data=self.ticket_data)
         flow.multi_cluster_migrate_flow()
+
+    def cluster_add_shard(self):
+        """
+        增加分片
+        """
+
+        flow = MongoDBClusterAddShardFlow(root_id=self.root_id, data=self.ticket_data)
+        flow.multi_cluster_add_shard_flow()
+
+    @validates_with(MongodbInstanceMigrateValidator)
+    def instance_migrate(self):
+        """
+        instance迁移
+        """
+
+        flow = MongoDBInstanceMigrateFlow(root_id=self.root_id, data=self.ticket_data)
+        flow.multi_instance_migrate_flow()
+
+    def mongo_data_export(self):
+        """
+        MongoDB数据导出
+        """
+        MongoDataExportFlow(root_id=self.root_id, data=self.ticket_data).export_flow()
+
+    def instance_fix_status(self):
+        """
+        instance状态修复
+        """
+
+        flow = MongoDBInstanceFixStatusFlow(root_id=self.root_id, data=self.ticket_data)
+        flow.start()
+
+    def cluster_standardization(self):
+        """
+        集群标准化
+        """
+
+        flow = MongoInstallDBmonAndOperatorCCFlow(root_id=self.root_id, data=self.ticket_data)
+        flow.cluster_standardization()

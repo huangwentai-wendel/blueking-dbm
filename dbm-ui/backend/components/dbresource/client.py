@@ -9,7 +9,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 See the License for the specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from ..base import BaseApi
 from ..domains import DBRESOURCE_APIGW_DOMAIN
@@ -24,6 +24,8 @@ class _DBResourceApi(BaseApi):
             method="POST",
             url="resource/import",
             description=_("资源导入"),
+            default_timeout=60,
+            max_retry_times=1,
         )
         self.resource_reimport = self.generate_data_api(
             method="POST",
@@ -44,6 +46,9 @@ class _DBResourceApi(BaseApi):
             method="POST",
             url="resource/apply",
             description=_("资源池资源申请"),
+            # 调整超时时长，关闭重试
+            default_timeout=60,
+            max_retry_times=1,
         )
         self.get_mountpoints = self.generate_data_api(
             method="POST",
@@ -118,6 +123,21 @@ class _DBResourceApi(BaseApi):
             method="POST",
             url="/resource/append/labels",
             description=_("追加标签"),
+        )
+        self.water_level = self.generate_data_api(method="POST", url="/statistic/water_level", description=_("资源水位"))
+        # resource/param/query
+        self.resource_param_query = self.generate_data_api(
+            method="POST",
+            url="resource/param/query",
+            description=_("根据单据ID/任务ID查询资源请求参数"),
+        )
+        self.resource_osname = self.generate_data_api(
+            method="POST", url="resource/list/osname", description=_("获取所有的操作系统名称")
+        )
+        self.resource_lack_analysis = self.generate_data_api(
+            method="POST",
+            url="resource/analysis/result",
+            description=_("资源申请不足分析"),
         )
 
 

@@ -9,9 +9,10 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 from django.db import models
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.bk_web.models import AuditedModel
+from backend.utils.cache import func_cache_decorator
 
 
 # 1. 提供机器城市到逻辑城市的映射, 如机器的城市属性是扬州的, 实际当作南京看待
@@ -54,9 +55,16 @@ class BKSubzone(AuditedModel):
     bk_sub_zone = models.CharField(max_length=128, default="", blank=True, null=True, help_text=_("子 Zone"))
     bk_sub_zone_id = models.IntegerField(default=0, help_text=_("子 Zone ID"))
     bk_city = models.ForeignKey(BKCity, on_delete=models.PROTECT)
+    bk_cloud_region = models.CharField(max_length=128, default="", blank=True, null=True, help_text=_("云地域"))
+    bk_cloud_zone = models.CharField(max_length=128, default="", blank=True, null=True, help_text=_("云可用区"))
 
     def __str__(self):
         return self.bk_sub_zone
 
     class Meta:
         verbose_name = verbose_name_plural = _("蓝鲸园区表(BKSubzone)")
+
+    @classmethod
+    @func_cache_decorator(cache_time=60 * 60 * 24)
+    def get_subzone_map(cls):
+        return {subzone.bk_sub_zone_id: subzone.bk_sub_zone for subzone in cls.objects.all()}

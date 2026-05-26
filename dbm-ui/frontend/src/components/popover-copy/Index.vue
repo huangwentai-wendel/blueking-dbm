@@ -12,7 +12,9 @@
 -->
 
 <template>
-  <div class="dbm-popover-copy">
+  <div
+    class="dbm-popover-copy"
+    role="table-cell-operation">
     <DbIcon
       ref="copyRootRef"
       :class="{ 'is-active': isActive }"
@@ -40,27 +42,26 @@
   const popRef = ref();
 
   onMounted(() => {
-    nextTick(() => {
-      tippyIns = tippy(copyRootRef.value.$el as SingleTarget, {
-        allowHTML: true,
-        appendTo: () => document.body,
-        content: popRef.value,
-        hideOnClick: true,
-        interactive: true,
-        maxWidth: 'none',
-        onHide() {
-          isActive.value = false;
-          emits('toogle-show', false);
-        },
-        onShow() {
-          isActive.value = true;
-          emits('toogle-show', true);
-        },
-        placement: 'top',
-        theme: 'light',
-        trigger: 'mouseenter click',
-        zIndex: 999,
-      });
+    tippyIns = tippy(copyRootRef.value.$el as SingleTarget, {
+      allowHTML: true,
+      appendTo: () => document.body,
+      content: popRef.value,
+      delay: [200, 0],
+      hideOnClick: true,
+      interactive: true,
+      maxWidth: 'none',
+      onHide() {
+        isActive.value = false;
+        emits('toogle-show', false);
+      },
+      onShow() {
+        isActive.value = true;
+        emits('toogle-show', true);
+      },
+      placement: 'top',
+      theme: 'light',
+      trigger: 'mouseenter click',
+      zIndex: 999,
     });
   });
 
@@ -84,6 +85,8 @@
   }
 
   .dbm-popover-copy-panel {
+    padding: 5px 9px;
+
     & > * {
       position: relative;
       display: inline-block;

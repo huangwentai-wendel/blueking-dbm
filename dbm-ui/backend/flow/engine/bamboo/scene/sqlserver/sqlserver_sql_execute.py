@@ -14,7 +14,7 @@ import logging.config
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend import env
 from backend.configuration.constants import DBType
@@ -52,7 +52,7 @@ class SqlserverSQLExecuteFlow(BaseFlow):
         super().__init__(root_id, data)
         self.sql_target_path = f"{DEFAULT_SQLSERVER_PATH}\\SqlFile_{data['uid']}\\"
 
-    def __get_sql_files(self) -> list:
+    def get_sql_files(self) -> list:
         """
         拼接待下发的SQL文件列表
         """
@@ -112,7 +112,7 @@ class SqlserverSQLExecuteFlow(BaseFlow):
                 "kwargs": asdict(
                     DownloadMediaKwargs(
                         target_hosts=target_hosts,
-                        file_list=self.__get_sql_files(),
+                        file_list=self.get_sql_files(),
                         file_target_path=self.sql_target_path,
                     )
                 ),

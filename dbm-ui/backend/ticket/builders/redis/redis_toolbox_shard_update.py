@@ -9,7 +9,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.configuration.constants import AffinityEnum
@@ -17,17 +17,17 @@ from backend.db_meta.models import Cluster
 from backend.db_services.dbbase.constants import IpSource
 from backend.flow.engine.controller.redis import RedisController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import HostRecycleSerializer, SkipToRepresentationMixin
 from backend.ticket.builders.redis.base import (
     BaseRedisTicketFlowBuilder,
     ClusterValidateMixin,
     DataCheckRepairSettingSerializer,
+    RedisBaseOperateDetailSerializer,
     RedisUpdateApplyResourceParamBuilder,
 )
 from backend.ticket.constants import SwitchConfirmType, TicketType
 
 
-class RedisShardUpdateDetailSerializer(SkipToRepresentationMixin, serializers.Serializer):
+class RedisShardUpdateDetailSerializer(RedisBaseOperateDetailSerializer):
     """集群分片变更"""
 
     class InfoSerializer(ClusterValidateMixin, serializers.Serializer):
@@ -37,6 +37,12 @@ class RedisShardUpdateDetailSerializer(SkipToRepresentationMixin, serializers.Se
                 count = serializers.IntegerField(help_text=_("数量"))
                 affinity = serializers.ChoiceField(
                     help_text=_("亲和性"), choices=AffinityEnum.get_choices(), default=AffinityEnum.NONE
+                )
+                labels = serializers.ListSerializer(
+                    help_text=_("标签id列表"), child=serializers.CharField(), required=False
+                )
+                label_names = serializers.ListSerializer(
+                    help_text=_("标签名称列表"), child=serializers.CharField(), required=False
                 )
 
             proxy = SpecSerializer(help_text=_("申请proxy资源"))
@@ -76,7 +82,6 @@ class RedisShardUpdateDetailSerializer(SkipToRepresentationMixin, serializers.Se
     ip_source = serializers.ChoiceField(
         help_text=_("主机来源"), choices=IpSource.get_choices(), default=IpSource.RESOURCE_POOL
     )
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.DEFAULT)
     infos = serializers.ListField(help_text=_("批量操作参数列表"), child=InfoSerializer(), allow_empty=False)
 
 
@@ -89,10 +94,17 @@ class RedisShardUpdateParamBuilder(builders.FlowParamBuilder):
 
 class RedisShardUpdateResourceParamBuilder(RedisUpdateApplyResourceParamBuilder):
     def format(self):
-        # 亲和性进一步细化：申请的 接入层  至少 1/2 不同机房，存储层 master 和他的 slave 不能一个机房;
-        self.patch_info_affinity_location(roles=["backend_group", "proxy"])
         for info in self.ticket_data["infos"]:
-            info["resource_spec"]["proxy"]["group_count"] = 2
+            role_tolerance_map = {"backend_group": 0, "proxy": 0.5}
+            cluster = Cluster.objects.get(id=info["src_cluster"])
+            for role in info["resource_spec"]:
+                self.patch_common_affinity(
+                    info,
+                    role=role,
+                    cluster=cluster,
+                    exclusive_hosts=[],
+                    tolerance=role_tolerance_map[role],
+                )
 
 
 @builders.BuilderFactory.register(TicketType.REDIS_CLUSTER_SHARD_NUM_UPDATE, is_apply=True, is_recycle=True)

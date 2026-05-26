@@ -22,6 +22,9 @@
     <InfoItem :label="t('DB模块名')">
       {{ ticketDetails.details.db_module_name || '--' }}
     </InfoItem>
+    <InfoItem :label="t('管控区域')">
+      {{ ticketDetails.details.bk_cloud_name || '--' }}
+    </InfoItem>
   </InfoList>
   <RegionRequirements :details="ticketDetails.details" />
   <div class="info-title mt-20">{{ t('数据库部署信息') }}</div>
@@ -38,76 +41,99 @@
     <InfoItem :label="t('数量')">
       {{ ticketDetails.details.cluster_count }}
     </InfoItem>
-    <InfoItem
-      v-if="ticketDetails.details.resource_spec?.proxy"
-      :label="t('Proxy存储资源规格')">
-      <BkPopover
-        placement="top"
-        theme="light">
-        <span
-          class="pb-2"
-          style="cursor: pointer; border-bottom: 1px dashed #979ba5">
-          {{ ticketDetails.details.resource_spec.proxy.spec_name }}（{{
-            `${ticketDetails.details.resource_spec.proxy.count} ${t('台')}`
-          }}）
-        </span>
-        <template #content>
-          <SpecInfos :data="ticketDetails.details.resource_spec.proxy" />
+    <template v-if="ticketDetails.details.resource_spec?.proxy">
+      <InfoItem :label="t('Proxy 存储资源规格')">
+        <SpecDetailPopover
+          :data="ticketDetails.details.resource_spec.proxy"
+          placement="top">
+          <span
+            class="pb-2"
+            style="cursor: pointer; border-bottom: 1px dashed #979ba5">
+            {{ ticketDetails.details.resource_spec.proxy.spec_name }}（{{
+              `${ticketDetails.details.resource_spec.proxy.count} ${t('台')}`
+            }}）
+          </span>
+        </SpecDetailPopover>
+      </InfoItem>
+      <InfoItem :label="t('Proxy 存储资源标签')">
+        <template v-if="ticketDetails.details.resource_spec.proxy.label_names?.length">
+          <BkTag
+            v-for="item in ticketDetails.details.resource_spec.proxy.label_names"
+            :key="item">
+            {{ item }}
+          </BkTag>
         </template>
-      </BkPopover>
-    </InfoItem>
-    <InfoItem
-      v-if="ticketDetails.details.resource_spec?.backend_group"
-      :label="t('后端存储资源规格：')">
-      <BkPopover
-        placement="top"
-        theme="light">
-        <span
-          class="pb-2"
-          style="cursor: pointer; border-bottom: 1px dashed #979ba5">
-          {{ ticketDetails.details.resource_spec.backend_group.spec_name }}（{{
-            `${ticketDetails.details.resource_spec.backend_group.count} ${t('组')}`
-          }}）
-        </span>
-        <template #content>
-          <SpecInfos :data="ticketDetails.details.resource_spec.backend_group" />
+        <BkTag
+          v-else
+          theme="success">
+          {{ t('通用无标签') }}
+        </BkTag>
+      </InfoItem>
+    </template>
+    <template v-if="ticketDetails.details.resource_spec?.backend_group">
+      <InfoItem :label="t('后端存储资源规格')">
+        <SpecDetailPopover
+          :data="ticketDetails.details.resource_spec.backend_group"
+          placement="top">
+          <span
+            class="pb-2"
+            style="cursor: pointer; border-bottom: 1px dashed #979ba5">
+            {{ ticketDetails.details.resource_spec.backend_group.spec_name }}（{{
+              `${ticketDetails.details.resource_spec.backend_group.count} ${t('组')}`
+            }}）
+          </span>
+        </SpecDetailPopover>
+      </InfoItem>
+      <InfoItem :label="t('后端存储资源标签')">
+        <template v-if="ticketDetails.details.resource_spec.backend_group.label_names?.length">
+          <BkTag
+            v-for="item in ticketDetails.details.resource_spec.backend_group.label_names"
+            :key="item">
+            {{ item }}
+          </BkTag>
         </template>
-      </BkPopover>
-    </InfoItem>
+        <BkTag
+          v-else
+          theme="success">
+          {{ t('通用无标签') }}
+        </BkTag>
+      </InfoItem>
+    </template>
     <InfoItem
-      :label="t('集群设置')"
-      style="width: 100%">
-      <BkTable
+      :label="t('域名设置')"
+      style="flex: 1 0 100%">
+      <TicketInfoTable
         :data="ticketDetails.details.domains"
-        :show-overflow="false">
-        <BkTableColumn
-          field="master"
+        row-key="key">
+        <TicketInfoTableColumn
+          col-key="master"
           fixed="left"
-          :label="t('主访问入口')"
-          :min-width="240" />
-        <BkTableColumn
-          field="slave"
-          :label="t('从访问入口')"
-          :min-width="240" />
-        <BkTableColumn
-          field="deployStructure"
-          :label="t('部署架构')"
-          :min-width="120">
+          :get-copy-value="(row: Props['ticketDetails']['details']['domains'][number]) => row.master"
+          :min-width="240"
+          :title="t('主访问入口')" />
+        <TicketInfoTableColumn
+          col-key="slave"
+          :min-width="240"
+          :title="t('从访问入口')" />
+        <TicketInfoTableColumn
+          col-key="deployStructure"
+          :min-width="120"
+          :title="t('部署架构')">
           {{ mysqlType[ticketDetails.ticket_type as MysqlTypeString].name }}
-        </BkTableColumn>
-        <BkTableColumn
-          field="version"
-          :label="t('数据库版本')"
-          :min-width="120">
+        </TicketInfoTableColumn>
+        <TicketInfoTableColumn
+          col-key="version"
+          :min-width="120"
+          :title="t('数据库版本')">
           {{ ticketDetails.details.db_version }}
-        </BkTableColumn>
-        <BkTableColumn
-          field="charset"
-          :label="t('字符集')"
-          :min-width="120">
+        </TicketInfoTableColumn>
+        <TicketInfoTableColumn
+          col-key="charset"
+          :min-width="120"
+          :title="t('字符集')">
           {{ ticketDetails.details.charset }}
-        </BkTableColumn>
-      </BkTable>
+        </TicketInfoTableColumn>
+      </TicketInfoTable>
     </InfoItem>
   </InfoList>
 </template>
@@ -119,9 +145,10 @@
 
   import { mysqlType, type MysqlTypeString, TicketTypes } from '@common/const';
 
+  import SpecDetailPopover from '@components/spec-detail-popover/Index.vue';
+
   import InfoList, { Item as InfoItem } from '../components/info-list/Index.vue';
   import RegionRequirements from '../components/RegionRequirements.vue';
-  import SpecInfos from '../components/SpecInfos.vue';
 
   interface Props {
     ticketDetails: TicketModel<Mysql.HaApply>;

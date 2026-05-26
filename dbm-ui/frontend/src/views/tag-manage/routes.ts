@@ -22,7 +22,7 @@ const bizResourceTagRoute = {
   meta: {
     navName: t('资源标签'),
   },
-  component: () => import('@/views/tag-manage/resource/Index.vue'),
+  component: () => import('@views/tag-manage/resource/Index.vue'),
 };
 
 const bizClusterTagRoute = {
@@ -31,7 +31,7 @@ const bizClusterTagRoute = {
   meta: {
     navName: t('集群标签管理'),
   },
-  component: () => import('@/views/tag-manage/cluster/Index.vue'),
+  component: () => import('@views/tag-manage/cluster/Index.vue'),
 };
 
 export default function getRoutes() {
@@ -44,10 +44,10 @@ export default function getRoutes() {
     },
   ];
   if (checkDbConsole('bizConfigManage.businessResourceTag')) {
-    routes[0].children!.push(bizResourceTagRoute);
+    routes[0]!.children!.push(bizResourceTagRoute);
   }
   if (checkDbConsole('bizConfigManage.businessClusterTag')) {
-    routes[0].children!.push(bizClusterTagRoute);
+    routes[0]!.children!.push(bizClusterTagRoute);
   }
   return routes;
 }

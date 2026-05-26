@@ -82,15 +82,14 @@ func (a *AddShardToCluster) Init(runtime *jobruntime.JobGenericRuntime) error {
 	// 获取安装参数
 	a.runtime = runtime
 	a.runtime.Logger.Info("start to init")
-	a.BinDir = consts.UsrLocal
+	a.BinDir = consts.GetMongoBinDir()
 	a.Mongo = filepath.Join(a.BinDir, "mongodb", "bin", "mongo")
 	a.ConfFilePath = filepath.Join("/", "tmp", "addShardToCluster.js")
 	a.OsUser = consts.GetProcessUser()
 
 	// 获取MongoDB配置文件参数
 	if err := json.Unmarshal([]byte(a.runtime.PayloadDecoded), &a.ConfParams); err != nil {
-		a.runtime.Logger.Error(fmt.Sprintf(
-			"get parameters of initiateReplicaset fail by json.Unmarshal, error:%s", err))
+		a.runtime.Logger.Error("get parameters of initiateReplicaset fail by json.Unmarshal, error:%s", err)
 		return fmt.Errorf("get parameters of initiateReplicaset fail by json.Unmarshal, error:%s", err)
 	}
 	a.runtime.Logger.Info("init successfully")
@@ -109,7 +108,7 @@ func (a *AddShardToCluster) checkParams() error {
 	validate := validator.New()
 	a.runtime.Logger.Info("start to validate parameters of addShardToCluster")
 	if err := validate.Struct(a.ConfParams); err != nil {
-		a.runtime.Logger.Error(fmt.Sprintf("validate parameters of addShardToCluster fail, error:%s", err))
+		a.runtime.Logger.Error("validate parameters of addShardToCluster fail, error:%s", err)
 		return fmt.Errorf("validate parameters of addShardToCluster fail, error:%s", err)
 	}
 	a.runtime.Logger.Info("validate parameters of addShardToCluster successfully")
@@ -137,15 +136,12 @@ func (a *AddShardToCluster) createAddShardToClusterScript() error {
 	confFile, err := os.OpenFile(a.ConfFilePath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, DefaultPerm)
 	defer confFile.Close()
 	if err != nil {
-		a.runtime.Logger.Error(
-			fmt.Sprintf("create script file of addShardToCluster fail, error:%s", err))
+		a.runtime.Logger.Error("create script file of addShardToCluster fail, error:%s", err)
 		return fmt.Errorf("create script file of addShardToCluster fail, error:%s", err)
 	}
 
 	if _, err = confFile.WriteString(a.ConfFileContent); err != nil {
-		a.runtime.Logger.Error(
-			fmt.Sprintf("create script file of addShardToCluster write content fail, error:%s",
-				err))
+		a.runtime.Logger.Error("create script file of addShardToCluster write content fail, error:%s", err)
 		return fmt.Errorf("create script file of addShardToCluster write content fail, error:%s",
 			err)
 	}
@@ -154,51 +150,42 @@ func (a *AddShardToCluster) createAddShardToClusterScript() error {
 }
 
 // checkShard 检查shard是否已经加入到cluster中
-func (a *AddShardToCluster) checkShard() (bool, error) {
+func (a *AddShardToCluster) checkShard(result string) bool {
 	a.runtime.Logger.Info("start to check shard")
-	cmd := fmt.Sprintf(
-		"%s -u %s -p '%s' --host %s --port %d --quiet --authenticationDatabase=admin --eval \"db.getMongo().getDB('config').shards.find()\" admin",
-		a.Mongo, a.ConfParams.AdminUsername, a.ConfParams.AdminPassword, a.ConfParams.IP, a.ConfParams.Port)
-	result, err := util.RunBashCmd(
-		cmd,
-		"", nil,
-		60*time.Second)
-	if err != nil {
-		a.runtime.Logger.Error(fmt.Sprintf("get shard info fail, error:%s", err))
-		return false, fmt.Errorf("get shard info fail, error:%s", err)
-	}
-	result = strings.Replace(result, "\n", "", -1)
 	if result == "" {
-		a.runtime.Logger.Info("shard is not existed")
-		return false, nil
+		return false
 	}
-
+	var flag bool
 	for k, _ := range a.ConfParams.Shards {
-
 		if strings.Contains(result, k) {
+			flag = true
 			continue
 		}
-
-		return false, fmt.Errorf("add shard %s fail", k)
+		flag = false
+		a.runtime.Logger.Error("shard:%s not belongs to cluster", k)
+		return flag
 	}
 	a.runtime.Logger.Info("check shard successfully")
-	return true, nil
+	return flag
 }
 
 // execScript 执行脚本
 func (a *AddShardToCluster) execScript() error {
-	// 检查
-	flag, err := a.checkShard()
+	// 获取shard信息
+	result, err := common.GetShardInfo(
+		a.Mongo, a.ConfParams.IP, a.ConfParams.Port, a.ConfParams.AdminUsername, a.ConfParams.AdminPassword)
 	if err != nil {
-		return err
+		a.runtime.Logger.Error("get shard info fail, error:%s", err)
+		return fmt.Errorf("get shard info fail, error:%s", err)
 	}
+	// 检查
+	flag := a.checkShard(result)
 	if flag == true {
-		a.runtime.Logger.Info(fmt.Sprintf("shards have been added"))
+		a.runtime.Logger.Info("shards have been added")
 		// 删除脚本
 		if err = a.removeScript(); err != nil {
 			return err
 		}
-
 		return nil
 	}
 
@@ -211,21 +198,25 @@ func (a *AddShardToCluster) execScript() error {
 		cmd,
 		"", nil,
 		60*time.Second); err != nil {
-		a.runtime.Logger.Error(fmt.Sprintf("execute addShardToCluster script fail, error:%s", err))
+		a.runtime.Logger.Error("execute addShardToCluster script fail, error:%s", err)
 		return fmt.Errorf("execute addShardToCluster script fail, error:%s", err)
 	}
 	a.runtime.Logger.Info("execute addShardToCluster script successfully")
 
 	time.Sleep(5 * time.Second)
 
-	// 检查
-	flag, err = a.checkShard()
+	// 获取 shard 信息
+	result, err = common.GetShardInfo(
+		a.Mongo, a.ConfParams.IP, a.ConfParams.Port, a.ConfParams.AdminUsername, a.ConfParams.AdminPassword)
 	if err != nil {
-		return err
+		a.runtime.Logger.Error("get shard info fail, error:%s", err)
+		return fmt.Errorf("get shard info fail, error:%s", err)
 	}
+	// 检查
+	flag = a.checkShard(result)
 	if flag == false {
-		a.runtime.Logger.Error(fmt.Sprintf("add shard fail, error:%s", err))
-		return fmt.Errorf("add shard fail, error:%s", err)
+		a.runtime.Logger.Error("add shards fail")
+		return fmt.Errorf("add shards fail")
 	}
 
 	// 删除脚本
@@ -241,7 +232,7 @@ func (a *AddShardToCluster) removeScript() error {
 	// 删除脚本
 	a.runtime.Logger.Info("start to remove addShardToCluster script")
 	if err := common.RemoveFile(a.ConfFilePath); err != nil {
-		a.runtime.Logger.Error(fmt.Sprintf("remove addShardToCluster script fail, error:%s", err))
+		a.runtime.Logger.Error("remove addShardToCluster script fail, error:%s", err)
 		return fmt.Errorf("remove addShardToCluster script fail, error:%s", err)
 	}
 	a.runtime.Logger.Info("remove addShardToCluster script successfully")

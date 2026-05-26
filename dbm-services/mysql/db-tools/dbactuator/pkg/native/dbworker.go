@@ -146,7 +146,7 @@ func (h *DbWorker) ExecMoreContext(sqls []string, ctx context.Context) (rowsAffe
 
 // Queryx execute query use sqlx
 func (h *DbWorker) Queryx(data interface{}, query string, args ...interface{}) error {
-	logger.Info("Queryx:%s, args:%v", query, args)
+	// logger.Info("Queryx:%s, args:%v", query, args)
 	db := sqlx.NewDb(h.Db, "mysql")
 	udb := db.Unsafe()
 	if err := udb.Select(data, query, args...); err != nil {
@@ -174,6 +174,7 @@ func (h *DbWorker) Get(data interface{}, query string, args ...interface{}) erro
 }
 
 // QueryOneColumn query one column rows to slice
+// if not row found, return error
 func (h *DbWorker) QueryOneColumn(columnName string, query string) ([]string, error) {
 	logger.Info("QueryOneColumn: %s, params:%v", query)
 	if ret, err := h.Query(query); err != nil {
@@ -202,7 +203,7 @@ func (h *DbWorker) Query(query string) ([]map[string]interface{}, error) {
 // QueryWithArgs conv rows list to map
 // 查询结果为空时，返回 not row found
 func (h *DbWorker) QueryWithArgs(query string, args ...interface{}) ([]map[string]interface{}, error) {
-	logger.Info("Query: %s, params:%v", query, args)
+	// logger.Info("Query: %s, params:%v", query, args)
 	var rows *sql.Rows
 	var err error
 	if len(args) == 0 {
@@ -313,7 +314,8 @@ func (h *DbWorker) TotalDelayBinlogSize() (total int, err error) {
 	var ss ShowSlaveStatusResp
 	err = h.Queryxs(&ss, "show slave status;")
 	if err != nil {
-		return
+		logger.Error("show slave status failed %s", err.Error())
+		return -1, err
 	}
 	masterBinIdx, err := getIndexFromBinlogFile(ss.MasterLogFile)
 	if err != nil {
@@ -323,7 +325,7 @@ func (h *DbWorker) TotalDelayBinlogSize() (total int, err error) {
 	if err != nil {
 		return -1, err
 	}
-	return (masterBinIdx-relayBinIdx)*maxbinlogsize - ss.ExecMasterLogPos, nil
+	return (masterBinIdx-relayBinIdx)*maxbinlogsize - ss.ExecMasterLogPos + ss.ReadMasterLogPos, nil
 }
 
 // getIndexFromBinlogFile TODO
@@ -541,6 +543,7 @@ func (h *DbWorker) SetSingleGlobalVar(varName, varValue string) error {
 	} else {
 		setSqlStr = fmt.Sprintf("SET GLOBAL %s='%s'", varName, varValue)
 	}
+	logger.Info("setSqlStr: %s, varValue: %s", setSqlStr, varValue)
 	if err := h.ExecuteAdminSql(setSqlStr); err != nil {
 		return err
 	}
@@ -873,7 +876,7 @@ func compareDbVariables(referVars, compareVars map[string]string, checkVars []st
 		}
 
 		if strings.Compare(referV, compareV) != 0 {
-			errs = append(errs, fmt.Errorf("存在差异： 变量名:%s Master:%s,Slave:%s", varName, compareV, referV))
+			errs = append(errs, fmt.Errorf("存在差异： 变量名:%s Master:%s,Slave:%s", varName, referV, compareV))
 		}
 	}
 	return errors.Join(errs...)
@@ -1071,6 +1074,10 @@ func (slaveConn *DbWorker) ReplicateDelayCheck(allowDelaySec int, behindExecBinL
 		logger.Error("get total delay binlog size failed %s", err.Error())
 		return err
 	}
+	if total == 0 {
+		logger.Info("the total delay binlog size is 0,skip next check")
+		return nil
+	}
 	if total > behindExecBinLogbyte {
 		return fmt.Errorf("the total delay binlog size %d 超过了最大允许值 %d", total, behindExecBinLogbyte)
 	}
@@ -1084,13 +1091,28 @@ func (slaveConn *DbWorker) ReplicateDelayCheck(allowDelaySec int, behindExecBinL
 		logger.Error("查询slave delay sec: %s", err.Error())
 		return err
 	}
-	if beatSec > 600 { // 10分钟没有 master_slave_heartbeat 心跳
+	if beatSec > 3600 { // 360分钟没有 master_slave_heartbeat 心跳
 		return fmt.Errorf("超过 %ds 没有延迟检测信号", beatSec)
 	}
 	if delaySec > allowDelaySec {
 		return fmt.Errorf("slave 延迟时间 %ds, 超过了上限 %d", delaySec, allowDelaySec)
 	}
 	return
+}
+
+func (slaveConn *DbWorker) CheckDelayBytesToZero() (err error) {
+	// 检查主从同步delay binlog size
+	total, err := slaveConn.TotalDelayBinlogSize()
+	if err != nil {
+		logger.Error("get total delay binlog size failed %s", err.Error())
+		return err
+	}
+	if total == 0 {
+		logger.Info("the total delay binlog size is 0")
+		return nil
+	}
+	logger.Info("the total delay binlog size %d is greater 0 ", total)
+	return fmt.Errorf("the total delay binlog size %d is greater 0", total)
 }
 
 // CompareBinlogPos TODO

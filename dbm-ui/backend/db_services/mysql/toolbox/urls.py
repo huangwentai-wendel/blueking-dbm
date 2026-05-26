@@ -12,6 +12,7 @@ specific language governing permissions and limitations under the License.
 from rest_framework.routers import DefaultRouter
 
 from backend.db_services.mysql.toolbox.views import (
+    TdbctlUpgradeViewSet,
     TendbHaSlaveInstanceAddDomainSet,
     TendbhaTransferToOtherBizViewSet,
     ToolboxViewSet,
@@ -19,8 +20,9 @@ from backend.db_services.mysql.toolbox.views import (
 
 router = DefaultRouter(trailing_slash=True)
 router.register(r"toolbox", ToolboxViewSet, basename="toolbox")
-router.register(r"toolbox", TendbhaTransferToOtherBizViewSet, basename="toolbox")
-router.register(r"toolbox", TendbHaSlaveInstanceAddDomainSet, basename="toolbox")
+router.register(r"toolbox", TendbhaTransferToOtherBizViewSet, basename="tendbha-transfer")
+router.register(r"toolbox", TendbHaSlaveInstanceAddDomainSet, basename="tendbha-slave-add-domain")
+router.register(r"toolbox/tdbctl_upgrade", TdbctlUpgradeViewSet, basename="tdbctl-upgrade")
 
 urlpatterns = []
 urlpatterns += router.urls

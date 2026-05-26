@@ -26,6 +26,9 @@
     <InfoItem :label="t('集群别名')">
       {{ ticketDetails.details.cluster_alias || '--' }}
     </InfoItem>
+    <InfoItem :label="t('管控区域')">
+      {{ ticketDetails.details.bk_cloud_name || '--' }}
+    </InfoItem>
   </InfoList>
   <RegionRequirements :details="ticketDetails.details" />
   <div class="info-title mt-20">{{ t('数据库部署信息') }}</div>
@@ -43,69 +46,118 @@
       {{ ticketDetails.details.http_port || '--' }}
     </InfoItem>
     <template v-if="isFromResourcePool">
-      <InfoItem :label="t('Follower节点')">
-        <BkPopover
+      <InfoItem :label="t('Follower节点规格')">
+        <SpecDetailPopover
           v-if="followerSpec"
-          placement="top"
-          theme="light">
+          :data="followerSpec"
+          placement="top">
           <span
             class="pb-2"
             style="cursor: pointer; border-bottom: 1px dashed #979ba5">
             {{ followerSpec.spec_name }}（{{ `${followerSpec.count} ${t('台')}` }}）
           </span>
-          <template #content>
-            <SpecInfos :data="followerSpec" />
-          </template>
-        </BkPopover>
+        </SpecDetailPopover>
         <span v-else>--</span>
       </InfoItem>
-      <InfoItem :label="t('Observer节点')">
-        <BkPopover
+      <InfoItem :label="t('Follower 节点资源标签')">
+        <template v-if="followerSpec && followerSpec.label_names?.length">
+          <BkTag
+            v-for="item in followerSpec.label_names"
+            :key="item">
+            {{ item }}
+          </BkTag>
+        </template>
+        <BkTag
+          v-else
+          theme="success">
+          {{ t('通用无标签') }}
+        </BkTag>
+      </InfoItem>
+      <InfoItem :label="t('Observer 节点标签')">
+        <SpecDetailPopover
           v-if="observerSpec"
-          placement="top"
-          theme="light">
+          :data="observerSpec"
+          placement="top">
           <span
             class="pb-2"
             style="cursor: pointer; border-bottom: 1px dashed #979ba5">
             {{ observerSpec.spec_name }}（{{ `${observerSpec.count} ${t('台')}` }}）
           </span>
-          <template #content>
-            <SpecInfos :data="observerSpec" />
-          </template>
-        </BkPopover>
+        </SpecDetailPopover>
         <span v-else>--</span>
       </InfoItem>
-      <InfoItem :label="t('热节点')">
-        <BkPopover
+      <InfoItem :label="t('Observer节点资源标签')">
+        <template v-if="observerSpec && observerSpec.label_names?.length">
+          <BkTag
+            v-for="item in observerSpec.label_names"
+            :key="item">
+            {{ item }}
+          </BkTag>
+        </template>
+        <BkTag
+          v-else
+          theme="success">
+          {{ t('通用无标签') }}
+        </BkTag>
+      </InfoItem>
+      <InfoItem :label="t('热节点规格')">
+        <SpecDetailPopover
           v-if="hotSpec"
-          placement="top"
-          theme="light">
+          :data="hotSpec"
+          placement="top">
           <span
             class="pb-2"
             style="cursor: pointer; border-bottom: 1px dashed #979ba5">
             {{ hotSpec.spec_name }}（{{ `${hotSpec.count} ${t('台')}` }}）
           </span>
-          <template #content>
-            <SpecInfos :data="hotSpec" />
-          </template>
-        </BkPopover>
+        </SpecDetailPopover>
         <span v-else>--</span>
       </InfoItem>
-      <InfoItem :label="t('冷节点')">
-        <BkPopover
-          v-if="coldSpec"
-          placement="top"
-          theme="light">
+      <InfoItem :label="t('热节点资源标签')">
+        <template v-if="hotSpec && hotSpec.label_names?.length">
+          <BkTag
+            v-for="item in hotSpec.label_names"
+            :key="item">
+            {{ item }}
+          </BkTag>
+        </template>
+        <BkTag
+          v-else
+          theme="success">
+          {{ t('通用无标签') }}
+        </BkTag>
+      </InfoItem>
+      <InfoItem :label="t('温节点规格')">
+        <SpecDetailPopover
+          v-if="warmSpec"
+          :data="warmSpec"
+          placement="top">
           <span
             class="pb-2"
             style="cursor: pointer; border-bottom: 1px dashed #979ba5">
-            {{ coldSpec.spec_name }}（{{ `${coldSpec.count} ${t('台')}` }}）
+            {{ warmSpec.spec_name }}（{{ `${warmSpec.count} ${t('台')}` }}）
           </span>
-          <template #content>
-            <SpecInfos :data="coldSpec" />
-          </template>
-        </BkPopover>
+        </SpecDetailPopover>
         <span v-else>--</span>
+      </InfoItem>
+      <InfoItem :label="t('温节点资源标签')">
+        <template v-if="warmSpec && warmSpec.label_names?.length">
+          <BkTag
+            v-for="item in warmSpec.label_names"
+            :key="item">
+            {{ item }}
+          </BkTag>
+        </template>
+        <BkTag
+          v-else
+          theme="success">
+          {{ t('通用无标签') }}
+        </BkTag>
+      </InfoItem>
+      <InfoItem
+        v-db-console="'common.dorisColdResource'"
+        :label="t('启用低频存储')">
+        {{ ticketDetails.details.enable_cold_storage ? t('是') : t('否') }}
       </InfoItem>
     </template>
     <template v-else>
@@ -167,12 +219,12 @@
   import { TicketTypes } from '@common/const';
 
   import HostPreview from '@components/host-preview/HostPreview.vue';
+  import SpecDetailPopover from '@components/spec-detail-popover/Index.vue';
 
   import { firstLetterToUpper } from '@utils';
 
   import InfoList, { Item as InfoItem } from '../components/info-list/Index.vue';
   import RegionRequirements from '../components/RegionRequirements.vue';
-  import SpecInfos from '../components/SpecInfos.vue';
 
   interface Props {
     ticketDetails: TicketModel<Doris.Apply>;
@@ -191,7 +243,7 @@
   const followerSpec = resourceSpec?.follower;
   const observerSpec = resourceSpec?.observer;
   const hotSpec = resourceSpec?.hot;
-  const coldSpec = resourceSpec?.cold;
+  const warmSpec = resourceSpec?.warm || resourceSpec?.cold;
 
   const isPreviewShow = ref(false);
   const previewRole = ref('');
@@ -203,11 +255,13 @@
     role: previewRole.value,
   }));
 
+  // 历史数据中，手动选择IP可以不兼容温节点
   const getServiceNums = (key: 'follower' | 'observer' | 'hot' | 'cold') => {
     const nodes = props.ticketDetails.details?.nodes;
     return nodes?.[key].length ?? 0;
   };
 
+  // 历史数据中，手动选择IP可以不兼容温节点
   const handleShowPreview = (role: 'follower' | 'observer' | 'hot' | 'cold') => {
     isPreviewShow.value = true;
     previewRole.value = role;

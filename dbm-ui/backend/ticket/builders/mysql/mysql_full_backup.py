@@ -10,7 +10,7 @@ specific language governing permissions and limitations under the License.
 """
 import collections
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.db_meta.enums import ClusterType, InstanceInnerRole, InstanceStatus
@@ -34,6 +34,7 @@ class MySQLFullBackupDetailSerializer(MySQLBaseOperateDetailSerializer):
     infos = serializers.ListSerializer(child=MySQLFullBackupInfoSerializer())
 
     def validate(self, attrs):
+        attrs = super(MySQLBaseOperateDetailSerializer, self).validate(attrs)
         cluster_ids = [info["cluster_id"] for info in attrs["infos"]]
 
         errors = []
@@ -71,6 +72,7 @@ class MySQLFullBackupDetailSerializer(MySQLBaseOperateDetailSerializer):
                     Cluster.objects.filter(pk__in=dup_cluster_ids).values_list("immute_domain", flat=True)
                 )
             )
+        return None
 
     @staticmethod
     def __validate_cluster_type(cluster_ids) -> str:
@@ -90,6 +92,7 @@ class MySQLFullBackupDetailSerializer(MySQLBaseOperateDetailSerializer):
 
         if bad:
             return ", ".join(bad)
+        return None
 
     @staticmethod
     def __validate_backup_local(attrs) -> str:
@@ -120,6 +123,7 @@ class MySQLFullBackupDetailSerializer(MySQLBaseOperateDetailSerializer):
 
         if bad:
             return ", ".join(bad)
+        return None
 
     @staticmethod
     def __validate_cluster_status(attrs) -> str:
@@ -149,6 +153,7 @@ class MySQLFullBackupDetailSerializer(MySQLBaseOperateDetailSerializer):
 
         if bad:
             return ", ".join(bad)
+        return None
 
 
 class MySQLFullBackupFlowParamBuilder(builders.FlowParamBuilder):

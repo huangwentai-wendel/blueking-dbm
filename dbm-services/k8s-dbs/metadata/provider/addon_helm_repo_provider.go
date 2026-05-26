@@ -22,9 +22,11 @@ package provider
 import (
 	commentity "k8s-dbs/common/entity"
 	"k8s-dbs/metadata/dbaccess"
-	models "k8s-dbs/metadata/dbaccess/model"
-	entitys "k8s-dbs/metadata/provider/entity"
-	"log/slog"
+	metaentity "k8s-dbs/metadata/entity"
+	metamodel "k8s-dbs/metadata/model"
+	"sync"
+
+	"github.com/pkg/errors"
 
 	"github.com/jinzhu/copier"
 )
@@ -32,14 +34,14 @@ import (
 // AddonHelmRepoProvider 定义 addon cluster helm repo 业务逻辑层访问接口
 type AddonHelmRepoProvider interface {
 	CreateHelmRepo(
-		dbsContext *commentity.DbsContext,
-		entity *entitys.AddonHelmRepoEntity,
-	) (*entitys.AddonHelmRepoEntity, error)
+		dbsCtx *commentity.DbsContext,
+		entity *metaentity.AddonHelmRepoEntity,
+	) (*metaentity.AddonHelmRepoEntity, error)
 	DeleteHelmRepoByID(id uint64) (uint64, error)
-	FindHelmRepoByID(id uint64) (*entitys.AddonHelmRepoEntity, error)
-	FindByParams(params map[string]interface{}) (*entitys.AddonHelmRepoEntity, error)
-	UpdateHelmRepo(entity *entitys.AddonHelmRepoEntity) (uint64, error)
-	ListHelmRepos(pagination commentity.Pagination) ([]*entitys.AddonHelmRepoEntity, error)
+	FindHelmRepoByID(id uint64) (*metaentity.AddonHelmRepoEntity, error)
+	FindByParams(params *metaentity.HelmRepoQueryParams) (*metaentity.AddonHelmRepoEntity, error)
+	UpdateHelmRepo(entity *metaentity.AddonHelmRepoEntity) (uint64, error)
+	ListHelmRepos(pagination commentity.Pagination) ([]*metaentity.AddonHelmRepoEntity, error)
 }
 
 // AddonHelmRepoProviderImpl AddonHelmRepoProvider 具体实现
@@ -47,27 +49,40 @@ type AddonHelmRepoProviderImpl struct {
 	dbAccess dbaccess.AddonHelmRepoDbAccess
 }
 
+var (
+	addonHelmRepoInstance AddonHelmRepoProvider
+	addonHelmRepoOnce     sync.Once
+)
+
+// GetAddonHelmRepoProvider 获取 AddonHelmRepoDbAccess 单例实例
+func GetAddonHelmRepoProvider(dbAccess dbaccess.AddonHelmRepoDbAccess) AddonHelmRepoProvider {
+	addonHelmRepoOnce.Do(func() {
+		addonHelmRepoInstance = &AddonHelmRepoProviderImpl{dbAccess}
+	})
+	if addonHelmRepoInstance == nil {
+		panic("AddonHelmRepoProvider instance is nil after initialization")
+	}
+	return addonHelmRepoInstance
+}
+
 // CreateHelmRepo 创建
 func (a *AddonHelmRepoProviderImpl) CreateHelmRepo(
-	dbsContext *commentity.DbsContext,
-	entity *entitys.AddonHelmRepoEntity,
-) (*entitys.AddonHelmRepoEntity, error) {
-	model := models.AddonHelmRepoModel{}
-	entity.CreatedBy = dbsContext.BkAuth.BkUserName
-	entity.UpdatedBy = dbsContext.BkAuth.BkUserName
+	dbsCtx *commentity.DbsContext,
+	entity *metaentity.AddonHelmRepoEntity,
+) (*metaentity.AddonHelmRepoEntity, error) {
+	model := metamodel.AddonHelmRepoModel{}
+	entity.CreatedBy = dbsCtx.BkAuth.BkUserName
+	entity.UpdatedBy = dbsCtx.BkAuth.BkUserName
 	if err := copier.Copy(&model, entity); err != nil {
-		slog.Error("Failed to copy entity to model", "error", err)
-		return nil, err
+		return nil, errors.Wrap(err, "failed to copy")
 	}
 	addedModel, err := a.dbAccess.Create(&model)
 	if err != nil {
-		slog.Error("Failed to create model", "error", err)
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to create addon helm repo with entity %+v", entity)
 	}
-	addedEntity := entitys.AddonHelmRepoEntity{}
+	addedEntity := metaentity.AddonHelmRepoEntity{}
 	if err := copier.Copy(&addedEntity, addedModel); err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return nil, err
+		return nil, errors.Wrap(err, "failed to copy")
 	}
 	return &addedEntity, nil
 }
@@ -79,78 +94,65 @@ func (a *AddonHelmRepoProviderImpl) DeleteHelmRepoByID(id uint64) (uint64, error
 
 // FindHelmRepoByID 通过 ID 查找
 func (a *AddonHelmRepoProviderImpl) FindHelmRepoByID(id uint64) (
-	*entitys.AddonHelmRepoEntity,
+	*metaentity.AddonHelmRepoEntity,
 	error,
 ) {
 	model, err := a.dbAccess.FindByID(id)
 	if err != nil {
-		slog.Error("Failed to find entity")
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to find addon helm repo with id %d", id)
 	}
-	repoEntity := entitys.AddonHelmRepoEntity{}
+	repoEntity := metaentity.AddonHelmRepoEntity{}
 	if err := copier.Copy(&repoEntity, model); err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return nil, err
+		return nil, errors.Wrap(err, "failed to copy")
 	}
 	return &repoEntity, nil
 }
 
 // FindByParams 通过 params 查找
-func (a *AddonHelmRepoProviderImpl) FindByParams(params map[string]interface{}) (
-	*entitys.AddonHelmRepoEntity,
+func (a *AddonHelmRepoProviderImpl) FindByParams(params *metaentity.HelmRepoQueryParams) (
+	*metaentity.AddonHelmRepoEntity,
 	error,
 ) {
 	model, err := a.dbAccess.FindByParams(params)
 	if err != nil {
-		slog.Error("Failed to find entity", "error", err)
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to find addon helm repo with params %+v", params)
 	}
-	repoEntity := entitys.AddonHelmRepoEntity{}
+	repoEntity := metaentity.AddonHelmRepoEntity{}
 	if err := copier.Copy(&repoEntity, model); err != nil {
-		slog.Error("Failed to copy model to copied model", "error", err)
-		return nil, err
+		return nil, errors.Wrap(err, "failed to copy")
 	}
 	return &repoEntity, nil
 }
 
 // UpdateHelmRepo 更新
-func (a *AddonHelmRepoProviderImpl) UpdateHelmRepo(entity *entitys.AddonHelmRepoEntity) (
+func (a *AddonHelmRepoProviderImpl) UpdateHelmRepo(entity *metaentity.AddonHelmRepoEntity) (
 	uint64,
 	error,
 ) {
-	model := models.AddonHelmRepoModel{}
+	model := metamodel.AddonHelmRepoModel{}
 	err := copier.Copy(&model, entity)
 	if err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return 0, err
+		return 0, errors.Wrap(err, "failed to copy")
 	}
 	rows, err := a.dbAccess.Update(&model)
 	if err != nil {
-		slog.Error("Failed to update entity", "error", err)
-		return 0, err
+		return 0, errors.Wrapf(err, "failed to update addon helm repo with entity %+v", entity)
 	}
 	return rows, nil
 }
 
 // ListHelmRepos 分页查询
 func (a *AddonHelmRepoProviderImpl) ListHelmRepos(pagination commentity.Pagination) (
-	[]*entitys.AddonHelmRepoEntity,
+	[]*metaentity.AddonHelmRepoEntity,
 	error,
 ) {
 	repoModels, _, err := a.dbAccess.ListByPage(pagination)
 	if err != nil {
-		slog.Error("Failed to list models", "error", err)
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to list addon helm repos pagination %+v", pagination)
 	}
-	var repoEntities []*entitys.AddonHelmRepoEntity
+	var repoEntities []*metaentity.AddonHelmRepoEntity
 	if err := copier.Copy(&repoEntities, repoModels); err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return nil, err
+		return nil, errors.Wrap(err, "failed to copy")
 	}
 	return repoEntities, nil
-}
-
-// NewAddonHelmRepoProvider 创建 AddonHelmRepoDbAccess 接口实现实例
-func NewAddonHelmRepoProvider(dbAccess dbaccess.AddonHelmRepoDbAccess) AddonHelmRepoProvider {
-	return &AddonHelmRepoProviderImpl{dbAccess: dbAccess}
 }

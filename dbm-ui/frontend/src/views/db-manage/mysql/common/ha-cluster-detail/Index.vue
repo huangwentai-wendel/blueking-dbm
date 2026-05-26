@@ -53,8 +53,8 @@
           @click="handleShowDataExportSlider">
           {{ t('导出数据') }}
         </BkButton>
-        <MoreActionExtend trigger="click">
-          <template #handler>
+        <MoreActionExtend>
+          <template #trigger>
             <BkButton
               v-bk-tooltips="t('更多操作')"
               class="ml-4"
@@ -63,22 +63,59 @@
               <DbIcon type="more" />
             </BkButton>
           </template>
-          <BkDropdownItem
+          <div
             v-if="isShowDumperEntry"
             v-db-console="'mysql.dataSubscription'">
-            <div style="display: inline-block">
+            <AuthButton
+              action-id="tbinlogdumper_install"
+              :disabled="data.isOffline"
+              :permission="data.permission.tbinlogdumper_install"
+              :resource="data.id"
+              text
+              @click="handleShowCreateSubscribeRuleSlider">
+              {{ t('数据订阅') }}
+            </AuthButton>
+          </div>
+          <div
+            v-if="!data.isOnlineCLB"
+            v-db-console="'common.clb'">
+            <OperationBtnStatusTips
+              :data="data"
+              :disabled="!data.isOffline">
               <AuthButton
-                action-id="tbinlogdumper_install"
+                action-id="mysql_add_clb"
                 :disabled="data.isOffline"
-                :permission="data.permission.tbinlogdumper_install"
+                :permission="data.permission.mysql_add_clb"
                 :resource="data.id"
                 text
-                @click="handleShowCreateSubscribeRuleSlider">
-                {{ t('数据订阅') }}
+                @click="handleAddClb({ details: { cluster_id: data.id, bk_cloud_id: data.bk_cloud_id } })">
+                {{ t('启用接入层负载均衡（CLB）') }}
               </AuthButton>
-            </div>
-          </BkDropdownItem>
-          <BkDropdownItem
+            </OperationBtnStatusTips>
+          </div>
+          <div
+            v-if="data.isOnlineCLB"
+            v-db-console="'common.clb'">
+            <OperationBtnStatusTips
+              :data="data"
+              :disabled="!data.isOffline">
+              <AuthButton
+                action-id="mysql_clb_bind_domain"
+                :disabled="data.isOffline"
+                :permission="data.permission.mysql_clb_bind_domain"
+                :resource="data.id"
+                text
+                @click="
+                  handleBindOrUnbindClb(
+                    { details: { cluster_id: data.id, bk_cloud_id: data.bk_cloud_id } },
+                    data.dns_to_clb,
+                  )
+                ">
+                {{ data.dns_to_clb ? t('恢复主域名直连接入层') : t('配置主域名指向负载均衡器（CLB）') }}
+              </AuthButton>
+            </OperationBtnStatusTips>
+          </div>
+          <div
             v-if="data.isOnline"
             v-db-console="'mysql.haClusterList.disable'">
             <OperationBtnStatusTips :data="data">
@@ -92,8 +129,8 @@
                 {{ t('禁用') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem
+          </div>
+          <div
             v-if="data.isOffline"
             v-db-console="'mysql.haClusterList.enable'">
             <OperationBtnStatusTips :data="data">
@@ -107,8 +144,8 @@
                 {{ t('启用') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem v-db-console="'mysql.haClusterList.delete'">
+          </div>
+          <div v-db-console="'mysql.haClusterList.delete'">
             <OperationBtnStatusTips :data="data">
               <AuthButton
                 v-bk-tooltips="{
@@ -124,10 +161,8 @@
                 {{ t('删除') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem>
-            <ClusterDomainDnsRelation :data="data" />
-          </BkDropdownItem>
+          </div>
+          <ClusterDomainDnsRelation :data="data" />
         </MoreActionExtend>
       </DisplayBox>
       <ActionPanel
@@ -136,8 +171,25 @@
         :cluster-type="ClusterTypes.TENDBHA">
         <template #infoContent>
           <BaseInfo
+            :cluster-type="ClusterTypes.TENDBHA"
             :data="data"
-            @refresh="fetchDetailData" />
+            @refresh="fetchDetailData">
+            <template #clbMaster>
+              <ClbInfo
+                :cluster-type="ClusterTypes.TENDBHA"
+                :data="data" />
+            </template>
+            <template #slaveDomain>
+              <SlaveDomain
+                :cluster-type="ClusterTypes.TENDBHA"
+                :data="data.slaveEntryList" />
+            </template>
+            <template #moduleName>
+              <ModuleNameInfo
+                :cluster-type="ClusterTypes.TENDBHA"
+                :data="data" />
+            </template>
+          </BaseInfo>
         </template>
       </ActionPanel>
       <ClusterAuthorize
@@ -162,7 +214,7 @@
   import { useRequest } from 'vue-request';
 
   import type { MySQLFunctions } from '@services/model/function-controller/functionController';
-  import TendbhaModel from '@services/model/mysql/tendbha';
+  import TendbhaDetailModel from '@services/model/mysql/tendbha-detail';
   import { getTendbhaDetail } from '@services/source/tendbha';
 
   import { useFunController } from '@stores';
@@ -172,14 +224,18 @@
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
 
   import ClusterAuthorize from '@views/db-manage/common/cluster-authorize/Index.vue';
-  import { ActionPanel, DisplayBox } from '@views/db-manage/common/cluster-details';
+  import {
+    ActionPanel,
+    BaseInfo,
+    BaseInfoField,
+    DisplayBox,
+    SlaveDomain,
+  } from '@views/db-manage/common/cluster-details';
   import ClusterDomainDnsRelation from '@views/db-manage/common/cluster-domain-dns-relation/Index.vue';
   import ClusterExportData from '@views/db-manage/common/cluster-export-data/Index.vue';
-  import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
+  import { useAddClb, useBindOrUnbindClb, useOperateClusterBasic } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
   import CreateSubscribeRuleSlider from '@views/db-manage/mysql/dumper/components/create-rule/Index.vue';
-
-  import BaseInfo from './components/BaseInfo.vue';
 
   interface Props {
     clusterId: number;
@@ -190,10 +246,20 @@
   const props = defineProps<Props>();
   const emits = defineEmits<Emits>();
 
+  const { ClbInfo, ModuleNameInfo } = BaseInfoField;
+
   const { t } = useI18n();
   const funControllerStore = useFunController();
+  const { handleAddClb } = useAddClb<{
+    bk_cloud_id: number;
+    cluster_id: number;
+  }>(ClusterTypes.TENDBHA);
+  const { handleBindOrUnbindClb } = useBindOrUnbindClb<{
+    bk_cloud_id: number;
+    cluster_id: number;
+  }>(ClusterTypes.TENDBHA);
 
-  const data = ref<TendbhaModel>();
+  const data = ref<TendbhaDetailModel>();
 
   /** 集群授权 */
   const isAuthorizeShow = ref(false);

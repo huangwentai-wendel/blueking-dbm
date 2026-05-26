@@ -1,15 +1,8 @@
 package internal
 
 import (
-	"dbm-services/common/reverseapi"
-	reversemysqlapi "dbm-services/common/reverseapi/apis/mysql"
-	reversemysqldef "dbm-services/common/reverseapi/define/mysql"
-
-	"dbm-services/mysql/db-tools/dbactuator/pkg/core/cst"
-	"dbm-services/mysql/db-tools/dbactuator/pkg/util"
-	"dbm-services/mysql/db-tools/dbactuator/pkg/util/proxyutil"
-	"dbm-services/mysql/db-tools/mysql-monitor/pkg/config"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -18,7 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"errors"
+	reversemysqlapi "dbm-services/common/reverseapi/apis/mysql"
+	reversemysqldef "dbm-services/common/reverseapi/define/mysql"
+	"dbm-services/common/reverseapi/pkg/core"
+
+	"dbm-services/mysql/db-tools/dbactuator/pkg/core/cst"
+	"dbm-services/mysql/db-tools/dbactuator/pkg/util"
+	"dbm-services/mysql/db-tools/dbactuator/pkg/util/proxyutil"
+	"dbm-services/mysql/db-tools/mysql-monitor/pkg/config"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/gofrs/flock"
@@ -34,6 +34,7 @@ func ConnectProxy() (pdb *sqlx.DB, padb *sqlx.DB, err error) {
 			(strings.Contains(err.Error(), "invalid connection") ||
 				strings.Contains(err.Error(), "connection refused")) {
 			slog.Info("connect proxy service port failed try to reboot", slog.String("err", err.Error()))
+			//goland:noinspection GoResourceLeak
 			return retryAndRestartProxy()
 		}
 		slog.Error(
@@ -199,6 +200,7 @@ func addExLock() (fl *flock.Flock, err error) {
 		return nil, err
 	}
 	lockFilePath := filepath.Join(lockFileBasePath, lockFileName)
+	//goland:noinspection GoResourceLeak
 	fl = flock.New(lockFilePath)
 
 	slog.Info(
@@ -210,7 +212,8 @@ func addExLock() (fl *flock.Flock, err error) {
 	if err != nil {
 		slog.Error(
 			"reboot proxy try to lock",
-			slog.String("err", err.Error()))
+			slog.String("err", err.Error()),
+		)
 		return nil, err
 	}
 
@@ -219,7 +222,7 @@ func addExLock() (fl *flock.Flock, err error) {
 }
 
 func confirmSelfIsRunning() (bool, error) {
-	apiCore, err := reverseapi.NewCore(int64(*config.MonitorConfig.BkCloudID))
+	apiCore, err := core.NewCore(int64(*config.MonitorConfig.BkCloudID), core.DefaultRetryOpts...)
 	if err != nil {
 		slog.Error("new core api error", slog.String("err", err.Error()))
 		return false, err
@@ -243,9 +246,11 @@ func confirmSelfIsRunning() (bool, error) {
 		return false, err
 	}
 
-	idx := slices.IndexFunc(pinfos, func(item reversemysqldef.ProxyInstanceInfo) bool {
-		return item.Port == config.MonitorConfig.Port
-	})
+	idx := slices.IndexFunc(
+		pinfos, func(item reversemysqldef.ProxyInstanceInfo) bool {
+			return item.Port == config.MonitorConfig.Port
+		},
+	)
 	if idx < 0 {
 		err = fmt.Errorf("instance [%d] not found", config.MonitorConfig.Port)
 		slog.Info("query instance info", slog.String("error", err.Error()))

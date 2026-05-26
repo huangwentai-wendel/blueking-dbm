@@ -62,6 +62,7 @@
               <template #header>
                 <BkPopover
                   ext-cls="mongo-config-spec-name-popover"
+                  :popover-delay="[200, 100]"
                   theme="light">
                   <span class="spec-name-head">{{ t('资源规格') }}</span>
                   <template #content>
@@ -153,7 +154,6 @@
           </DbOriginalTable>
         </BkFormItem>
       </template>
-
       <template v-if="applySchema === APPLY_SCHEME.CUSTOM">
         <BkFormItem
           :label="t('规格')"
@@ -175,7 +175,7 @@
           required>
           <BkInput
             v-model="formData.shard_node_count"
-            :disabled="inputDisabled"
+            :disabled="replicaSetInputDisabled || shardClusterInputDisabled"
             :min="0"
             style="width: 314px"
             type="number" />
@@ -186,7 +186,7 @@
           required>
           <BkInput
             v-model="formData.shards_num"
-            :disabled="inputDisabled"
+            :disabled="replicaSetInputDisabled || shardClusterInputDisabled"
             :min="0"
             style="width: 314px"
             type="number" />
@@ -197,7 +197,7 @@
           required>
           <BkInput
             v-model="formData.shard_machine_group"
-            :disabled="inputDisabled"
+            :disabled="replicaSetInputDisabled"
             :min="0"
             style="width: 314px"
             type="number" />
@@ -280,6 +280,8 @@
           name: string;
         };
       }[];
+      mongodb_machine_num: number;
+      mongodb_machine_pair: number;
       shard_node_count: number;
       shard_num: number;
     };
@@ -295,6 +297,23 @@
 
   const { t } = useI18n();
 
+  // 副本集容量变更自定义方案
+  // 1.规格 可选
+  // 2.每个 Shard 节点数  不变
+  // 3.集群 Shared 数 不变
+  // 4.机器组数 不变
+  // 5.每组机器 Shared 数 自动计算
+  // 6.总机器数 自动计算
+
+  // 分片集群容量变更自定义方案
+  // 1.规格 可选
+  // 2.每个 Shard 节点数  不变
+  // 3.集群 Shared 数 不变
+  // 4.机器组数 可选
+  // 5.每组机器 Shared 数 自动计算
+  // 6.总机器数 自动计算
+  // 7.集群 Shared 数/机器组数 需要整除
+
   const getDefaultFormData = () => {
     if (props.clusterData.cluster_type === ClusterTypes.MONGO_SHARED_CLUSTER) {
       return {
@@ -302,8 +321,8 @@
         count: 0,
         machine_group_shard_num: 0,
         shard_machine_group: 0,
-        shard_node_count: 3,
-        shards_num: 0,
+        shard_node_count: props.clusterData.shard_node_count,
+        shards_num: props.clusterData.shard_num,
         spec_id: props.clusterData.mongodb[0].spec_config.id,
       };
     }
@@ -336,7 +355,7 @@
 
   const formData = reactive(getDefaultFormData());
 
-  let timer = 0;
+  let timer: NodeJS.Timeout;
 
   const rules = {
     capacity: [
@@ -390,7 +409,10 @@
   };
 
   const originSpecId = computed(() => props.clusterData.mongodb[0].spec_config.id);
-  const inputDisabled = computed(() => props.clusterData.cluster_type === ClusterTypes.MONGO_REPLICA_SET);
+  const replicaSetInputDisabled = computed(() => props.clusterData.cluster_type === ClusterTypes.MONGO_REPLICA_SET);
+  const shardClusterInputDisabled = computed(
+    () => props.clusterData.cluster_type === ClusterTypes.MONGO_SHARED_CLUSTER,
+  );
 
   const { loading: isLoading, run: getFilterClusterSpecRun } = useRequest(getFilterClusterSpec, {
     manual: true,

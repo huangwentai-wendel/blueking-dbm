@@ -1,10 +1,10 @@
 package crond
 
 import (
+	"bytes"
 	"dbm-services/common/go-pubpkg/cmutil"
 	"fmt"
 	"os/exec"
-	"os/user"
 	"path"
 	"path/filepath"
 
@@ -15,42 +15,23 @@ import (
 	"dbm-services/mysql/db-tools/dbactuator/pkg/util/osutil"
 )
 
-func (c *MySQLCrondComp) Stop() (err error) {
-	return Stop()
-}
-
 func Stop() (err error) {
 	var cmd *exec.Cmd
 
-	cu, _ := user.Current()
-	if cu.Uid == "0" {
-		cmd = exec.Command(
-			"su", []string{
-				"-", "mysql", "-c",
-				fmt.Sprintf(
-					`/bin/sh %s`,
-					path.Join(cst.MySQLCrondInstallPath, "stop.sh"),
-				),
-			}...,
-		)
-	} else {
-		cmd = exec.Command(
-			"sh", "-c", filepath.Join(cst.MySQLCrondInstallPath, "stop.sh"),
-		)
-	}
+	cmd = exec.Command(
+		"sh", "-c", filepath.Join(cst.MySQLCrondInstallPath, "stop.sh"),
+	)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
 	err = cmd.Run()
 	if err != nil {
-		logger.Error("stop mysql-crond failed: %s", err.Error())
-		return err
+		logger.Error("stop mysql-crond failed: %s, %s", err.Error(), stderr.String())
+		return errors.WithMessagef(err, stderr.String())
 	}
 	logger.Info("stop mysql-crond success")
 	return nil
-}
-
-// Start 启动进程
-func (c *MySQLCrondComp) Start() (err error) {
-	return Start()
 }
 
 func Start() (err error) {
@@ -60,10 +41,12 @@ func Start() (err error) {
 		logger.Error("chown %s to mysql failed: %s", cst.MySQLCrondInstallPath, err.Error())
 		return err
 	}
+	logger.Info("chown %s to mysql success", cst.MySQLCrondInstallPath)
 
+	var stderr bytes.Buffer
 	cmd := exec.Command(
-		"su", []string{
-			"-", "mysql", "-c", // mysql 写死
+		"sh", []string{
+			"-c",
 			fmt.Sprintf(
 				`%s -c %s`,
 				path.Join(cst.MySQLCrondInstallPath, "start.sh"),
@@ -71,14 +54,16 @@ func Start() (err error) {
 			),
 		}...,
 	)
+
 	err = cmd.Run()
 	if err != nil {
-		logger.Error("start mysql-crond failed: %s", err.Error())
+		logger.Error("start mysql-crond failed: %s", stderr.String())
 
 		startErrFilePath := path.Join(cst.MySQLCrondInstallPath, "start-crond.err")
 		errStrPrefix := fmt.Sprintf("grep error from %s", startErrFilePath)
-		errStrDetail, _ := cmutil.NewGrepLines(startErrFilePath, true, true).MatchWords(
-			[]string{"ERROR", "panic"}, 5)
+		errStrDetail, _ := cmutil.NewGrepLines(startErrFilePath, true, false).MatchWords(
+			[]string{"ERROR", "panic"}, 5,
+		)
 		if len(errStrDetail) > 0 {
 			logger.Info(errStrPrefix)
 			logger.Error(errStrDetail)

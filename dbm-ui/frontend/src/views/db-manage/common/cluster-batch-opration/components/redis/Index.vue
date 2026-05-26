@@ -58,6 +58,11 @@
   </BkDropdownItem>
   <BkDropdownItem v-db-console="'redis.clusterManage.batchAddTag'">
     <BkButton
+      v-bk-tooltips="{
+        disabled: isClusterTagEditable,
+        content: t('全部选中对象有权限，方可批量操作'),
+        placement: 'right',
+      }"
       class="opration-button"
       :disabled="!isClusterTagEditable"
       text
@@ -67,11 +72,36 @@
   </BkDropdownItem>
   <BkDropdownItem v-db-console="'redis.clusterManage.batchRemoveTag'">
     <BkButton
+      v-bk-tooltips="{
+        disabled: isClusterTagEditable,
+        content: t('全部选中对象有权限，方可批量操作'),
+        placement: 'right',
+      }"
       class="opration-button"
       :disabled="!isClusterTagEditable"
       text
       @click="() => (showClusterBatchRemoveTag = true)">
       {{ t('移除标签') }}
+    </BkButton>
+  </BkDropdownItem>
+  <BkDropdownItem
+    v-if="isClusterTypeAlarmSupported"
+    v-db-console="'redis.clusterManage.configAlarmSubscription'">
+    <BkButton
+      class="opration-button"
+      text
+      @click="() => (showClusterBatchEditSubscription = true)">
+      {{ t('设置告警订阅') }}
+    </BkButton>
+  </BkDropdownItem>
+  <BkDropdownItem
+    v-if="isClusterTypeAlarmSupported"
+    v-db-console="'redis.clusterManage.deleteAlarmSubscription'">
+    <BkButton
+      class="opration-button"
+      text
+      @click="() => (showClusterBatchDeleteSubscription = true)">
+      {{ t('删除告警订阅') }}
     </BkButton>
   </BkDropdownItem>
   <ClusterBatchAddTag
@@ -82,6 +112,14 @@
     v-model:is-show="showClusterBatchRemoveTag"
     :selected="selected"
     @success="handleSuccess" />
+  <ClusterBatchEditSubscription
+    v-model:is-show="showClusterBatchEditSubscription"
+    :selected="selected"
+    @success="handleSuccess" />
+  <ClusterBatchDeleteSubscription
+    v-model:is-show="showClusterBatchDeleteSubscription"
+    :selected="selected"
+    @success="handleSuccess" />
 </template>
 
 <script setup lang="ts">
@@ -89,9 +127,13 @@
 
   import RedisModel from '@services/model/redis/redis';
 
+  import { useAlarmSubscribe } from '@hooks';
+
   import { ClusterTypes, TicketTypes } from '@common/const';
 
   import ClusterBatchAddTag from '@views/db-manage/common/cluster-batch-add-tag/Index.vue';
+  import ClusterBatchDeleteSubscription from '@views/db-manage/common/cluster-batch-delete-subscription/Index.vue';
+  import ClusterBatchEditSubscription from '@views/db-manage/common/cluster-batch-edit-subscription/Index.vue';
   import ClusterBatchRemoveTag from '@views/db-manage/common/cluster-batch-remove-tag/Index.vue';
   import { useRedisClusterListToToolbox } from '@views/db-manage/common/hooks';
 
@@ -110,9 +152,17 @@
 
   const { t } = useI18n();
   const { handleToToolbox } = useRedisClusterListToToolbox();
+  const { isClusterTypeAlarmSupported } = useAlarmSubscribe([
+    ClusterTypes.TWEMPROXY_REDIS_INSTANCE,
+    ClusterTypes.PREDIXY_TENDISPLUS_CLUSTER,
+    ClusterTypes.TWEMPROXY_TENDIS_SSD_INSTANCE,
+    ClusterTypes.PREDIXY_REDIS_CLUSTER,
+  ]);
 
   const showClusterBatchAddTag = ref(false);
   const showClusterBatchRemoveTag = ref(false);
+  const showClusterBatchEditSubscription = ref(false);
+  const showClusterBatchDeleteSubscription = ref(false);
 
   const batchOperationDisabled = computed(() =>
     props.selected.some((data) => {

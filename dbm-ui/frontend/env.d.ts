@@ -94,10 +94,34 @@ declare interface Window {
   PROJECT_CONFIG: {
     BIZ_ID: number;
     TICKET_DETAIL_REQUEST_CONTROLLER: AbortController;
+    AI_LOG_ANALYSIS_OPEN: boolean;
   };
   PROJECT_ENV: {
     VITE_AJAX_URL_PREFIX: string;
     VITE_PUBLIC_PATH: string;
     VITE_ROUTER_PERFIX: string;
+  };
+  BkVisionSDK: {
+    init: (
+      dom: HTMLElement,
+      versionId: string,
+      options?: {
+        apiPrefix: string;
+        waterMark?: {
+          content?: string;
+        };
+        chartToolMenu: {
+          build_in: boolean;
+          id: string;
+          type: 'tool' | 'menu';
+        }[];
+        toolMenu: {
+          build_in: boolean;
+          id: string;
+        }[];
+      },
+    ) => Promise<{
+      unmount: () => void;
+    }>;
   };
 }

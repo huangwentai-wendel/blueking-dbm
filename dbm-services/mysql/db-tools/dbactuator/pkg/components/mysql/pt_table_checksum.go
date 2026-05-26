@@ -2,13 +2,14 @@ package mysql
 
 import (
 	"bytes"
-	"dbm-services/mysql/db-tools/dbactuator/pkg/components/peripheraltools/checksum"
+	"context"
+	"dbm-services/mysql/db-tools/dbactuator/pkg/components/peripheraltools/v2/checksum"
 	"dbm-services/mysql/db-tools/mysql-table-checksum/pkg/config"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path"
-	"strings"
 	"time"
 
 	"dbm-services/common/go-pubpkg/logger"
@@ -65,6 +66,34 @@ type PtTableChecksumCtx struct {
 	uid     string
 	cfgFile string
 	dbh     *sqlx.DB
+}
+
+func (c *PtTableChecksumComp) CleanLegacy() error {
+	conn, err := c.dbh.Connx(context.Background())
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	_, err = conn.ExecContext(
+		context.Background(), `SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;`,
+	)
+	if err != nil {
+		return err
+	}
+
+	_, err = conn.ExecContext(context.Background(), `SET BINLOG_FORMAT = 'STATEMENT'`)
+	if err != nil {
+		return err
+	}
+
+	_, err = conn.ExecContext(context.Background(), fmt.Sprintf(`DROP TABLE IF EXISTS %s`, c.Params.ReplicateTable))
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // Precheck 预检查
@@ -138,17 +167,20 @@ func (c *PtTableChecksumComp) GenerateConfigFile() (err error) {
 		c.Params.BkBizId, c.Params.ClusterId, c.Params.MasterPort,
 		c.Params.InnerRole, "", c.Params.ImmuteDomain, c.Params.MasterIp,
 		c.GeneralParam.RuntimeAccountParam.MonitorUser, c.GeneralParam.RuntimeAccountParam.MonitorPwd,
-		"http://127.0.0.1:9999", logDir, c.Params.RuntimeHour, c.tools)
+		"http://127.0.0.1:9999", logDir, c.Params.RuntimeHour, c.tools,
+	)
 
 	cfg.PtChecksum.Replicate = c.Params.ReplicateTable
 
 	var ignoreDbs []string
 	ignoreDbs = append(ignoreDbs, c.Params.SystemDbs...)
-	ignoreDbs = append(ignoreDbs, []string{
-		fmt.Sprintf(`%s%%`, c.Params.StageDBHeader),
-		`bak_%`,
-		fmt.Sprintf(`%%%s`, c.Params.RollbackDBTail),
-	}...)
+	ignoreDbs = append(
+		ignoreDbs, []string{
+			fmt.Sprintf(`%s%%`, c.Params.StageDBHeader),
+			`bak_%`,
+			fmt.Sprintf(`%%%s`, c.Params.RollbackDBTail),
+		}...,
+	)
 
 	cfg.SetFilter(c.Params.DbPatterns, ignoreDbs, c.Params.TablePatterns, c.Params.IgnoreTables)
 
@@ -249,7 +281,11 @@ func (c *PtTableChecksumComp) doChecksum() (err error) {
 		return err
 	}
 
-	fmt.Println(components.WrapperOutputString(strings.TrimSpace(stdout.String())))
+	o := make(map[string]string)
+	o["raw_checksum_report"] = stdout.String()
+	b, _ := json.Marshal(o)
+
+	fmt.Println(components.WrapperOutputString(string(b)))
 	return nil
 }
 
@@ -290,6 +326,45 @@ func (c *PtTableChecksumComp) checkSlaveStatus() (err error) {
 	}
 	return nil
 }
+
+//func (c *PtTableChecksumComp) CopyResult() (err error) {
+//	splitR := strings.Split(c.Params.ReplicateTable, ".")
+//	sourceDB := splitR[0]
+//	sourceTable := splitR[1]
+//
+//	conn, err := c.dbh.Connx(context.Background())
+//	if err != nil {
+//		return err
+//	}
+//	defer func() {
+//		_ = conn.Close()
+//	}()
+//
+//	_, err = conn.ExecContext(
+//		context.Background(), `SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;`,
+//	)
+//	if err != nil {
+//		return err
+//	}
+//
+//	_, err = conn.ExecContext(context.Background(), `SET BINLOG_FORMAT = 'STATEMENT'`)
+//	if err != nil {
+//		return err
+//	}
+//
+//	_, err = conn.ExecContext(
+//		context.Background(),
+//		fmt.Sprintf(
+//			"REPLACE INTO `%s`.`%s` SELECT *, 1 AS reported FROM `%s`.`%s`",
+//			native.INFODBA_SCHEMA, "checksum_history", sourceDB, sourceTable,
+//		),
+//	)
+//	if err != nil {
+//		return err
+//	}
+//
+//	return nil
+//}
 
 // Example 样例
 func (c *PtTableChecksumComp) Example() interface{} {

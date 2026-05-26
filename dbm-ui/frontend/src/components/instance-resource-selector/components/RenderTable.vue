@@ -20,7 +20,7 @@
     <DbTable
       ref="table"
       :data-source="dataSource"
-      :height="580"
+      :height="540"
       ignore-biz
       primary-key="instance_address"
       selectable
@@ -41,7 +41,7 @@
         :filter="filterOption.status"
         :label="t('状态')"
         :min-width="120">
-        <template #default="{ data }">
+        <template #default="{ data }: { data: IValue }">
           <DbStatus
             v-if="data.status === 'running'"
             theme="success">
@@ -57,7 +57,7 @@
       <BkTableColumn
         :label="t('所属业务')"
         :min-width="120">
-        <template #default="{ data }">
+        <template #default="{ data }: { data: IValue }">
           {{ getBizInfoById(data.bk_biz_id)?.name || '--' }}
         </template>
       </BkTableColumn>
@@ -75,6 +75,8 @@
   import { getGlobalInstance } from '@services/source/dbbase';
 
   import { useGlobalBizs } from '@stores';
+
+  import { ipv4 } from '@common/regex';
 
   import { getSearchSelectorParams } from '@utils';
 
@@ -97,7 +99,7 @@
 
   const searchSelectData = [
     {
-      id: 'instance',
+      id: 'instance_address',
       name: 'IP:Port',
     },
   ];
@@ -130,7 +132,12 @@
   const dbTableRef = useTemplateRef('table');
 
   watchEffect(() => {
-    dbTableRef.value?.fetchData(getSearchSelectorParams(searchSelectValue.value), props.params);
+    const params = getSearchSelectorParams(searchSelectValue.value);
+    if (ipv4.test(params.instance_address)) {
+      params.ip = params.instance_address;
+      delete params.instance_address;
+    }
+    dbTableRef.value?.fetchData(params, props.params);
   });
 
   const dataSource = (params: Parameters) =>
@@ -152,7 +159,7 @@
 
 <style lang="less">
   .instance-resource-selector-render-table {
-    padding: 24px;
+    padding: 12px 24px;
 
     .bk-table-body {
       tr {

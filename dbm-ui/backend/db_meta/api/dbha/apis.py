@@ -10,14 +10,16 @@ specific language governing permissions and limitations under the License.
 """
 import logging
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import validators
+from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import F, Q
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.constants import DEFAULT_BK_CLOUD_ID, IP_PORT_DIVIDER
 from backend.db_meta import flatten, meta_validator, request_validator
@@ -71,10 +73,10 @@ def entry_detail(domains: List[str]) -> Dict[str, Dict[Any, list]]:
 
                 if cluster_entry_obj.storageinstance_set.exists():
                     bind_ips = list(set([ele.machine.ip for ele in list(cluster_entry_obj.storageinstance_set.all())]))
-                    bind_port = cluster_entry_obj.storageinstance_set.first().port
+                    bind_port = cluster_entry_obj.storageinstance_set.first().port  # type: ignore[union-attr]
                 elif cluster_entry_obj.proxyinstance_set.exists():
                     bind_ips = list(set([ele.machine.ip for ele in list(cluster_entry_obj.proxyinstance_set.all())]))
-                    bind_port = cluster_entry_obj.proxyinstance_set.first().port
+                    bind_port = cluster_entry_obj.proxyinstance_set.first().port  # type: ignore[union-attr]
                 else:
                     bind_ips = []
                     bind_port = 0
@@ -132,7 +134,7 @@ def instances(
         f"bk_cloud_id: {bk_cloud_id}, "
         f"cluster_types: {cluster_types}, "
         f"hash_cnt: {hash_cnt}, "
-        f"hash_value: {hash_cnt}, "
+        f"hash_value: {hash_value}, "
         f"machine_only: {machine_only}"
     )
     logical_city_ids = request_validator.validated_integer_list(logical_city_ids)
@@ -148,7 +150,16 @@ def instances(
     # 如果 end_time < now, 就把 begin_time 和 end_time 置 NULL
     # 这样下面 query 实例的代码就可以把屏蔽到期的集群捞出来了
     # 因为这个只是给 dbha 用, 如果 dbha 挂了, 这个字段没有及时更新, 也没啥影响
-    ClusterDBHAExt.objects.filter(end_time__lt=datetime.now(timezone.utc)).delete()
+    if cache.add("dbha_ext_cleanup", True, timeout=60):
+        # 这里使用 select_for_update 来避免并发问题
+        logger.info("dbha_ext_cleanup cache lock acquired")
+        with transaction.atomic():
+            ClusterDBHAExt.objects.select_for_update(skip_locked=True).filter(
+                end_time__lt=datetime.now(timezone.utc)
+            ).delete()
+            logger.info("dbha ext cleanup")
+    else:
+        logger.info("dbha_ext_cleanup cache lock not acquired, cleanup skipped")
 
     queries = Q()
 
@@ -176,6 +187,8 @@ def instances(
     if cluster_types:
         queries &= Q(**{"cluster__cluster_type__in": cluster_types})
 
+    logger.info("queries: %s", queries)
+
     storage_qs = StorageInstance.objects.filter(queries)
     proxy_qs = ProxyInstance.objects.filter(queries)
 
@@ -187,8 +200,16 @@ def instances(
             bk_host_id_mod=hash_value
         )
 
-    flat_instances = flatten.storage_instance(storage_qs) + flatten.proxy_instance(proxy_qs)
-    disabled_dbha_cluster_ids = list(
+    flat_instances = []
+    if connection.in_atomic_block:
+        flat_instances = flatten.storage_instance(storage_qs) + flatten.proxy_instance(proxy_qs)
+    else:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            storage_future = executor.submit(flatten.storage_instance, storage_qs)
+            proxy_future = executor.submit(flatten.proxy_instance, proxy_qs)
+            flat_instances = storage_future.result() + proxy_future.result()
+
+    disabled_dbha_cluster_ids = set(
         ClusterDBHAExt.objects.filter(end_time__gte=datetime.now()).values_list("cluster_id", flat=True)
     )
 
@@ -221,7 +242,7 @@ def update_status(payloads: List, bk_cloud_id: int):
         try:
             storage_obj = StorageInstance.objects.get(machine__ip=ip, port=port, machine__bk_cloud_id=bk_cloud_id)
             logger.info("update_status storage found: {}".format(storage_obj))
-            cluster = storage_obj.cluster.first()
+            cluster = storage_obj.cluster.first()  # type: ignore[union-attr]
             logger.info("update status cluster found: {}".format(cluster))
 
             storage_obj.status = pl["status"]
@@ -255,6 +276,7 @@ def update_status(payloads: List, bk_cloud_id: int):
 def swap_role(payloads: List, bk_cloud_id: int):
     """
     可以用来操作 tendbha 和 tendbcluster 的存储层
+    swap 没有限定 ins1, ins2 谁是谁, 只是做交换
     """
     DBHASwapRequestSerializer(data={"payloads": payloads}).is_valid(raise_exception=True)
     for pl in payloads:
@@ -262,10 +284,10 @@ def swap_role(payloads: List, bk_cloud_id: int):
         ins2 = pl["instance2"]
 
         ins1_obj = StorageInstance.objects.get(
-            machine__ip=ins1["ip"], port=ins1["port"], machine__bk_cloud_id=bk_cloud_id
+            machine__ip=ins1["ip"], port=ins1["port"], machine__bk_cloud_id=bk_cloud_id, is_stand_by=True
         )
         ins2_obj = StorageInstance.objects.get(
-            machine__ip=ins2["ip"], port=ins2["port"], machine__bk_cloud_id=bk_cloud_id
+            machine__ip=ins2["ip"], port=ins2["port"], machine__bk_cloud_id=bk_cloud_id, is_stand_by=True
         )
 
         if (
@@ -286,8 +308,16 @@ def swap_role(payloads: List, bk_cloud_id: int):
 
         __swap(ins1_obj, ins2_obj)
 
+        __fix_others(ins1_obj, ins2_obj)
+
 
 def __swap(ins1: StorageInstance, ins2: StorageInstance):
+    """
+    1. 交换了 standby 主备的 tuple 关系
+    2. 维护 proxy 对应的存储实例
+    3. 交换了两个实例的 role
+    4. 这里不要操作 standby slave 域名
+    """
     # 修改 proxy backend
     temp_proxy_set = list(ins1.proxyinstance_set.all())
 
@@ -313,6 +343,24 @@ def __swap(ins1: StorageInstance, ins2: StorageInstance):
 
     ins1.save(update_fields=["instance_role", "instance_inner_role"])
     ins2.save(update_fields=["instance_role", "instance_inner_role"])
+
+
+def __fix_others(ins1: StorageInstance, ins2: StorageInstance):
+    """
+    一定要在 __swap 后执行
+    """
+    if ins1.instance_inner_role == InstanceInnerRole.MASTER:
+        current_master_instance = ins1
+        pre_master_instance = ins2
+    else:
+        current_master_instance = ins2
+        pre_master_instance = ins1
+
+    # 为了能正常展示集群拓扑
+    # 全量维护
+    StorageInstanceTuple.objects.filter(
+        ejector=pre_master_instance,
+    ).update(ejector=current_master_instance)
 
 
 @transaction.atomic

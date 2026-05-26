@@ -21,8 +21,10 @@ package dbaccess
 
 import (
 	"k8s-dbs/common/entity"
-	models "k8s-dbs/metadata/dbaccess/model"
-	"log/slog"
+	models "k8s-dbs/metadata/model"
+	"sync"
+
+	"github.com/pkg/errors"
 
 	"gorm.io/gorm"
 )
@@ -39,13 +41,28 @@ type OperationDefinitionDbAccessImpl struct {
 	db *gorm.DB
 }
 
+var (
+	operationDefinitionInstance OperationDefinitionDbAccess
+	operationDefinitionOnce     sync.Once
+)
+
+// GetOperationDefinitionDbAccess 获取 OperationDefinitionDbAccess 单例实例
+func GetOperationDefinitionDbAccess(db *gorm.DB) OperationDefinitionDbAccess {
+	operationDefinitionOnce.Do(func() {
+		operationDefinitionInstance = &OperationDefinitionDbAccessImpl{db: db}
+	})
+	if operationDefinitionInstance == nil {
+		panic("OperationDefinitionDbAccess instance is nil after initialization")
+	}
+	return operationDefinitionInstance
+}
+
 // FindByID 查找 operation definition 元数据接口实现
 func (o *OperationDefinitionDbAccessImpl) FindByID(id uint64) (*models.OperationDefinitionModel, error) {
 	var opDefModel models.OperationDefinitionModel
 	result := o.db.First(&opDefModel, id)
 	if result.Error != nil {
-		slog.Error("Find operation definition error", "error", result.Error.Error())
-		return nil, result.Error
+		return nil, errors.Wrapf(result.Error, "failed to find operation definition with id %d", id)
 	}
 	return &opDefModel, nil
 }
@@ -56,16 +73,9 @@ func (o *OperationDefinitionDbAccessImpl) Create(model *models.OperationDefiniti
 	error,
 ) {
 	if err := o.db.Create(model).Error; err != nil {
-		slog.Error("Create operation definition error", "error", err)
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to create operation definition with id %d", model.ID)
 	}
-	var addedModel models.OperationDefinitionModel
-	if err := o.db.First(&addedModel, "operation_name = ? and operation_target= ?",
-		model.OperationName, model.OperationTarget).Error; err != nil {
-		slog.Error("Find operation definition error", "error", err)
-		return nil, err
-	}
-	return &addedModel, nil
+	return model, nil
 }
 
 // ListByPage 分页查询 operation definition 元数据接口实现
@@ -75,14 +85,12 @@ func (o *OperationDefinitionDbAccessImpl) ListByPage(pagination entity.Paginatio
 	error,
 ) {
 	var opDefModels []models.OperationDefinitionModel
-	if err := o.db.Offset(pagination.Page).Limit(pagination.Limit).Where("active=1").Find(&opDefModels).Error; err != nil {
-		slog.Error("List operation definition error", "error", err.Error())
-		return nil, 0, err
+	if err := o.db.
+		Offset(pagination.Page).
+		Limit(pagination.Limit).
+		Where("active=1").
+		Find(&opDefModels).Error; err != nil {
+		return nil, 0, errors.Wrapf(err, "failed to list operation definition with pagination %+v", pagination)
 	}
 	return opDefModels, int64(len(opDefModels)), nil
-}
-
-// NewOperationDefinitionDbAccess 创建 OperationDefinitionDbAccess 接口实现实例
-func NewOperationDefinitionDbAccess(db *gorm.DB) OperationDefinitionDbAccess {
-	return &OperationDefinitionDbAccessImpl{db: db}
 }

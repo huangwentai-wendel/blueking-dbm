@@ -70,7 +70,11 @@ MYSQL_ROLLBACK_CLUSTER_DATA = {
                 "cluster_id": CLUSTER_ID,
                 "databases": ["*"],
                 "databases_ignore": [],
-                "rollback_time": "2025-06-11T23:59:59+08:00",
+                "backupinfo": {
+                    "priv": {"size": 3104, "task_id": "1234"},
+                    "database_list": ["test1"],
+                    "backup_type": "logical",
+                },
                 "rollback_type": "REMOTE_AND_TIME",
                 "tables": ["*"],
                 "tables_ignore": [],
@@ -109,6 +113,7 @@ MYSQL_ADD_SLAVE_DATA = {
         "backup_source": "remote",
         "infos": [
             {
+                "bk_cloud_id": 0,
                 "cluster_ids": [CLUSTER_ID],
                 "resource_spec": {
                     "new_slave": {
@@ -127,6 +132,7 @@ MYSQL_ADD_SLAVE_DATA = {
 MYSQL_CHECKSUM_DATA = {
     "bk_biz_id": BK_BIZ_ID,
     "details": {
+        "need_manual_confirm": True,
         "data_repair": {"is_repair": True, "mode": "manual"},
         "remark": "",
         "runtime_hour": 48,
@@ -175,6 +181,8 @@ MYSQL_DATA_MIGRATE_DATA = {
                 "source_cluster": CLUSTER_ID,
                 "target_clusters": [99],
                 "data_schema_grant": "data,schema",
+                "clone_db_list": ["*"],
+                "ignore_db_list": [],
             }
         ]
     },
@@ -259,7 +267,7 @@ MYSQL_SINGLE_APPLY_TICKET_DATA = {
         "mysql_port": 20000,
         "proxy_port": 10000,
         "domains": [{"key": "kio"}],
-        "disaster_tolerance_level": "same_city_cross_zone",
+        "disaster_tolerance_level": "SAME_SUBZONE_CROSS_SWTICH",
         "resource_spec": {
             "backend": {
                 "affinity": "NONE",
@@ -314,7 +322,7 @@ SQL_IMPORT_DATA = {
         "charset": "default",
         "force": False,
         "path": "/bk-dbm/mysql/sqlfile",
-        "cluster_ids": [110],
+        "cluster_ids": [CLUSTER_ID],
         "execute_objects": [
             {
                 "sql_files": ["bar.sql", "foo.sql"],
@@ -366,6 +374,7 @@ MYSQL_PROXY_ADD_DATA = {
     "details": {
         "infos": [
             {
+                "bk_cloud_id": 0,
                 "cluster_ids": [CLUSTER_ID],
                 "resource_spec": {
                     "new_proxy": {
@@ -405,9 +414,10 @@ MYSQL_PROXY_SWITCH_DATA = {
         "force": True,
         "infos": [
             {
+                "bk_cloud_id": 0,
                 "cluster_ids": [CLUSTER_ID],
                 "old_nodes": {
-                    "origin_proxy": [
+                    "proxy": [
                         {
                             "bk_biz_id": BK_BIZ_ID,
                             "bk_cloud_id": 0,
@@ -418,8 +428,18 @@ MYSQL_PROXY_SWITCH_DATA = {
                         }
                     ]
                 },
+                "origin_proxies": [
+                    {
+                        "bk_biz_id": BK_BIZ_ID,
+                        "bk_cloud_id": 0,
+                        "bk_host_id": 446,
+                        "instance_address": "5.5.5.6:20001",
+                        "ip": "5.5.5.6",
+                        "port": 20001,
+                    }
+                ],
                 "resource_spec": {
-                    "target_proxy": {
+                    "target_proxies": {
                         "hosts": [{"bk_biz_id": BK_BIZ_ID, "bk_cloud_id": 0, "bk_host_id": 447, "ip": "5.5.5.7"}]
                     }
                 },
@@ -596,7 +616,7 @@ MYSQL_MACHINE_DATA = [
         "bk_city_id": 0,
         "spec_config": '{"id": 3, "cpu": {"max": 256, "min": 1}, "mem": {"max": 256, "min": 1}, '
         '"qps": {"max": 0, "min": 0}, "name": "1核_1G_10G", "count": 1, "device_class": [],'
-        ' "storage_spec": [{"size": 10, "type": "ALL", "mount_point": "/data"}]}',
+        ' "storage_spec": [{"min": 10, "max": 2147483647, "type": "ALL", "mount_point": "/data"}]}',
         "spec_id": 444,
         "bk_agent_id": "",
     },
@@ -627,7 +647,7 @@ MYSQL_MACHINE_DATA = [
         "bk_city_id": 0,
         "spec_config": '{"id": 3, "cpu": {"max": 256, "min": 1}, "mem": {"max": 256, "min": 1}, '
         '"qps": {"max": 0, "min": 0}, "name": "1核_1G_10G", "count": 1, "device_class": [],'
-        ' "storage_spec": [{"size": 10, "type": "ALL", "mount_point": "/data"}]}',
+        ' "storage_spec": [{"min": 10, "max": 2147483647, "type": "ALL", "mount_point": "/data"}]}',
         "spec_id": 444,
         "bk_agent_id": "",
     },
@@ -658,7 +678,7 @@ MYSQL_MACHINE_DATA = [
         "bk_city_id": 0,
         "spec_config": '{"id": 3, "cpu": {"max": 256, "min": 1}, "mem": {"max": 256, "min": 1}, '
         '"qps": {"max": 0, "min": 0}, "name": "1核_1G_10G", "count": 1, "device_class": [],'
-        ' "storage_spec": [{"size": 10, "type": "ALL", "mount_point": "/data"}]}',
+        ' "storage_spec": [{"min": 10, "max": 2147483647, "type": "ALL", "mount_point": "/data"}]}',
         "spec_id": 445,
         "bk_agent_id": "",
     },
@@ -689,7 +709,7 @@ MYSQL_MACHINE_DATA = [
         "bk_city_id": 0,
         "spec_config": '{"id": 3, "cpu": {"max": 256, "min": 1}, "mem": {"max": 256, "min": 1}, '
         '"qps": {"max": 0, "min": 0}, "name": "1核_1G_10G", "count": 1, "device_class": [],'
-        ' "storage_spec": [{"size": 10, "type": "ALL", "mount_point": "/data"}]}',
+        ' "storage_spec": [{"min": 10, "max": 2147483647, "type": "ALL", "mount_point": "/data"}]}',
         "spec_id": 444,
         "bk_agent_id": "",
     },
@@ -720,7 +740,7 @@ MYSQL_MACHINE_DATA = [
         "bk_city_id": 0,
         "spec_config": '{"id": 3, "cpu": {"max": 256, "min": 1}, "mem": {"max": 256, "min": 1}, '
         '"qps": {"max": 0, "min": 0}, "name": "1核_1G_10G", "count": 1, "device_class": [],'
-        ' "storage_spec": [{"size": 10, "type": "ALL", "mount_point": "/data"}]}',
+        ' "storage_spec": [{"min": 10, "max": 2147483647, "type": "ALL", "mount_point": "/data"}]}',
         "spec_id": 336,
         "bk_agent_id": "",
     },
@@ -739,7 +759,7 @@ MYSQL_SPEC_DATA = [
         "cpu": {"max": 256, "min": 1},
         "mem": {"max": 256, "min": 1},
         "device_class": [],
-        "storage_spec": [{"size": 10, "type": "ALL", "mount_point": "/data"}],
+        "storage_spec": [{"min": 10, "max": 2147483647, "type": "ALL", "mount_point": "/data"}],
         "desc": "111",
         "enable": True,
         "instance_num": 0,
@@ -757,7 +777,7 @@ MYSQL_SPEC_DATA = [
         "cpu": {"max": 2, "min": 2},
         "mem": {"max": 4, "min": 3},
         "device_class": ["S5.MEDIUM4", "SA2.MEDIUM4", "S5t.MEDIUM4"],
-        "storage_spec": [{"size": 50, "type": "ALL", "mount_point": "/data"}],
+        "storage_spec": [{"min": 50, "max": 2147483647, "type": "ALL", "mount_point": "/data"}],
         "desc": "",
         "enable": True,
         "instance_num": 0,
@@ -775,10 +795,79 @@ MYSQL_SPEC_DATA = [
         "cpu": {"max": 256, "min": 1},
         "mem": {"max": 256, "min": 1},
         "device_class": [],
-        "storage_spec": [{"size": 10, "type": "ALL", "mount_point": "/data"}],
+        "storage_spec": [{"min": 10, "max": 2147483647, "type": "ALL", "mount_point": "/data"}],
         "desc": "111",
         "enable": True,
         "instance_num": 0,
         "qps": {},
     },
 ]
+
+MYSQL_CLB_BIND_DOMAIN = {
+    "bk_biz_id": BK_BIZ_ID,
+    "details": {
+        "cluster_id": CLUSTER_ID,
+        "bk_cloud_id": 0,
+    },
+    "ticket_type": "MYSQL_CLB_BIND_DOMAIN",
+    "remark": "",
+}
+
+MYSQL_CLB_UNBIND_DOMAIN = {
+    "bk_biz_id": BK_BIZ_ID,
+    "details": {
+        "cluster_id": CLUSTER_ID,
+        "bk_cloud_id": 0,
+    },
+    "ticket_type": "MYSQL_CLB_BIND_DOMAIN",
+    "remark": "",
+}
+
+# MySQL 迁移升级单据
+MYSQL_MIGRATE_UPGRADE_DATA = {
+    "bk_biz_id": BK_BIZ_ID,
+    "ticket_type": "MYSQL_MIGRATE_UPGRADE",
+    "details": {
+        "ip_source": "resource_pool",
+        "source_type": "resource_auto",
+        "backup_source": "remote",
+        "infos": [
+            {
+                "cluster_ids": [CLUSTER_ID],
+                "pkg_id": 1,
+                "new_db_module_id": 1,
+                "resource_spec": {
+                    "backend_group": {"spec_id": 444, "count": 2},
+                    "new_read_slave": {
+                        "spec_id": 0,
+                        "count": 1,
+                        "hosts": [{"ip": "1.2.2.1", "bk_cloud_id": 0, "bk_host_id": 124}],
+                    },
+                },
+                "read_only_slaves": [],  # 添加read_only_slaves字段
+            }
+        ],
+        "is_check_process": True,
+        "is_verify_checksum": True,
+        "need_checksum": True,
+    },
+}
+
+# MySQL 迁移主从单据
+MYSQL_MIGRATE_CLUSTER_DATA = {
+    "bk_biz_id": BK_BIZ_ID,
+    "ticket_type": "MYSQL_MIGRATE_CLUSTER",
+    "details": {
+        "ip_source": "resource_pool",
+        "source_type": "resource_auto",
+        "backup_source": "remote",
+        "infos": [
+            {
+                "cluster_ids": [CLUSTER_ID],
+                "resource_spec": {"backend": {"spec_id": 444, "count": 2}},
+            }
+        ],
+        "is_safe": True,
+        "need_checksum": True,
+    },
+}

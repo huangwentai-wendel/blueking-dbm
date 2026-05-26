@@ -3,7 +3,7 @@ import logging.config
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.flow.consts import DnsOpType, ManagerOpType, ManagerServiceType, MediumFileTypeEnum, PulsarRoleEnum
@@ -255,7 +255,7 @@ class PulsarReplaceFlow(PulsarOperationFlow):
             )
             pulsar_pipeline.add_sub_pipeline(sub_flow=shrink_sub_pipeline.build_sub_process(sub_name=_("缩容子流程")))
 
-        pulsar_pipeline.run_pipeline()
+        pulsar_pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=[self.data["cluster_id"]])
 
     # 替换pulsar manager
     def replace_pulsar_manager_sub_flow(self, act_kwargs: PulsarActKwargs, data: dict):

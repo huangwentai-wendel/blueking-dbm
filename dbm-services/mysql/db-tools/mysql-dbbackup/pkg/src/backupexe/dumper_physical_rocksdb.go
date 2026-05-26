@@ -1,3 +1,13 @@
+/*
+ * TencentBlueKing is pleased to support the open source community by making 蓝鲸智云-DB管理系统(BlueKing-BK-DBM) available.
+ * Copyright (C) 2017-2023 THL A29 Limited, a Tencent company. All rights reserved.
+ * Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at https://opensource.org/licenses/MIT
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ */
+
 package backupexe
 
 import (
@@ -13,6 +23,7 @@ import (
 	"github.com/pkg/errors"
 
 	"dbm-services/common/go-pubpkg/cmutil"
+	"dbm-services/common/go-pubpkg/mysqlcomm"
 	"dbm-services/mysql/db-tools/mysql-dbbackup/pkg/config"
 	"dbm-services/mysql/db-tools/mysql-dbbackup/pkg/cst"
 	"dbm-services/mysql/db-tools/mysql-dbbackup/pkg/src/dbareport"
@@ -45,7 +56,7 @@ func (p *PhysicalRocksdbDumper) buildArgs() []string {
 
 	args := []string{
 		fmt.Sprintf("--user=%s", p.cnf.Public.MysqlUser),
-		fmt.Sprintf("--password=%s", p.cnf.Public.MysqlPasswd),
+		fmt.Sprintf("--password='%s'", p.cnf.Public.MysqlPasswd),
 		fmt.Sprintf("--host=%s", p.cnf.Public.MysqlHost),
 		fmt.Sprintf("--port=%d", p.cnf.Public.MysqlPort),
 		fmt.Sprintf("--checkpoint_dir=%s", p.checkpointDir),
@@ -99,7 +110,7 @@ func (p *PhysicalRocksdbDumper) initConfig(mysqlVersion string, logBinDisabled b
 
 	// if the current node is slave, obtain the master ip and port
 	if p.mysqlRole == cst.RoleSlave || p.mysqlRole == cst.RoleRepeater {
-		p.masterHost, p.masterPort, err = mysqlconn.ShowMysqlSlaveStatus(db)
+		p.masterHost, p.masterPort, err = mysqlconn.GetSlaveStatusMasterInfo(db)
 		if err != nil {
 			logger.Log.Errorf("can not get the master host and port from the mysql, host:%s, port:%d, errmsg:%s",
 				p.cnf.Public.MysqlHost, p.cnf.Public.MysqlPort, err)
@@ -176,7 +187,7 @@ func (p *PhysicalRocksdbDumper) Execute(ctx context.Context) error {
 	err = cmd.Run()
 	if err != nil {
 		logger.Log.Errorf("can not run the rocksdb physical dumper command:%s, engine:%s, errmsg:%s",
-			backupCmd, p.storageEngine, err)
+			mysqlcomm.RemoveMysqlCommandPassword(backupCmd), p.storageEngine, err)
 		return err
 	}
 
@@ -186,10 +197,8 @@ func (p *PhysicalRocksdbDumper) Execute(ctx context.Context) error {
 
 // PrepareBackupMetaInfo generate the metadata of database backup
 func (p *PhysicalRocksdbDumper) PrepareBackupMetaInfo(cnf *config.BackupConfig, metaInfo *dbareport.IndexContent) error {
-	metaInfo.BackupMetaFileBase = dbareport.BackupMetaFileBase{
-		BackupBeginTime: p.backupStartTime,
-		BackupEndTime:   p.backupEndTime,
-	}
+	metaInfo.BackupBeginTime = p.backupStartTime
+	metaInfo.BackupEndTime = p.backupEndTime
 	backupTargetDir := filepath.Join(cnf.Public.BackupDir, cnf.Public.TargetName())
 	xtrabackupBinlogInfoFileName := filepath.Join(backupTargetDir, "xtrabackup_binlog_info")
 	xtrabackupSlaveInfoFileName := filepath.Join(backupTargetDir, "xtrabackup_slave_info")
@@ -248,7 +257,7 @@ func (p *PhysicalRocksdbDumper) PrepareBackupMetaInfo(cnf *config.BackupConfig, 
 	}
 
 	// teh mark indicating whether the update is a full backup or not
-	metaInfo.JudgeIsFullBackup(&cnf.Public)
+	metaInfo.JudgeBackupMethod(cnf)
 	if err = os.Remove(tmpFileName); err != nil {
 		logger.Log.Errorf("do not delete the tmp file, file name:%s, errmsg:%s", tmpFileName, err)
 		return err

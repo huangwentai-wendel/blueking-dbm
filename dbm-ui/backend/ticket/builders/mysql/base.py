@@ -8,18 +8,17 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-import datetime
 import re
 from typing import Dict, List, Union
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 from rest_framework.serializers import ValidationError
 
 from backend.configuration.constants import DBType
 from backend.db_meta.enums import AccessLayer, ClusterDBHAStatusFlags, ClusterType, InstanceInnerRole
 from backend.db_meta.models.cluster import Cluster, ClusterPhase
-from backend.db_services.mysql.fixpoint_rollback.handlers import FixPointRollbackHandler
+from backend.db_report.mysql_backup.handers import MySQLBackupHandler
 from backend.flow.consts import SYSTEM_DBS
 from backend.flow.utils.mysql.db_table_filter.exception import DbTableFilterValidateException
 from backend.flow.utils.mysql.db_table_filter.tools import glob_check
@@ -31,6 +30,7 @@ from backend.ticket.builders.common.base import (
     MySQLTicketFlowBuilderPatchMixin,
     ParamValidateSerializerMixin,
     SkipToRepresentationMixin,
+    TicketBaseValidateSerializerMixin,
     fetch_cluster_ids,
 )
 from backend.ticket.constants import TicketType
@@ -57,7 +57,7 @@ class MySQLBasePauseParamBuilder(builders.PauseParamBuilder):
 
 
 class MySQLBaseOperateDetailSerializer(
-    SkipToRepresentationMixin, ParamValidateSerializerMixin, serializers.Serializer
+    TicketBaseValidateSerializerMixin, SkipToRepresentationMixin, ParamValidateSerializerMixin, serializers.Serializer
 ):
     """
     mysql操作的基类，主要功能:
@@ -77,6 +77,7 @@ class MySQLBaseOperateDetailSerializer(
         TicketType.MYSQL_HA_TRUNCATE_DATA.value,
         TicketType.MYSQL_PARTITION.value,
         TicketType.MYSQL_PARTITION_CRON.value,
+        TicketType.MYSQL_PARTITION_V2.value,
         TicketType.MYSQL_CHECKSUM.value,
     ]
     MASTER_UNAVAILABLE_WHITELIST = [
@@ -154,21 +155,26 @@ class MySQLBaseOperateDetailSerializer(
 
     def validate_slave_is_stand_by(self, attrs):
         """校验从库的is_stand_by标志必须为true"""
-        slave_insts = [f"{info['slave_ip']['ip']}" for info in attrs["infos"]]
+        slave_insts = [f"{info['slave_ip']['ip'].split(':')[0]}" for info in attrs["infos"]]
         CommonValidate.validate_slave_is_stand_by(slave_insts)
 
     def validated_cluster_latest_backup(self, cluster_ids, backup_source, backup_type=None):
         """校验集群是否具有最近一次备份日志"""
-        now = datetime.datetime.now(datetime.timezone.utc)
         for cluster_id in cluster_ids:
-            handler = FixPointRollbackHandler(cluster_id=cluster_id)
-            backup = handler.query_latest_backup_log(rollback_time=now, backup_source=backup_source)
+            backup_handler = MySQLBackupHandler(
+                cluster_id=cluster_id,
+                is_full_backup=True,
+                check_instance_exist=True,
+                backup_source=backup_source,
+            )
+            backup = backup_handler.get_tendb_latest_backup_info()
             if not backup:
                 raise serializers.ValidationError(_("集群{}无法找到最近一次备份").format(cluster_id))
             if backup_type and backup["backup_type"] != backup_type:
                 raise serializers.ValidationError(_("集群{}最近一次备份类型不匹配{}").format(cluster_id, backup_type))
 
     def validate(self, attrs):
+        attrs = super().validate(attrs)
         # 默认全局校验只需要校验集群的状态
         self.validate_cluster_can_access(attrs)
         attrs = super().validated_params(attrs=attrs)
@@ -187,7 +193,9 @@ class MysqlSingleOpsBaseDetailSerializer(MySQLBaseOperateDetailSerializer):
         return attrs
 
 
-class MySQLClustersTakeDownDetailsSerializer(SkipToRepresentationMixin, serializers.Serializer):
+class MySQLClustersTakeDownDetailsSerializer(
+    TicketBaseValidateSerializerMixin, SkipToRepresentationMixin, serializers.Serializer
+):
     cluster_ids = serializers.ListField(help_text=_("集群ID"), child=serializers.IntegerField())
     force = serializers.BooleanField(help_text=_("是否强制下架"), required=False, default=False)
 
@@ -204,6 +212,13 @@ class MySQLClustersTakeDownDetailsSerializer(SkipToRepresentationMixin, serializ
     def validate_cluster_ids(self, value):
         self.clusters_status_transfer_valid(cluster_ids=value, ticket_type=self.context["ticket_type"])
         return value
+
+    def validate(self, attrs):
+        """
+        公共校验：集群操作互斥校验
+        """
+        attrs = super().validate(attrs)
+        return attrs
 
 
 class MySQLBaseOperateResourceParamBuilder(BaseOperateResourceParamBuilder):
@@ -265,3 +280,53 @@ class DBTableField(serializers.CharField):
 
     def to_representation(self, value):
         return super().to_representation(value)
+
+
+class RelatedClusterAutoCalculateMixin:
+    """
+    关联集群自动计算Mixin
+    用于在序列化器验证阶段自动计算关联集群，解除前端对关联集群的强依赖
+    """
+
+    def auto_calculate_related_clusters(self, attrs, role=None):
+        """
+        自动计算关联集群并扩展cluster_ids
+
+        @param attrs: 验证后的数据
+        @param role: 查询角色，默认为None使用MASTER角色
+        @return: 扩展后的attrs
+        """
+        from backend.db_services.dbbase.cluster.handlers import ClusterServiceHandler
+
+        # 如果没有指定角色，使用MASTER角色
+        if role is None:
+            role = InstanceInnerRole.MASTER
+
+        # 处理infos列表中的cluster_ids
+        if "infos" in attrs:
+            for info in attrs["infos"]:
+                input_cluster_ids = fetch_cluster_ids(info)
+                if not input_cluster_ids:
+                    continue
+                # 获取第一个集群的bk_biz_id
+                first_cluster = Cluster.objects.filter(id__in=input_cluster_ids).first()
+                if not first_cluster:
+                    continue
+
+                # 调用关联集群查询接口
+                handler = ClusterServiceHandler(first_cluster.bk_biz_id)
+                related_info = handler.find_related_clusters_by_cluster_ids(cluster_ids=input_cluster_ids, role=role)
+
+                # 收集所有关联集群ID（包括自身和关联集群）
+                all_cluster_ids = set(input_cluster_ids)
+                for item in related_info:
+                    # 添加当前集群ID
+                    all_cluster_ids.add(item["cluster_id"])
+                    # 添加所有关联集群ID
+                    for related_cluster in item["related_clusters"]:
+                        all_cluster_ids.add(related_cluster["id"])
+
+                # 更新cluster_ids为完整的关联集群列表
+                info["cluster_ids"] = sorted(list(all_cluster_ids))
+
+        return attrs

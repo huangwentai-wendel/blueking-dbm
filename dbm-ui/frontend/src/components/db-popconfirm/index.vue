@@ -32,7 +32,7 @@
     </div>
     <div style="margin-top: 16px; text-align: right">
       <BkButton
-        class="mr8"
+        class="mr-8"
         :loading="isConfirmLoading"
         size="small"
         :theme="theme"
@@ -55,11 +55,14 @@
     cancelHandler?: () => Promise<any> | void;
     confirmHandler: () => Promise<any> | void;
     content?: string;
+    hideOnClick?: boolean;
     placement?: Placement;
     theme?: 'primary' | 'danger';
     title: string;
     width?: number;
   }
+
+  type Emits = (e: 'toggleShow', value: boolean) => void;
 
   defineOptions({
     name: 'DbPopconfirm',
@@ -68,10 +71,12 @@
   const props = withDefaults(defineProps<Props>(), {
     cancelHandler: () => Promise.resolve(),
     content: '',
+    hideOnClick: true,
     placement: 'top',
     theme: 'primary',
     width: 280,
   });
+  const emits = defineEmits<Emits>();
 
   let tippyIns: Instance;
 
@@ -112,10 +117,16 @@
         appendTo: () => document.body,
         arrow: true,
         content: popRef.value,
-        hideOnClick: true,
+        hideOnClick: props.hideOnClick,
         interactive: true,
         maxWidth: 'none',
         offset: [0, 12],
+        onHide: () => {
+          emits('toggleShow', false);
+        },
+        onShow: () => {
+          emits('toggleShow', true);
+        },
         placement: props.placement,
         popperOptions: {
           modifiers: [

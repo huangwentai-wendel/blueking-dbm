@@ -27,14 +27,14 @@ from backend.ticket.builders.mysql.base import (
     MySQLBaseOperateDetailSerializer,
 )
 from backend.ticket.constants import FlowRetryType, TicketType
-from backend.utils.time import datetime2str, str2datetime
+from backend.utils.time import str2datetime
 
 
 class MySQLFlashbackDetailSerializer(MySQLBaseOperateDetailSerializer):
     class FlashbackSerializer(serializers.Serializer):
         cluster_id = serializers.IntegerField(help_text=_("集群ID"))
         start_time = DBTimezoneField(help_text=_("开始时间"))
-        end_time = DBTimezoneField(help_text=_("结束时间"), allow_blank=True)
+        end_time = DBTimezoneField(help_text=_("结束时间"), allow_blank=True, required=False, default="")
         databases = serializers.ListField(help_text=_("目标库列表"), child=DBTableField(db_field=True))
         databases_ignore = serializers.ListField(help_text=_("忽略库列表"), child=DBTableField(db_field=True))
         tables = serializers.ListField(help_text=_("目标table列表"), child=DBTableField())
@@ -45,6 +45,10 @@ class MySQLFlashbackDetailSerializer(MySQLBaseOperateDetailSerializer):
         recored_file = serializers.CharField(help_text=_("记录文件"), required=False, default="")
         rows_filter = serializers.CharField(help_text=_("待闪回记录"), required=False, default="")
         direct_write_back = serializers.BooleanField(help_text=_("是否覆盖原始数据"), required=False, default=False)
+        conv_rows_update_to_write = serializers.BooleanField(
+            help_text=_("update转replace"), required=False, default=False
+        )
+        filter_delete_rows_only = serializers.BooleanField(help_text=_("仅回滚delete"), required=False, default=False)
 
     infos = serializers.ListSerializer(help_text=_("flashback信息"), child=FlashbackSerializer(), allow_empty=False)
     force = serializers.BooleanField(help_text=_("是否强制执行"), required=False, default=False)
@@ -54,12 +58,12 @@ class MySQLFlashbackDetailSerializer(MySQLBaseOperateDetailSerializer):
         # 校验start time和end time的合法性
         for info in attrs["infos"]:
             now = datetime.datetime.now(timezone.utc)
-            info["end_time"] = info["end_time"] or datetime2str(now)
-            start_time, end_time = str2datetime(info["start_time"]), str2datetime(info["end_time"])
-            if start_time > end_time or start_time > now or end_time > now:
-                raise serializers.ValidationError(
-                    _("flash的起止时间{}--{}不合法，请保证开始时间小于结束时间，并且二者不大于当前时间").format(start_time, end_time)
-                )
+            if info["end_time"]:
+                start_time, end_time = str2datetime(info["start_time"]), str2datetime(info["end_time"])
+                if start_time > end_time or start_time > now or end_time > now:
+                    raise serializers.ValidationError(
+                        _("flash的起止时间{}--{}不合法，请保证开始时间小于结束时间，并且二者不大于当前时间").format(start_time, end_time)
+                    )
 
     def validate_rows_filter(self, attrs):
         if attrs["flashback_type"] not in FlashbackBuildType.get_values():
@@ -113,10 +117,9 @@ class MySQLFlashbackDetailSerializer(MySQLBaseOperateDetailSerializer):
                 raise serializers.ValidationError(_(info["message"]))
 
     def validate(self, attrs):
+        attrs = super().validate(attrs)
         # 校验闪回的时间
         self.validate_flash_time(attrs)
-        # 校验集群是否可用，集群类型为高可用
-        super(MySQLFlashbackDetailSerializer, self).validate_cluster_can_access(attrs)
         # 库表校验结果判断
         self.check_flashback_database_result(attrs)
         # 校验待闪回记录格式与字段是否存在

@@ -10,16 +10,18 @@ specific language governing permissions and limitations under the License.
 """
 from typing import Optional, Union
 
-from backend.db_meta.models import ProxyInstance, StorageInstance
+from django_stubs_ext import StrOrPromise
+
+from backend.db_meta.models import Machine, ProxyInstance, StorageInstance
 from backend.db_report.enums import MetaCheckSubType
 
 
 class CheckResponse:
     def __init__(
         self,
-        msg: str,
+        msg: StrOrPromise,
         check_subtype: MetaCheckSubType,
-        instance: Optional[Union[StorageInstance, ProxyInstance]] = None,
+        instance: Optional[Union[StorageInstance, ProxyInstance, Machine]] = None,
     ):
         self.msg = msg
         self.check_subtype = check_subtype

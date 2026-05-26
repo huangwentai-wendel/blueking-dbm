@@ -16,13 +16,13 @@ import traceback
 from django.db.models import QuerySet
 from django.utils import timezone
 from django.utils.crypto import get_random_string
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.configuration.models.dba import DBAdministrator
 from backend.db_meta.api.cluster.apis import query_cluster_by_hosts
-from backend.db_meta.enums import ClusterType, MachineType, MachineTypeInstanceRoleMap
-from backend.db_meta.models import Machine
+from backend.db_meta.enums import ClusterType, InstanceRole, MachineType, MachineTypeInstanceRoleMap
+from backend.db_meta.models import Cluster, Machine
 from backend.db_services.dbbase.constants import IpSource
 from backend.db_services.mongodb.autofix.mongodb_autofix_ticket import mongo_create_ticket
 from backend.db_services.redis.util import is_support_redis_auotfix
@@ -32,9 +32,11 @@ from backend.utils.time import datetime2str
 
 from .enums import AutofixItem, AutofixStatus
 from .message import get_ticket_heplers, send_msg_2_qywx
-from .models import RedisAutofixCore, RedisAutofixCtl
+from .models import RedisAutofixCore, RedisAutofixCtl, RedisIgnoreAutofix
 
 logger = logging.getLogger("root")
+
+FAILOVER_DRILL_DOMAIN_PREFIX: str = "cache.failover-drill-"
 
 
 def generate_autofix_ticket(fault_clusters: QuerySet):
@@ -61,7 +63,103 @@ def generate_autofix_ticket(fault_clusters: QuerySet):
             cluster.save(update_fields=["status_version", "deal_status", "update_at"])
             continue
 
+        # 忽略proxy和master 同时挂的情况下的自愈
+        if will_ignore_autofix_by_half_switch(cluster):
+            cluster.update_at = datetime2str(datetime.datetime.now(timezone.utc))
+            cluster.deal_status = AutofixStatus.AF_IGNORE.value
+            cluster.save(update_fields=["status_version", "deal_status", "update_at"])
+            continue
+
+        # 忽略 一个机器上有多种角色的实例自愈; 理论上不应该存在这种
+        if will_ignore_autofix_by_mutil_role(cluster):
+            # cluster.status_version = _("ignore_by_mutil_role:{}".format(get_random_string(12)))
+            cluster.update_at = datetime2str(datetime.datetime.now(timezone.utc))
+            cluster.deal_status = AutofixStatus.AF_IGNORE.value
+            cluster.save(update_fields=["status_version", "deal_status", "update_at"])
+            continue
+
+        # 如果已经创建了单据，则本次忽略，避免重复提单（实时从DB读取，避免内存缓存）
+        # 建议：select_for_update 强一致校验
+        from django.db import transaction
+
+        with transaction.atomic():
+            cluster_locked = RedisAutofixCore.objects.select_for_update().get(id=cluster.id)
+            if cluster_locked.ticket_id and cluster_locked.ticket_id > 0:
+                logger.info(
+                    "cluster_autofix skip duplicate, {} ticket_id={}".format(
+                        cluster.immute_domain, cluster_locked.ticket_id
+                    )
+                )
+                continue
+            # 在锁内创建单据
+
         generate_single_autofix_ticket(cluster)
+
+
+# 忽略 一个机器上有多种角色的实例自愈; 理论上不应该存在这种
+def will_ignore_autofix_by_mutil_role(tofix: RedisAutofixCore):
+    cluster = Cluster.objects.prefetch_related("storageinstance_set", "storageinstance_set__machine").get(
+        id=tofix.cluster_id
+    )
+    master_ips = set(
+        [
+            master.machine.ip
+            for master in cluster.storageinstance_set.filter(instance_role=InstanceRole.REDIS_MASTER.value)
+        ]
+    )
+    slave_ips = set(
+        [
+            slave.machine.ip
+            for slave in cluster.storageinstance_set.filter(instance_role=InstanceRole.REDIS_SLAVE.value)
+        ]
+    )
+    slave_ips2 = set(
+        [
+            obj.as_ejector.get().receiver.machine.ip
+            for obj in cluster.storageinstance_set.filter(instance_role=InstanceRole.REDIS_MASTER.value)
+        ]
+    )
+    mutil_role, diff_slave = {x for x in master_ips if x in slave_ips}, slave_ips ^ slave_ips2
+    logger.info(
+        """cluster_4_autofix before start check: {}#{}; mutile_role:{},diff_slaves:{};
+master_ips:{},slave_ips:{},slave_ips_by_tuple:{}""".format(
+            tofix.cluster_id, tofix.immute_domain, mutil_role, diff_slave, master_ips, slave_ips, slave_ips2
+        )
+    )
+    if mutil_role or diff_slave:
+        cluster.status_version = _("集群中存在同时是Master和Slave的IP:{} or {}".format(mutil_role, diff_slave))
+        msgs, title = {}, _("{} - 🥸🥸忽略自愈🥸🥸".format(cluster.immute_domain))
+        msgs[_("BKID")] = cluster.bk_biz_id
+        msgs[_("集群类型")] = cluster.cluster_type
+        msgs[_("故障机S")] = json.dumps(cluster.fault_machines)
+        msgs[_("忽略原因")] = _("屮-集群中存在同时是Master和Slave的IP:{} or {}".format(mutil_role, diff_slave))
+        send_msg_2_qywx(title, msgs)
+        return True
+    else:
+        return False
+
+
+# 如果 proxy 和后端master 同时挂， proxy自愈应该忽略
+def will_ignore_autofix_by_half_switch(cluster: RedisAutofixCore):
+    try:
+        half_switch = RedisIgnoreAutofix.objects.filter(
+            bk_biz_id=cluster.bk_biz_id,
+            cluster_id=cluster.cluster_id,
+            instance_type="redis_master",
+            create_at__gt=cluster.create_at - datetime.timedelta(minutes=30),
+        ).first()
+        if half_switch:
+            cluster.status_version = _("ignore_by_half_switch:{}".format(half_switch.sw_result))
+            msgs, title = {}, _("{} - 🥸忽略自愈🥸".format(cluster.immute_domain))
+            msgs[_("BKID")] = cluster.bk_biz_id
+            msgs[_("集群类型")] = cluster.cluster_type
+            msgs[_("故障机S")] = json.dumps(cluster.fault_machines)
+            msgs[_("忽略原因")] = _("(30分钟内)Redis部分切换: {}#{} ".format(half_switch.ip, json.dumps(half_switch.sw_result)))
+            send_msg_2_qywx(title, msgs)
+            return True
+        return False
+    except RedisIgnoreAutofix.DoesNotExist:
+        return False
 
 
 # 增加支持忽略自愈控制
@@ -92,7 +190,7 @@ def will_ignore_autofix_by_domain(cluster: RedisAutofixCore):
         msgs[_("BKID")] = cluster.bk_biz_id
         msgs[_("集群类型")] = cluster.cluster_type
         msgs[_("故障机S")] = json.dumps(cluster.fault_machines)
-        msgs[_("配置列表")] = _("配置了忽略自愈的集群列表: {} ".format(json.dumps(ignore_domains)))
+        msgs[_("忽略原因")] = _("存在配置了忽略的集群: {} ".format(json.dumps(ignore_domains)))
         send_msg_2_qywx(title, msgs)
         return True
     # 默认发起自愈
@@ -152,31 +250,51 @@ def generate_single_autofix_ticket(cluster: RedisAutofixCore):
                     "mongodb create autofix ticket for cluster {} , failed : {}".format(cluster.immute_domain, e)
                 )
             return
-        create_ticket(cluster, cluster_ids, redis_proxies, redis_slaves)
+        # 只鞥一次高一个角色，，sinc 2025-12-xxs
+        if len(redis_slaves) > 0:
+            create_ticket(cluster, cluster_ids, [], redis_slaves, InstanceRole.REDIS_SLAVE.value)
+        if len(redis_proxies) > 0:
+            create_ticket(cluster, cluster_ids, redis_proxies, [], InstanceRole.REDIS_PROXY.value)
     except Exception as e:
         logger.error("create autofix ticket for cluster {} , failed : {}".format(cluster.immute_domain, e))
-        cluster.status_version = "create ticket failed by : {}".format(e)
+        cluster.status_version = "create ticket failed by : {}".format(str(e)[:30])
         cluster.update_at = datetime2str(datetime.datetime.now(timezone.utc))
         cluster.deal_status = AutofixStatus.AF_FAIL.value
         cluster.save(update_fields=["status_version", "deal_status", "update_at"])
         return
 
 
-def create_ticket(cluster: RedisAutofixCore, cluster_ids: list, redis_proxies: list, redis_slaves: list):
+def create_ticket(
+    cluster: RedisAutofixCore, cluster_ids: list, redis_proxies: list, redis_slaves: list, fix_role: str
+):
     """redis自愈创建单据"""
+    is_failover_drill_cluster = cluster.immute_domain.startswith(FAILOVER_DRILL_DOMAIN_PREFIX)
     details = {
         "ip_source": IpSource.RESOURCE_POOL.value,
-        "infos": [
-            {
-                "cluster_ids": cluster_ids,
-                "immute_domain": cluster.immute_domain,
-                "bk_cloud_id": cluster.bk_cloud_id,
-                "bk_biz_id": cluster.bk_biz_id,
-                "proxy": redis_proxies,
-                "redis_slave": redis_slaves,
-            }
-        ],
+        "infos": [],
     }
+    info = {
+        "cluster_ids": cluster_ids,
+        "immute_domain": cluster.immute_domain,
+        "bk_cloud_id": cluster.bk_cloud_id,
+        "bk_biz_id": cluster.bk_biz_id,
+        "proxy": redis_proxies,
+        "redis_slave": redis_slaves,
+        "switch_role": fix_role,  # 兼容整机替换
+        "resource_spec": {},
+        "need_manual_confirm": not is_failover_drill_cluster,
+    }
+    if fix_role == InstanceRole.REDIS_PROXY.value:
+        info["resource_spec"] = {
+            "new_proxy": {"spec_id": redis_proxies[0]["spec_id"], "count": len(redis_proxies)}  # proxy的规格id  # 替换的数量
+        }
+    elif fix_role == InstanceRole.REDIS_SLAVE.value:
+        for slave in redis_slaves:
+            info["resource_spec"]["redis_slave_{}".format(slave["ip"])] = {
+                "spec_id": slave["spec_id"],
+                "count": 1,  # 替换的数量
+            }
+    details["infos"].append(info)
     logger.info("create ticket for cluster {} , details : {}".format(cluster.immute_domain, details))
     ips = ["{}:{}".format(host["instance_type"], host["ip"]) for host in redis_proxies + redis_slaves]
 
@@ -186,6 +304,7 @@ def create_ticket(cluster: RedisAutofixCore, cluster_ids: list, redis_proxies: l
         # 如果不存在，则取默认值
         redisDBA = DBAdministrator.objects.get(bk_biz_id=0, db_type=DBType.Redis.value)
 
+    cluster.update_at = datetime2str(datetime.datetime.now(timezone.utc))
     # 初始化builder类
     try:
         ticket = Ticket.create_ticket(
@@ -201,6 +320,10 @@ def create_ticket(cluster: RedisAutofixCore, cluster_ids: list, redis_proxies: l
         cluster.status_version = get_random_string(12)
         cluster.deal_status = AutofixStatus.AF_WFLOW.value
 
+        # 更新DB状态
+        cluster.save(update_fields=["ticket_id", "status_version", "deal_status", "update_at"])
+        logger.info("create ticket for cluster {}, details : {}".format(cluster.immute_domain, details))
+
         msgs, title = {}, _("{} - 发起自愈".format(cluster.immute_domain))
         msgs[_("BKID")] = cluster.bk_biz_id
         msgs[_("流程ID")] = ticket.id
@@ -210,13 +333,10 @@ def create_ticket(cluster: RedisAutofixCore, cluster_ids: list, redis_proxies: l
         send_msg_2_qywx(title, msgs)
     except Exception as e:
         cluster.deal_status = AutofixStatus.AF_FAIL.value
-        cluster.status_version = str(e)
+        cluster.status_version = str(e)[:50]
+        cluster.save(update_fields=["status_version", "deal_status", "update_at"])
         logger.error(
             "create ticket for cluster {} failed, details : {}::{}".format(
                 cluster.immute_domain, details, traceback.format_exc()
             )
         )
-
-    logger.info("create ticket for cluster {} failed, details : {}".format(cluster.immute_domain, details))
-    cluster.update_at = datetime2str(datetime.datetime.now(timezone.utc))
-    cluster.save(update_fields=["ticket_id", "status_version", "deal_status", "update_at"])

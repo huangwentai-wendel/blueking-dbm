@@ -20,9 +20,6 @@
     <InfoItem :label="t('业务英文名')">
       {{ ticketDetails.db_app_abbr || '--' }}
     </InfoItem>
-    <InfoItem :label="t('集群ID')">
-      {{ ticketDetails.details.cluster_id || '--' }}
-    </InfoItem>
     <InfoItem :label="t('集群名称')">
       {{ ticketDetails.details.cluster_name || '--' }}
     </InfoItem>
@@ -46,52 +43,113 @@
   <div class="info-title mt-20">{{ t('需求信息') }}</div>
   <InfoList>
     <InfoItem :label="t('Config Server资源规格')">
-      <BkPopover
+      <SpecDetailPopover
         v-if="configServerSpec"
-        placement="top"
-        theme="light">
+        :data="configServerSpec"
+        placement="top">
         <span
           class="pb-2"
           style="cursor: pointer; border-bottom: 1px dashed #979ba5">
           {{ configServerSpec.spec_name }}（{{ `${configServerSpec.count} ${t('台')}` }}）
         </span>
-        <template #content>
-          <SpecInfos :data="configServerSpec" />
-        </template>
-      </BkPopover>
+      </SpecDetailPopover>
       <span v-else>--</span>
     </InfoItem>
+    <InfoItem :label="t('Config Server 资源标签')">
+      <template v-if="configServerSpec && configServerSpec.label_names?.length">
+        <BkTag
+          v-for="item in configServerSpec.label_names"
+          :key="item">
+          {{ item }}
+        </BkTag>
+      </template>
+      <BkTag
+        v-else
+        theme="success">
+        {{ t('通用无标签') }}
+      </BkTag>
+    </InfoItem>
     <InfoItem :label="t('Mongos资源规格')">
-      <BkPopover
+      <SpecDetailPopover
         v-if="mongosSpec"
-        placement="top"
-        theme="light">
+        :data="mongosSpec"
+        placement="top">
         <span
           class="pb-2"
           style="cursor: pointer; border-bottom: 1px dashed #979ba5">
           {{ mongosSpec.spec_name }}（{{ `${mongosSpec.count} ${t('台')}` }}）
         </span>
-        <template #content>
-          <SpecInfos :data="mongosSpec" />
-        </template>
-      </BkPopover>
+      </SpecDetailPopover>
       <span v-else>--</span>
     </InfoItem>
-    <InfoItem :label="t('ShardSvr资源规格')">
-      <BkPopover
-        v-if="shardSvrSpec"
-        placement="top"
-        theme="light">
-        <span
-          class="pb-2"
-          style="cursor: pointer; border-bottom: 1px dashed #979ba5">
-          {{ shardSvrSpec.spec_name }}（{{ `${shardSvrSpec.count} ${t('台')}` }}）
-        </span>
-        <template #content>
-          <SpecInfos :data="shardSvrSpec" />
-        </template>
-      </BkPopover>
-      <span v-else>--</span>
+    <InfoItem :label="t('Mongos 资源标签')">
+      <template v-if="mongosSpec && mongosSpec.label_names?.length">
+        <BkTag
+          v-for="item in mongosSpec.label_names"
+          :key="item">
+          {{ item }}
+        </BkTag>
+      </template>
+      <BkTag
+        v-else
+        theme="success">
+        {{ t('通用无标签') }}
+      </BkTag>
+    </InfoItem>
+    <InfoItem
+      :label="t('ShardSvr 部署方案')"
+      style="flex: 1 0 100%">
+      <TicketInfoTable
+        :data="[shardSvrSpec]"
+        row-key="spec_id">
+        <TicketInfoTableColumn
+          col-key="spec_name"
+          :title="t('规格')">
+        </TicketInfoTableColumn>
+        <TicketInfoTableColumn
+          col-key="label_names"
+          :min-width="200"
+          :title="t('资源标签')">
+          <template #default>
+            <template v-if="ticketDetails.details.resource_spec.mongodb.label_names?.length">
+              <BkTag
+                v-for="item in ticketDetails.details.resource_spec.mongodb.label_names"
+                :key="item">
+                {{ item }}
+              </BkTag>
+            </template>
+            <BkTag
+              v-else
+              theme="success">
+              {{ t('通用无标签') }}
+            </BkTag>
+          </template>
+        </TicketInfoTableColumn>
+        <TicketInfoTableColumn
+          col-key="machine_pair"
+          :title="t('每个 Shard 节点数')">
+          <template #default="{ row }: { row: Props['ticketDetails']['details']['resource_spec']['mongodb'] }">
+            {{ row.count / ticketDetails.details.shard_machine_group }}
+          </template>
+        </TicketInfoTableColumn>
+        <TicketInfoTableColumn
+          col-key="cluster_shard_num"
+          :title="t('集群 Shard 数')">
+          <template #default>
+            {{ ticketDetails.details.shard_num }}
+          </template>
+        </TicketInfoTableColumn>
+        <TicketInfoTableColumn
+          col-key="cluster_shard_num"
+          :title="t('机器组数')">
+          <template #default>
+            {{ ticketDetails.details.shard_machine_group }}
+          </template>
+        </TicketInfoTableColumn>
+      </TicketInfoTable>
+    </InfoItem>
+    <InfoItem :label="t('每台主机 oplog 容量占比')">
+      {{ ticketDetails.details.oplog_percent ? `${ticketDetails.details.oplog_percent} %` : '--' }}
     </InfoItem>
   </InfoList>
 </template>
@@ -103,9 +161,10 @@
 
   import { TicketTypes } from '@common/const';
 
+  import SpecDetailPopover from '@components/spec-detail-popover/Index.vue';
+
   import InfoList, { Item as InfoItem } from '../components/info-list/Index.vue';
-  import RegionRequirements from '../components/RegionRequirements.vue';
-  import SpecInfos from '../components/SpecInfos.vue';
+  import RegionRequirements from '../components/RegionRequirementsMongodb.vue';
 
   interface Props {
     ticketDetails: TicketModel<Mongodb.ShardApply>;

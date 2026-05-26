@@ -19,9 +19,16 @@
         theme="info">
         {{ t('全局') }}
       </BkTag>
-      <ImportHostBtn
+      <AuthButton
+        action-id="resource_pool_manage"
         class="w-88"
-        @export-host="handleImportHost" />
+        theme="primary"
+        @click="handleImportHost">
+        <DbIcon
+          class="mr-6"
+          type="add" />
+        {{ t('导入主机') }}
+      </AuthButton>
     </Teleport>
     <BkTab
       v-model:active="activeTab"
@@ -29,7 +36,7 @@
       type="unborder-card"
       @change="handleChange">
       <BkTabPanel
-        v-for="item in panels"
+        v-for="item in renderPanels"
         :key="item.name"
         :label="item.label"
         :name="item.name" />
@@ -48,32 +55,49 @@
 
   import { useDebouncedRef } from '@hooks';
 
+  import { useFunController } from '@stores';
+
   import ImportHost from '../components/host-list/components/import-host/Index.vue';
-  import ImportHostBtn from '../components/host-list/components/ImportHostBtn.vue';
   import HostList from '../components/host-list/Index.vue';
+  import ReplenishList from '../components/replenish-list/Index.vue';
   import SummaryView from '../components/summary-view/Index.vue';
 
   const { t } = useI18n();
   const router = useRouter();
   const route = useRoute();
+  const funControllerStore = useFunController();
 
   const isShowImportHost = ref(false);
 
-  const panels = [
-    {
-      label: t('主机列表'),
-      name: 'host-list',
-    },
-    {
-      label: t('统计视图'),
-      name: 'summary-view',
-    },
-  ];
+  const renderPanels = computed(() => {
+    const panels = [
+      {
+        label: t('主机列表'),
+        name: 'host-list',
+      },
+      {
+        label: t('统计视图'),
+        name: 'summary-view',
+      },
+    ];
+
+    const resourceManage = funControllerStore.funControllerData?.getFlatData('resourceManage');
+
+    if (resourceManage?.replenishList) {
+      panels.push({
+        label: t('待补货列表'),
+        name: 'replenish-list',
+      });
+    }
+
+    return panels;
+  });
 
   const activeTab = useDebouncedRef(route.params.page as string);
 
   const renderComponentMap = {
     'host-list': HostList,
+    'replenish-list': ReplenishList,
     'summary-view': SummaryView,
   };
 
@@ -105,6 +129,10 @@
     padding: 0 24px;
     background: #fff;
     box-shadow: 0 3px 4px 0 rgb(0 0 0 / 4%);
+
+    :deep(.bk-tab-header-active-bar) {
+      transition: none;
+    }
 
     :deep(.bk-tab-content) {
       display: none;

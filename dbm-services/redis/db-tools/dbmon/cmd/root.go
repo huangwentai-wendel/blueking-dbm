@@ -8,6 +8,8 @@ import (
 	_ "net/http/pprof" // pprof TODO
 	"os"
 	"runtime/debug"
+	"strings"
+	"time"
 
 	"dbm-services/redis/db-tools/dbmon/config"
 	"dbm-services/redis/db-tools/dbmon/mylog"
@@ -16,7 +18,6 @@ import (
 	"dbm-services/redis/db-tools/dbmon/pkg/failednodehandle"
 	"dbm-services/redis/db-tools/dbmon/pkg/httpapi"
 	"dbm-services/redis/db-tools/dbmon/pkg/keylifecycle"
-	"dbm-services/redis/db-tools/dbmon/pkg/mongojob"
 	"dbm-services/redis/db-tools/dbmon/pkg/monitormemoryusage"
 	"dbm-services/redis/db-tools/dbmon/pkg/redisbinlogbackup"
 	"dbm-services/redis/db-tools/dbmon/pkg/redisfullbackup"
@@ -26,6 +27,7 @@ import (
 	"dbm-services/redis/db-tools/dbmon/pkg/redisnodesreport"
 	"dbm-services/redis/db-tools/dbmon/pkg/redistaillog"
 	"dbm-services/redis/db-tools/dbmon/pkg/report"
+	"dbm-services/redis/db-tools/dbmon/pkg/reverseapi"
 
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
@@ -69,157 +71,144 @@ Buildstamp:%s`, version, githash, buildstamp),
 		var entryID cron.EntryID
 		var err error
 
-		hasMongo, hasRedis, _ := getDbType(config.GlobalConf.Servers)
-
-		if hasMongo && hasRedis {
-			mylog.Logger.Fatal("dbmon not support mongo and redis at the same time")
-		}
-
-		c := cron.New(
+		c := cron.New(cron.WithSeconds(),
 			cron.WithLogger(mylog.GlobCronLogger),
 		)
-		if hasRedis {
-			// 默认每小时执行一次清理
-			entryID, err = c.AddJob("0 1 * * *",
+
+		// 默认每小时执行一次清理
+		entryID, err = c.AddJob("0 0 1 * * *",
+			cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
+				report.GetGlobalHistoryClearJob(config.GlobalConf),
+			))
+		if err != nil {
+			log.Panicf("reportHistoryClear addjob fail,entryID:%d,err:%v\n", entryID, err)
+			return
+		}
+		mylog.Logger.Info(fmt.Sprintf("create cron GlobHistoryClearJob success,entryID:%d", entryID))
+		// dbmon 心跳
+		entryID, err = c.AddJob("@every 1m",
+			cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
+				dbmonheartbeat.GetGlobDbmonHeartbeatJob(config.GlobalConf)))
+		if err != nil {
+			fmt.Printf("dbmonheartbeat addjob fail,entryID:%d,err:%v\n", entryID, err)
+			return
+		}
+		mylog.Logger.Info(fmt.Sprintf("create cron GlobDbmonHeartbeatJob success,entryID:%d", entryID))
+
+		// redis log 实时上报,每 1 分钟执行一次
+		entryID, err = c.AddJob("@every 1m",
+			cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
+				redistaillog.GetGlobRedisTailLogJob(config.GlobalConf)))
+		if err != nil {
+			fmt.Printf("redistaillog addjob fail,entryID:%d,err:%v\n", entryID, err)
+			return
+		}
+		mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisTailLogJob success,entryID:%d", entryID))
+
+		if config.GlobalConf.RedisFullBackup.Cron != "" {
+			entryID, err = c.AddJob(cronTo6Expr(config.GlobalConf.RedisFullBackup.Cron),
 				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-					report.GetGlobalHistoryClearJob(config.GlobalConf),
+					redisfullbackup.GetGlobRedisFullBackupJob(config.GlobalConf),
 				))
 			if err != nil {
-				log.Panicf("reportHistoryClear addjob fail,entryID:%d,err:%v\n", entryID, err)
+				log.Panicf("fullbackup addjob fail,entryID:%d,err:%v\n", entryID, err)
 				return
 			}
-			mylog.Logger.Info(fmt.Sprintf("create cron GlobHistoryClearJob success,entryID:%d", entryID))
-			// dbmon 心跳
-			entryID, err = c.AddJob("@every 1m",
-				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-					dbmonheartbeat.GetGlobDbmonHeartbeatJob(config.GlobalConf)))
-			if err != nil {
-				fmt.Printf("dbmonheartbeat addjob fail,entryID:%d,err:%v\n", entryID, err)
-				return
-			}
-			mylog.Logger.Info(fmt.Sprintf("create cron GlobDbmonHeartbeatJob success,entryID:%d", entryID))
-
-			// redis log 实时上报,每 1 分钟执行一次
-			entryID, err = c.AddJob("@every 1m",
-				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-					redistaillog.GetGlobRedisTailLogJob(config.GlobalConf)))
-			if err != nil {
-				fmt.Printf("redistaillog addjob fail,entryID:%d,err:%v\n", entryID, err)
-				return
-			}
-			mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisTailLogJob success,entryID:%d", entryID))
-
-			if config.GlobalConf.RedisFullBackup.Cron != "" {
-				entryID, err = c.AddJob(config.GlobalConf.RedisFullBackup.Cron,
-					cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-						redisfullbackup.GetGlobRedisFullBackupJob(config.GlobalConf),
-					))
-				if err != nil {
-					log.Panicf("fullbackup addjob fail,entryID:%d,err:%v\n", entryID, err)
-					return
-				}
-				mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisFullBackupJob success,entryID:%d", entryID))
-			}
-			if config.GlobalConf.RedisBinlogBackup.Cron != "" {
-				entryID, err = c.AddJob(config.GlobalConf.RedisBinlogBackup.Cron,
-					cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-						redisbinlogbackup.GetGlobRedisBinlogBackupJob(config.GlobalConf),
-					))
-				if err != nil {
-					log.Panicf("binlogbackup addjob fail,entryID:%d,err:%v\n", entryID, err)
-					return
-				}
-				mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisBinlogBackupJob success,entryID:%d", entryID))
-
-				entryID, err = c.AddJob(config.GlobalConf.RedisBinlogBackup.Cron,
-					cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-						redisfullbackup.GetGlobRedisFullCheckJob(config.GlobalConf),
-					))
-				if err != nil {
-					log.Panicf("fullcheck addjob fail,entryID:%d,err:%v\n", entryID, err)
-					return
-				}
-				mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisFullCheckJob success,entryID:%d", entryID))
-			}
-			if config.GlobalConf.RedisHeartbeat.Cron != "" {
-				entryID, err = c.AddJob(config.GlobalConf.RedisHeartbeat.Cron,
-					cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-						redisheartbeat.GetGlobRedisHeartbeatJob(config.GlobalConf),
-					))
-				if err != nil {
-					fmt.Printf("heartbeat addjob fail,entryID:%d,err:%v\n", entryID, err)
-					return
-				}
-				mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisHeartbeatJob success,entryID:%d", entryID))
-			}
-			if config.GlobalConf.RedisMonitor.Cron != "" {
-				entryID, err = c.AddJob(config.GlobalConf.RedisMonitor.Cron,
-					cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-						redismonitor.GetGlobRedisMonitorJob(config.GlobalConf),
-					))
-				if err != nil {
-					fmt.Printf("monitor addjob fail,entryID:%d,err:%v\n", entryID, err)
-					return
-				}
-				mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisMonitorJob success,entryID:%d", entryID))
-
-				entryID, err = c.AddJob(config.GlobalConf.RedisMonitor.Cron,
-					cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-						redisnodesreport.GetGlobRedisNodesReportJob(config.GlobalConf),
-					))
-				if err != nil {
-					fmt.Printf("redisnodesreport addjob fail,entryID:%d,err:%v\n", entryID, err)
-					return
-				}
-				mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisNodesReportJob success,entryID:%d", entryID))
-			}
-			if config.GlobalConf.KeyLifeCycle.Cron != "" {
-				entryID, err = c.AddJob(config.GlobalConf.KeyLifeCycle.Cron,
-					cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-						keylifecycle.GetRedisKeyLifeCycleJob(config.GlobalConf),
-					))
-				if err != nil {
-					fmt.Printf("keylifecycle addjob fail,entryID:%d,err:%v\n", entryID, err)
-					return
-				}
-				mylog.Logger.Info(fmt.Sprintf("create cron RedisKeyLifeCycleJob success,entryID:%d", entryID))
-			}
-			// 动态设置 maxmemory
-			entryID, err = c.AddJob("@every 10s",
-				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-					redismaxmemory.GetGlobRedisMaxmemorySet(config.GlobalConf)))
-			if err != nil {
-				fmt.Printf("redis maxmemory_set addjob fail,entryID:%d,err:%v\n", entryID, err)
-				return
-			}
-			mylog.Logger.Info(fmt.Sprintf("create cron GRedisMaxmemorySetJob success,entryID:%d", entryID))
-			// 清理cluster nodes中failed节点
-			entryID, err = c.AddJob("@every 1m",
-				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-					failednodehandle.GetGlobFailedNodeHandleJob(config.GlobalConf)))
-			if err != nil {
-				fmt.Printf("redis failed_node_handle addjob fail,entryID:%d,err:%v\n", entryID, err)
-				return
-			}
-			mylog.Logger.Info(fmt.Sprintf("create cron GetGlobFailedNodeHandleJob success,entryID:%d", entryID))
-		} else if hasMongo {
-
-			// Login 登录检查和拉起
-			entryID, err = c.AddJob("@every 1m",
-				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-					mongojob.GetBackupJob(config.GlobalConf)))
-
-			if err != nil {
-				log.Panicf("mongo backup addjob fail,entryID:%d,err:%v\n", entryID, err)
-				return
-			}
-
-			entryID, err = c.AddJob("@every 1m",
-				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
-					mongojob.GetCheckServiceJob(config.GlobalConf)))
-
-		} else {
+			mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisFullBackupJob success,entryID:%d", entryID))
 		}
+		if config.GlobalConf.RedisBinlogBackup.Cron != "" {
+			entryID, err = c.AddJob(cronTo6Expr(config.GlobalConf.RedisBinlogBackup.Cron),
+				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
+					redisbinlogbackup.GetGlobRedisBinlogBackupJob(config.GlobalConf),
+				))
+			if err != nil {
+				log.Panicf("binlogbackup addjob fail,entryID:%d,err:%v\n", entryID, err)
+				return
+			}
+			mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisBinlogBackupJob success,entryID:%d", entryID))
+
+			entryID, err = c.AddJob(cronTo6Expr(config.GlobalConf.RedisBinlogBackup.Cron),
+				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
+					redisfullbackup.GetGlobRedisFullCheckJob(config.GlobalConf),
+				))
+			if err != nil {
+				log.Panicf("fullcheck addjob fail,entryID:%d,err:%v\n", entryID, err)
+				return
+			}
+			mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisFullCheckJob success,entryID:%d", entryID))
+		}
+		if config.GlobalConf.RedisHeartbeat.Cron != "" {
+			entryID, err = c.AddJob(cronTo6Expr(config.GlobalConf.RedisHeartbeat.Cron),
+				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
+					redisheartbeat.GetGlobRedisHeartbeatJob(config.GlobalConf),
+				))
+			if err != nil {
+				fmt.Printf("heartbeat addjob fail,entryID:%d,err:%v\n", entryID, err)
+				return
+			}
+			mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisHeartbeatJob success,entryID:%d", entryID))
+		}
+		if config.GlobalConf.RedisMonitor.Cron != "" {
+			entryID, err = c.AddJob(cronTo6Expr(config.GlobalConf.RedisMonitor.Cron),
+				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
+					redismonitor.GetGlobRedisMonitorJob(config.GlobalConf),
+				))
+			if err != nil {
+				log.Panicf("monitor addjob fail,entryID:%d,err:%v\n", entryID, err)
+				return
+			}
+			mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisMonitorJob success,entryID:%d", entryID))
+
+			entryID, err = c.AddJob(cronTo6Expr(config.GlobalConf.RedisMonitor.Cron),
+				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
+					redisnodesreport.GetGlobRedisNodesReportJob(config.GlobalConf),
+				))
+			if err != nil {
+				fmt.Printf("redisnodesreport addjob fail,entryID:%d,err:%v\n", entryID, err)
+				return
+			}
+			mylog.Logger.Info(fmt.Sprintf("create cron GlobRedisNodesReportJob success,entryID:%d", entryID))
+		}
+		if config.GlobalConf.KeyLifeCycle.Cron != "" {
+			entryID, err = c.AddJob(cronTo6Expr(config.GlobalConf.KeyLifeCycle.Cron),
+				cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
+					keylifecycle.GetRedisKeyLifeCycleJob(config.GlobalConf),
+				))
+			if err != nil {
+				fmt.Printf("keylifecycle addjob fail,entryID:%d,err:%v\n", entryID, err)
+				return
+			}
+			mylog.Logger.Info(fmt.Sprintf("create cron RedisKeyLifeCycleJob success,entryID:%d", entryID))
+		}
+		// 动态设置 maxmemory
+		entryID, err = c.AddJob("@every 10s",
+			cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
+				redismaxmemory.GetGlobRedisMaxmemorySet(config.GlobalConf)))
+		if err != nil {
+			fmt.Printf("redis maxmemory_set addjob fail,entryID:%d,err:%v\n", entryID, err)
+			return
+		}
+		mylog.Logger.Info(fmt.Sprintf("create cron GRedisMaxmemorySetJob success,entryID:%d", entryID))
+		// 清理cluster nodes中failed节点
+		entryID, err = c.AddJob("@every 1m",
+			cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
+				failednodehandle.GetGlobFailedNodeHandleJob(config.GlobalConf)))
+		if err != nil {
+			fmt.Printf("redis failed_node_handle addjob fail,entryID:%d,err:%v\n", entryID, err)
+			return
+		}
+		mylog.Logger.Info(fmt.Sprintf("create cron GetGlobFailedNodeHandleJob success,entryID:%d", entryID))
+
+		// 定期更新Ngnix反向地址
+		entryID, err = c.AddJob("@every 1m",
+			cron.NewChain(cron.SkipIfStillRunning(mylog.GlobCronLogger)).Then(
+				reverseapi.GetReverseJob(config.GlobalConf)))
+		if err != nil {
+			fmt.Printf("redis ngnix_reverse addjob fail,entryID:%d,err:%v\n", entryID, err)
+			return
+		}
+		mylog.Logger.Info(fmt.Sprintf("create cron GetNgnixReverseJob success,entryID:%d", entryID))
+
 		mylog.Logger.Info(fmt.Sprintf("start cron job,entryID:%d Listen:%s\n", entryID, config.GlobalConf.HttpAddress))
 		c.Start()
 		// 检测dbmon内存使用情况,超过500MB则退出
@@ -227,6 +216,13 @@ Buildstamp:%s`, version, githash, buildstamp),
 		go func() {
 			http.ListenAndServe("127.0.0.1:6600", nil)
 		}()
+
+		// 打印所有任务的下次执行时间
+		entries := c.Entries()
+		for _, entry := range entries {
+			mylog.Logger.Info(fmt.Sprintf("📅 Entry %d will run at: %v (in %v)",
+				entry.ID, entry.Next, time.Until(entry.Next)))
+		}
 		httpapi.StartListen(config.GlobalConf)
 	},
 }
@@ -255,15 +251,11 @@ func init() {
 
 }
 
-// getDbType TODO
-// return getDbType
-func getDbType(servers []config.ConfServerItem) (hasMongo, hasRedis bool, err error) {
-	for _, row := range servers {
-		if consts.IsMongo(row.ClusterType) {
-			hasMongo = true
-		} else {
-			hasRedis = true
-		}
+func cronTo6Expr(cexpr string) string {
+	// 如果是 5 字段格式，转换为 6 字段
+	if len(strings.Fields(cexpr)) == 5 {
+		cexpr = "0 " + cexpr
+		mylog.Logger.Info(fmt.Sprintf("Converted to 6-field format: '%s'", cexpr))
 	}
-	return
+	return cexpr
 }

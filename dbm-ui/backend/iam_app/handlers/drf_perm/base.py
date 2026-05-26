@@ -37,6 +37,23 @@ def get_request_key_id(request, key, default=None):
         return request.data.get(key, context_key)
 
 
+def get_alarm_shield_request_key_id(request, key, default=None):
+    """获取告警事件鉴权当前业务id"""
+    dimension_config = get_request_key_id(request, "dimension_config", {})
+    dimension_conditions = dimension_config.get("dimension_conditions", [])
+    appid_value = next(
+        (
+            int(cond["value"][0])
+            for cond in dimension_conditions
+            if (cond["key"] == "appid" or cond["key"] == "tags.appid")
+            and isinstance(cond["value"], list)
+            and len(cond["value"]) > 0
+        ),
+        None,
+    )
+    return appid_value or request.parser_context["kwargs"].get(key, default)
+
+
 class CommonInstance(object):
     def __init__(self, data):
         self.instance_id = data.get("id", DEFAULT_EMPTY_VALUE)
@@ -159,7 +176,7 @@ class ResourceActionPermission(IAMPermission):
         super(ResourceActionPermission, self).__init__(actions)
 
     def get_key_id(self, request, view, key, many=False):
-        if hasattr(self, key):
+        if getattr(self, key, None):
             key_id = getattr(self, key)
         else:
             key_id = view.kwargs.get(key) or get_request_key_id(request, key)
@@ -259,7 +276,10 @@ class DBManagePermission(ResourceActionPermission):
         super().__init__(self.actions, self.resource_meta, instance_ids_getter=self.instance_biz_id_getter)
 
     def instance_biz_id_getter(self, request, view):
-        return self.get_key_id(request, view, self.resource_meta.id, many=True)
+        return self.get_key_id(request, view, self.resource_meta.lookup_field, many=True)
+
+    def has_permission(self, request, view):
+        return super().has_permission(request, view)
 
 
 class BizOrGlobalResourceActionPermission(ResourceActionPermission):

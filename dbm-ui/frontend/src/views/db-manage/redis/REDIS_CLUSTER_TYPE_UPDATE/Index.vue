@@ -15,17 +15,22 @@
   <SmartAction>
     <div class="cluster-shard-update">
       <BkAlert
+        class="mb-20"
         closable
         theme="info"
         :title="t('集群类型变更：通过部署新集群来实现原集群的类型变更，可以指定新的版本')" />
+      <!-- <BatchInput
+        :config="batchInputConfig"
+        @change="handleBatchInput" /> -->
       <DbForm
         ref="form"
         class="toolbox-form mt-16"
         form-type="vertical"
         :model="formData">
         <EditableTable
+          :key="tableKey"
           ref="editableTable"
-          class="mt16 mb16"
+          class="mt-16 mb-16"
           :model="formData.tableData">
           <EditableRow
             v-for="(item, index) in formData.tableData"
@@ -40,6 +45,7 @@
               @batch-edit="handleClusterBatchEdit" />
             <EditableColumn
               :label="t('源集群类型')"
+              readonly
               :width="200">
               <EditableBlock :placeholder="t('选择集群后自动生成')">
                 {{ item.cluster.cluster_type_name }}
@@ -47,6 +53,7 @@
             </EditableColumn>
             <EditableColumn
               :label="t('源集群容量')"
+              readonly
               :width="200">
               <EditableBlock :placeholder="t('选择集群后自动生成')">
                 {{
@@ -61,6 +68,7 @@
               :cluster="item.cluster" />
             <TargetVersionSelectColumn
               v-model="item.db_version"
+              :cluster-id="item.cluster.id"
               :target-cluster-type="item.target_cluster_type" />
             <TargetCapacityColumn
               v-model="item.target_capacity"
@@ -69,6 +77,7 @@
               :title="t('选择集群类型变更部署方案')" />
             <EditableColumn
               :label="t('切换模式')"
+              readonly
               :width="200">
               <template #head>
                 <BkPopover
@@ -147,7 +156,7 @@
         :content="t('重置将会清空当前填写的所有内容_请谨慎操作')"
         :title="t('确认重置页面')">
         <BkButton
-          class="ml8 w-88"
+          class="ml-8 w-88"
           :disabled="isSubmitting">
           {{ t('重置') }}
         </BkButton>
@@ -157,6 +166,7 @@
 </template>
 
 <script setup lang="ts">
+  import type { ComponentProps } from 'vue-component-type-helpers';
   import { useI18n } from 'vue-i18n';
 
   import RedisModel from '@services/model/redis/redis';
@@ -170,11 +180,15 @@
 
   import { type TabItem } from '@components/cluster-selector/Index.vue';
 
+  // import BatchInput from '@views/db-manage/common/batch-input/Index.vue';
+  import ResourceTagColumn from '@views/db-manage/common/toolbox-field/column/resource-tag-column/Index.vue';
   import TicketPayload, {
     createTickePayload,
   } from '@views/db-manage/common/toolbox-field/form-item/ticket-payload/Index.vue';
   import { repairAndVerifyFrequencyList, repairAndVerifyTypeList } from '@views/db-manage/redis/common/const';
   import ClusterColumn from '@views/db-manage/redis/common/toolbox-field/cluster-column/Index.vue';
+
+  import { random } from '@utils';
 
   import TargetCapacityColumn from './components/target-capacity-column/Index.vue';
   import TargetClusterTypeColumn from './components/TargetClusterTypeColumn.vue';
@@ -186,7 +200,7 @@
       cluster_capacity: number;
       cluster_shard_num: number;
       cluster_spec: RedisModel['cluster_spec'];
-      cluster_type: string;
+      cluster_type: ClusterTypes;
       cluster_type_name: string;
       disaster_tolerance_level: string;
       id: number;
@@ -194,6 +208,7 @@
       major_version: string;
       master_domain: string;
       proxy: RedisModel['proxy'];
+      region: string;
     };
     db_version: string;
     target_capacity: {
@@ -201,12 +216,13 @@
       cluster_shard_num: number;
       count: string | number;
       future_capacity: number;
+      labels: ComponentProps<typeof ResourceTagColumn>['modelValue'];
       spec_id: number;
     };
     target_cluster_type: string;
   }
 
-  const createRowData = (values = {} as Partial<IDataRow>) => ({
+  const createRowData = (values: DeepPartial<IDataRow> = {}) => ({
     cluster: Object.assign(
       {
         bk_cloud_id: 0,
@@ -221,6 +237,7 @@
         major_version: '',
         master_domain: '',
         proxy: [] as RedisModel['proxy'],
+        region: '',
       },
       values.cluster,
     ),
@@ -231,6 +248,7 @@
         cluster_shard_num: 0,
         count: '' as string | number,
         future_capacity: 0,
+        labels: [] as IDataRow['target_capacity']['labels'],
         spec_id: 0,
       },
       values.target_capacity,
@@ -248,7 +266,7 @@
   const { t } = useI18n();
 
   // 单据克隆
-  useTicketDetail<Redis.ClusterTypeUpdate>(TicketTypes.REDIS_CLUSTER_TYPE_UPDATE, {
+  useTicketDetail<Redis.ResourcePool.ClusterTypeUpdate>(TicketTypes.REDIS_CLUSTER_TYPE_UPDATE, {
     onSuccess(ticketDetail) {
       const { details } = ticketDetail;
       const { clusters, infos } = details;
@@ -282,34 +300,31 @@
       execution_frequency: string;
       type: string;
     };
-    infos: {
-      capacity: number;
-      cluster_shard_num: number;
-      current_cluster_type: string;
-      current_shard_num: number;
-      current_spec_id: number;
-      db_version: string;
-      future_capacity: number;
-      online_switch_type: 'user_confirm';
-      resource_spec: {
-        backend_group: {
-          affinity: string;
-          count: number; // 机器组数
-          spec_id: number;
-        };
-        proxy: {
-          affinity: string;
-          count: number;
-          spec_id: number;
-        };
-      };
-      src_cluster: number;
-      target_cluster_type: string;
-    }[];
+    infos: Redis.ResourcePool.ClusterTypeUpdate['infos'];
     ip_source: 'resource_pool';
   }>(TicketTypes.REDIS_CLUSTER_TYPE_UPDATE);
 
   const editableTableRef = useTemplateRef('editableTable');
+
+  // const batchInputConfig = [
+  //   {
+  //     case: 'redis.test.dba.db',
+  //     key: 'domain',
+  //     label: t('目标集群'),
+  //   },
+  //   {
+  //     case: 'TwemproxyRedisInstance',
+  //     key: 'type',
+  //     label: t('新集群类型'),
+  //   },
+  //   {
+  //     case: 'Redis-6',
+  //     key: 'version',
+  //     label: t('Redis 版本'),
+  //   },
+  // ];
+
+  const tableKey = ref(random());
 
   const formData = reactive(createDefaultFormData());
 
@@ -358,8 +373,30 @@
     });
     // formData.tableData = [...(selected.value.length ? formData.tableData : []), ...newList];
     formData.tableData = newList;
-    window.changeConfirm = true;
   };
+
+  // const handleBatchEdit = (value: string | number, field: string) => {
+  //   formData.tableData.forEach((item) => {
+  //     Object.assign(item, { [field]: value });
+  //   });
+  // };
+
+  // const handleBatchInput = (data: Record<string, any>[], isClear: boolean) => {
+  //   const dataList = data.map((item) =>
+  //     createRowData({
+  //       cluster: {
+  //         master_domain: item.domain,
+  //       } as IDataRow['cluster'],
+  //       db_version: item.version || '',
+  //     }),
+  //   );
+  //   if (isClear) {
+  //     tableKey.value = random();
+  //     formData.tableData = [...dataList];
+  //   } else {
+  //     formData.tableData = [...(selected.value.length ? formData.tableData : []), ...dataList];
+  //   }
+  // };
 
   const handleSubmit = async () => {
     const validateResult = await editableTableRef.value!.validate();
@@ -383,11 +420,15 @@
               backend_group: {
                 affinity: tableItem.cluster.disaster_tolerance_level || Affinity.CROS_SUBZONE, // 暂时固定 'CROS_SUBZONE',
                 count: Number(tableItem.target_capacity.count), // 机器组数
+                label_names: tableItem.target_capacity.labels.map((item) => item.value),
+                labels: tableItem.target_capacity.labels.map((item) => String(item.id)),
                 spec_id: tableItem.target_capacity.spec_id,
               },
               proxy: {
                 affinity: Affinity.CROS_SUBZONE,
                 count: Math.min(new Set(tableItem.cluster.proxy.map((item) => item.ip)).size, 5), // 最大5台
+                label_names: tableItem.target_capacity.labels.map((item) => item.value),
+                labels: tableItem.target_capacity.labels.map((item) => String(item.id)),
                 spec_id: tableItem.cluster.proxy[0].spec_config.id,
               },
             },
@@ -403,7 +444,6 @@
 
   const handleReset = () => {
     Object.assign(formData, createDefaultFormData());
-    window.changeConfirm = false;
   };
 </script>
 

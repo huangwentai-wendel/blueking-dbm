@@ -8,23 +8,34 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+import itertools
 import json
 import logging
+from datetime import datetime, timedelta
 
 from blueapps.core.celery.celery import app
+from celery import shared_task
 from celery.schedules import crontab
 from django.core.cache import cache
+from django.utils import timezone
+from django.utils.translation import gettext as _
 
 from backend import env
-from backend.configuration.constants import DEFAULT_DB_ADMINISTRATORS, PLAT_BIZ_ID, SystemSettingsEnum
+from backend.components import BKMonitorV3Api
+from backend.configuration.constants import PLAT_BIZ_ID, DBType, SystemSettingsEnum
 from backend.configuration.models import DBAdministrator, SystemSettings
-from backend.db_monitor.constants import DEFAULT_ALERT_NOTICE, MONITOR_EVENTS
-from backend.db_monitor.models import CollectInstance, DispatchGroup, MonitorPolicy, NoticeGroup
-from backend.db_monitor.tasks import update_app_policy
+from backend.core.notify.constants import MsgType
+from backend.core.notify.handlers import BkChatHandler, CmsiHandler
+from backend.db_meta.models import Cluster
+from backend.db_monitor.constants import MONITOR_EVENTS
+from backend.db_monitor.exceptions import DutyNoticeScheduleException
+from backend.db_monitor.models import CollectInstance, DispatchGroup, DutyRule, MonitorPolicy, NoticeGroup
+from backend.db_monitor.tasks import update_app_policy, update_dba_notice_group
 from backend.db_periodic_task.constants import GET_AND_DELETE_SET_LUA
 from backend.db_periodic_task.local_tasks.context_manager import start_new_span
 from backend.db_periodic_task.local_tasks.register import register_periodic_task
 from backend.db_periodic_task.utils import TimeUnit, calculate_countdown
+from backend.exceptions import ApiResultError
 from backend.flow.utils.cc_manage import operate_collector, parser_operate_collector_cache_key
 from backend.utils.redis import RedisConn
 
@@ -47,35 +58,6 @@ def update_local_notice_group():
     groups = NoticeGroup.objects.filter(receivers__contains=[{"type": "group"}], is_built_in=False)
     for group in groups:
         group.save_monitor_group()
-
-
-@app.task
-def update_dba_notice_group(dba_id: int):
-    dba = DBAdministrator.objects.get(id=dba_id)
-    receiver_users = dba.users or DEFAULT_DB_ADMINISTRATORS
-    try:
-        group_name = f"{dba.get_db_type_display()}_DBA"
-        group_receivers = [{"id": user, "type": "user"} for user in receiver_users if user]
-        logger.info("[local_notice_group] update_or_create notice group: %s", group_name)
-        try:
-            group = NoticeGroup.objects.get(bk_biz_id=dba.bk_biz_id, db_type=dba.db_type, is_built_in=True)
-        except NoticeGroup.DoesNotExist:
-            NoticeGroup.objects.create(
-                name=group_name,
-                receivers=group_receivers,
-                details={"alert_notice": DEFAULT_ALERT_NOTICE},
-                bk_biz_id=dba.bk_biz_id,
-                db_type=dba.db_type,
-                is_built_in=True,
-            )
-        else:
-            group.name = group_name
-            group.receivers = group_receivers
-            if not group.details:
-                group.details = {"alert_notice": DEFAULT_ALERT_NOTICE}
-            group.save(update_fields=["name", "receivers", "details"])
-    except Exception as e:
-        logger.exception("[local_notice_group] update_or_create notice group error: %s", e)
 
 
 @register_periodic_task(run_every=crontab(minute="*/5"))
@@ -137,11 +119,15 @@ def sync_custom_monitor_policy():
             plat_group = plat_groups.get(db_type)
             expected_group = expected_groups.get(db_type, plat_group)
 
-            logger.info("sync_custom_monitor_policy: %s, %s, %s", bk_biz_id, expected_group, db_type)
-            update_app_policy(bk_biz_id, expected_group, db_type)
+            try:
+                logger.info("sync_custom_monitor_policy: %s, %s, %s", bk_biz_id, expected_group, db_type)
+                update_app_policy(bk_biz_id, expected_group, db_type)
+            except Exception as e:
+                logger.error("sync_custom_monitor_policy error: %s", e)
 
 
-@register_periodic_task(run_every=crontab(minute="*/5"))
+# TODO: 暂时去掉，cache没生效，频繁刷新
+# @register_periodic_task(run_every=crontab(minute="*/5"))
 def sync_monitor_policy_events():
     """
     同步各监控策略的告警事件数量
@@ -202,5 +188,110 @@ def cycle_trigger_operator_collector():
         # 获取采集下发相关信息
         bk_biz_id, db_type, machine_type, action = parser_operate_collector_cache_key(cache_key)
         # 获取当前任务缓存的实例ID，下发采集任务
-        bk_instance_ids = script(keys=[cache_key])
-        operate_collector(bk_biz_id, db_type, machine_type, bk_instance_ids, action)
+        instance_id_to_host_id = script(keys=[cache_key])
+        operate_collector(bk_biz_id, db_type, machine_type, instance_id_to_host_id, action)
+
+
+@shared_task
+def send_duty_schedule(db_type):
+    """发送轮值排班表"""
+
+    def __format_arrange_str(rule, arranges):
+        # 格式化排版表文本
+        date_space = " " * 10  # 2000-01-01
+        work_time_space = " " * (max([len(d["work_times"]) for d in arranges]) * 12)  # 00:00--23:59
+        content = _("日期{}时段{}轮值人员").format(date_space, work_time_space)
+        for arrange in arranges:
+            arrange_str = f"{arrange['date']}  {','.join(arrange['work_times'])}  {','.join(arrange['members'])}"
+            content += f"\n{arrange_str}"
+
+        # 格式化标题
+        now_date = f"{now.month}.{now.day}"
+        after_now = now + timedelta(days=notice_after)
+        after_date = f"{after_now.month}.{after_now.day}"
+        title = _("[{} {}] {}-{} 轮值排班表").format(DBType.get_choice_label(db_type), rule.name, now_date, after_date)
+
+        return title, content
+
+    # 获取对应组件的轮值通知设置
+    notice_cfg = SystemSettings.get_setting_value(SystemSettingsEnum.BKM_DUTY_NOTICE.value, default={}).get(db_type)
+    if not notice_cfg:
+        raise DutyNoticeScheduleException(_("轮值通知配置[{}]不存在").format(db_type))
+
+    # 轮值通知天数包含今天，所以-1
+    notice_after = notice_cfg["after"] - 1
+    now = datetime.now(timezone.utc)
+
+    # 获取有效的轮值规则
+    duty_rules = DutyRule.objects.filter(db_type=db_type, is_enabled=True)
+    for rule in duty_rules:
+        # 获取排班表和接收人
+        arranges = rule.get_date_schedule(date=now, after=notice_after)
+        members = list(set(itertools.chain(*[a["members"] for a in arranges])))
+        if not arranges:
+            continue
+
+        # 获取通知内容
+        title, arrange_content = __format_arrange_str(rule, arranges)
+        # 根据通知渠道进行通知
+        msg_types = [msg_type for msg_type in notice_cfg["channels"] if notice_cfg["channels"][msg_type]]
+        for msg_type in msg_types:
+            receivers = members
+            # 企业微信机器人通知，通知人群ID，加上@所有人
+            if msg_type == MsgType.WECOM_ROBOT:
+                receivers = [notice_cfg["channels"][msg_type]]
+                arrange_content += _("\n<@所有人>")
+
+            try:
+                if msg_type in BkChatHandler.get_msg_type() and env.BKCHAT_APIGW_DOMAIN:
+                    BkChatHandler(title, arrange_content, receivers).send_custom_msg()
+                else:
+                    CmsiHandler(title, arrange_content, receivers).send_msg(msg_type, context=None)
+            except (ApiResultError, Exception) as e:
+                logger.error("[%s]send_duty_schedule error: %s", msg_type, e)
+
+
+@register_periodic_task(run_every=crontab(hour="0", minute="0"))
+def sync_monitor_subscribe():
+    """同步监控订阅"""
+
+    # 拉取全量的告警订阅策略
+    subscribe_list = BKMonitorV3Api.list_full_subscribe(bk_biz_id=env.DBA_APP_BK_BIZ_ID)
+    metric_config = SystemSettings.get_setting_value(key=SystemSettingsEnum.BKM_SUBSCRIBE_METRIC, default={})
+
+    # 获取用户订阅过的所有集群
+    cluster_subscribe_map = {}
+    for sub in subscribe_list:
+        conditions_map = {c["field"]: c["value"] for c in sub["conditions"]}
+        cluster_subscribe_map[conditions_map["tags.cluster_domain"][0]] = sub
+
+    clusters = Cluster.objects.filter(immute_domain__in=list(set(cluster_subscribe_map.keys())))
+    cluster_map = {c.immute_domain: c for c in clusters}
+
+    # 获取所有需要删除和更新的订阅
+    delete_subscribe_list = []
+    update_subscribe_list = []
+    for domain, sub in cluster_subscribe_map.items():
+        if domain not in cluster_map:
+            delete_subscribe_list.append(sub["id"])
+            continue
+
+        cluster = cluster_map[domain]
+        metric_list = [m["id"] for m in metric_config.get(cluster.cluster_type, [])]
+        metric_list = list(itertools.chain(*[x if isinstance(x, list) else [x] for x in metric_list]))
+
+        for condition in sub["conditions"]:
+            if condition["field"] != "alert.metric":
+                continue
+            if set(condition["value"]) == set(metric_list):
+                continue
+            condition["value"] = metric_list
+            sub["sub_username"] = sub["username"]
+            update_subscribe_list.append(sub)
+
+    # 分批删除/更新订阅
+    if delete_subscribe_list:
+        BKMonitorV3Api.bulk_delete_subscribe({"bk_biz_id": env.DBA_APP_BK_BIZ_ID, "ids": delete_subscribe_list})
+
+    if update_subscribe_list:
+        BKMonitorV3Api.bulk_save_subscribe_in_batch(env.DBA_APP_BK_BIZ_ID, update_subscribe_list)

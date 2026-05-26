@@ -11,6 +11,7 @@ specific language governing permissions and limitations under the License.
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from backend.db_meta.enums import InstanceRole
 from backend.flow.consts import (
     DEFAULT_JOB_TIMEOUT,
     DEFAULT_SQLSERVER_PATH,
@@ -20,7 +21,12 @@ from backend.flow.consts import (
     SqlserverRestoreDBStatus,
     SqlserverRestoreMode,
 )
-from backend.flow.utils.base.validate_handler import ValidateHandler
+from backend.flow.utils.base.validate_handler import (
+    ValidateHandler,
+    validate_int,
+    validate_ip_or_domain,
+    validate_port,
+)
 from backend.flow.utils.sqlserver.sqlserver_host import Host
 from backend.flow.utils.sqlserver.validate import validate_get_dbmeta_func, validate_get_payload_func, validate_hosts
 
@@ -36,13 +42,15 @@ class ExecActuatorKwargs(ValidateHandler):
     @attributes get_payload_func SqlserverActPayload类的获取参数方法名称
     @attributes exec_ips 执行的ip列表信息
     @attributes job_timeout # 隐性参数，调用job平台任务的操作时间，不传默认3600s
-    @attributes custom_params # 隐性参数，传入参数时作为额外参数传入，自定义拼接
+    @attributes custom_params # 隐性参数，传入参数时作为额外参数传入，自定义拼接， TODO 后续废弃
+    @attributes component_kwargs # 隐性参数，传入参数时作为额外参数传入，自定义拼接, 后续逐步替换 custom_params
     """
 
     get_payload_func: str = field(metadata={"validate": validate_get_payload_func})
     exec_ips: List[Host] = field(metadata={"validate": validate_hosts})
     job_timeout: int = DEFAULT_JOB_TIMEOUT
     custom_params: dict = field(default_factory=dict)
+    component_kwargs: dict = field(default_factory=dict)
 
 
 @dataclass()
@@ -58,6 +66,7 @@ class P2PFileForWindowKwargs(ValidateHandler):
     @attributes cluster_id 传输模式
     @attributes is_trans_log_backup 是否自动查询日志备份
     @attributes is_trans_full_backup 是否自动查询全量备份
+    @attributes is_rolling 是否开启文件滚动传输模式
     """
 
     source_hosts: List[Host] = field(metadata={"validate": validate_hosts})
@@ -68,6 +77,7 @@ class P2PFileForWindowKwargs(ValidateHandler):
     cluster_id: int = 0
     is_trans_log_backup: bool = True
     is_trans_full_backup: bool = True
+    is_rolling: bool = False
 
 
 @dataclass()
@@ -88,17 +98,18 @@ class DownloadMediaKwargs(ValidateHandler):
 
 
 @dataclass()
-class DBMetaOPKwargs:
+class DBMetaOPKwargs(ValidateHandler):
     """
     定义执行sqlserver_db_meta活动节点的私有变量结构体
     @attributes db_meta_class_func SqlserverDBMeta类的获取参数方法名称
     """
 
     db_meta_class_func: str = field(metadata={"validate": validate_get_dbmeta_func})
+    component_kwargs: dict = field(default_factory=dict)  # 额外参数传入，对应每个场景应用的私有变量
 
 
 @dataclass()
-class ExecBackupJobsKwargs:
+class ExecBackupJobsKwargs(ValidateHandler):
     """
     定义执行exec_sqlserver_backup_job活动节点的私有变量结构体
     @attributes cluster_id 集群id
@@ -110,7 +121,7 @@ class ExecBackupJobsKwargs:
 
 
 @dataclass()
-class RestoreForDoDrKwargs:
+class RestoreForDoDrKwargs(ValidateHandler):
     """
     定义执行exec_sqlserver_backup_job活动节点的私有变量结构体
     @attributes cluster_id 集群id
@@ -132,11 +143,12 @@ class RestoreForDoDrKwargs:
 
 
 @dataclass()
-class ExecLoginKwargs:
+class ExecLoginKwargs(ValidateHandler):
     """
     定义执行exec_sqlserver_login活动节点的私有变量结构体
     @attributes cluster_id 集群id
-    @attributes exec_mode 操作类型
+    @attributes exec_mode 权限的操作类型
+    @attributes exec_ip 执行ip
     """
 
     cluster_id: int
@@ -145,7 +157,7 @@ class ExecLoginKwargs:
 
 
 @dataclass()
-class RestoreForDtsKwargs:
+class RestoreForDtsKwargs(ValidateHandler):
     """
     定义执行sqlserver_restore_for_dts活动节点的私有变量结构体
     @attributes cluster_id 集群id
@@ -171,7 +183,7 @@ class RestoreForDtsKwargs:
 
 
 @dataclass()
-class DownloadBackupFileKwargs:
+class DownloadBackupFileKwargs(ValidateHandler):
     """
     定义执行sqlserver_Download_backup_file活动节点的私有变量结构体
     @attributes bk_cloud_id 云区域id
@@ -187,7 +199,7 @@ class DownloadBackupFileKwargs:
 
 
 @dataclass()
-class CreateRandomJobUserKwargs:
+class CreateRandomJobUserKwargs(ValidateHandler):
     """
     定义执行sqlserver_add_job_user活动节点的私有变量结构体
     @attributes cluster_ids 集群id列表
@@ -201,7 +213,7 @@ class CreateRandomJobUserKwargs:
 
 
 @dataclass()
-class DropRandomJobUserKwargs:
+class DropRandomJobUserKwargs(ValidateHandler):
     """
     定义执行sqlserver_add_job_user活动节点的私有变量结构体
     @attributes cluster_ids 集群id列表
@@ -213,7 +225,7 @@ class DropRandomJobUserKwargs:
 
 
 @dataclass()
-class InsertAppSettingKwargs:
+class InsertAppSettingKwargs(ValidateHandler):
     """
     定义执行sqlserver_insert_app_setting活动节点的私有变量结构体
     @attributes cluster_domain 集群主域名
@@ -224,6 +236,24 @@ class InsertAppSettingKwargs:
     cluster_domain: str
     ips: list = field(default_factory=list)
     is_get_old_backup_config: bool = False
+
+
+@dataclass()
+class CopyAppSettingKwargs(ValidateHandler):
+    """
+    定义执行sqlserver_copy_app_setting活动节点的私有变量结构体
+    @attributes cluster_id 集群id
+    @attributes source_host 克隆源主机
+    @attributes target_host 目标主机
+    @attributes target_port 目标端口
+    @attributes target_role 目标s
+    """
+
+    cluster_id: int
+    source_host: Host
+    target_host: Host
+    target_port: int
+    target_role: InstanceRole
 
 
 @dataclass()
@@ -272,6 +302,7 @@ class SqlserverRebuildSlaveContext:
     clean_dbs: list = field(default_factory=list)
     full_backup_id: dict = field(default_factory=dict)
     log_backup_id: dict = field(default_factory=dict)
+    alarm_shield_id: int = None
 
     @staticmethod
     def sync_dbs_var_name() -> str:
@@ -295,7 +326,7 @@ class SqlserverRebuildSlaveContext:
 
 
 @dataclass()
-class CheckDBExistKwargs:
+class CheckDBExistKwargs(ValidateHandler):
     """
     定义执行sqlserver_check_db_exist活动节点的私有变量结构体
     @attributes cluster_domain 集群主域名
@@ -304,24 +335,51 @@ class CheckDBExistKwargs:
     """
 
     cluster_id: str
-    check_dbs: list = field(default_factory=list)
+    check_dbs: List[str] = field(default_factory=list)
 
 
 @dataclass
-class UpdateWindowGseConfigKwargs:
+class UpdateWindowGseConfigKwargs(ValidateHandler):
     """
     定义变更gse参数的配置私有变量结构体
+    @attributes bk_cloud_id 云区域ID
+    @attributes ips 待处理的ip列表
     """
 
     bk_cloud_id: int
-    ips: list
+    ips: List[str]
 
 
 @dataclass
-class CheckSlaveSyncStatusKwargs:
+class CheckSlaveSyncStatusKwargs(ValidateHandler):
     """
     定义sqlserver_check_rebuild_slave私有变量结构体
+    @attributes cluster_id 集群ID
+    @attributes fix_slave_host 待修复的slave host
     """
 
     cluster_id: int
-    fix_slave_host: list
+    fix_slave_host: List[str]
+
+
+@dataclass
+class RemoveMirroringConfigKwargs(ValidateHandler):
+    """
+    定义sqlserver_remove_mirroring_config私有变量结构体
+    @attributes cluster_id 集群ID
+    @attributes target_host 待操作的host
+    """
+
+    cluster_id: int
+    target_hosts: List[Host]
+
+
+@dataclass()
+class NginxInfo(ValidateHandler):
+    """
+    定义插入到sqlserver实例的Nginx信息
+    """
+
+    bk_cloud_id: int = field(metadata={"validate": validate_int})  # 操作的云区域id
+    nginx_proxy_ip: str = field(metadata={"validate": validate_ip_or_domain})  # nginx的ip或域名
+    nginx_proxy_port: int = field(metadata={"validate": validate_port})  # nginx的端口

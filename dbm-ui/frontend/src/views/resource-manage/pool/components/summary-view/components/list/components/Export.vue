@@ -1,6 +1,6 @@
 <template>
   <div
-    class="export-excel"
+    class="text-button"
     @click="handleClick">
     <DbIcon type="bk-dbm-icon db-icon-daochu-2" />
     <span class="ml-2">{{ t('导出列表内容') }}</span>
@@ -40,7 +40,7 @@
       case 'spec':
         return props.data.map((item) => [
           item.for_biz_name,
-          item.city,
+          item.cityValue,
           item.specTypeDisplay,
           item.spec_name,
           item.subzoneDetailDisplay,
@@ -49,7 +49,7 @@
       case 'device_class':
         return props.data.map((item) => [
           item.for_biz_name,
-          item.city,
+          item.cityValue,
           item.deviceDisplay,
           item.cpu_mem_summary,
           item.subzoneDetailDisplay,
@@ -73,13 +73,3 @@
     XLSX.writeFile(workbook, `${fileName}_${timestamp}.xlsx`);
   };
 </script>
-
-<style lang="less" scoped>
-  .export-excel {
-    display: flex;
-    font-size: 12px;
-    color: #3a84ff;
-    align-items: center;
-    cursor: pointer;
-  }
-</style>

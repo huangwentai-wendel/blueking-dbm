@@ -15,18 +15,20 @@ import type { App } from 'vue';
 import { VxeTooltip } from 'vxe-pc-ui';
 
 import { Table, TableColumn } from '@blueking/table';
+import { PrimaryTable, TableColumn as PrimaryTableColumn } from '@blueking/tdesign-ui';
 
-// import { PrimaryTable, TableColumn as PrimaryTableColumn } from '@blueking/tdesign-ui';
 import AuthButton from '@components/auth-component/button.vue';
 import AuthTemplate from '@components/auth-component/component.vue';
 import AuthOption from '@components/auth-component/option.vue';
 import AuthRouterLink from '@components/auth-component/router-link.vue';
 import AuthSwitch from '@components/auth-component/switch.vue';
 import DbCard from '@components/db-card/index.vue';
+import DbDateTimePicker from '@components/db-date-time-picker/Index.vue';
 import DbForm from '@components/db-form/index.vue';
 import DbFormItem from '@components/db-form/item.vue';
 import DbIcon from '@components/db-icon';
 import DbPopconfirm from '@components/db-popconfirm/index.vue';
+import DbQuickSearch from '@components/db-quick-search/Index.vue';
 import DbSearchSelect from '@components/db-search-select/index.vue';
 import DbSideslider from '@components/db-sideslider/index.vue';
 import DbStatus from '@components/db-status/index.vue';
@@ -54,11 +56,15 @@ import TableDetailDialog from '@components/table-detail-dialog/Index.vue';
 import { ipSelector } from '@components/vue2/ip-selector';
 
 import OperationColumn from '@views/db-manage/common/toolbox-field/column/operation-column/Index.vue';
+import InfoTable, {
+  InfoTableColumn,
+} from '@views/ticket-center/common/ticket-detail/components/common/info-table/Index.vue';
 
-// import '@blueking/tdesign-ui/vue3/index.css';
+import '@blueking/tdesign-ui/vue3/index.css';
 import UserSelector from '@patch/user-selector/selector.vue';
 
 import('@blueking/table/vue3/vue3.css');
+document.documentElement.setAttribute('theme-mode', 'light');
 
 export const setGlobalComps = (app: App<Element>) => {
   app.component('EditableTable', EditableTable);
@@ -77,6 +83,7 @@ export const setGlobalComps = (app: App<Element>) => {
   app.component('DbFormItem', DbFormItem);
   app.component('DbIcon', DbIcon);
   app.component('DbPopconfirm', DbPopconfirm);
+  app.component('DbDateTimePicker', DbDateTimePicker);
   app.component('DbSearchSelect', DbSearchSelect);
   app.component('DbSideslider', DbSideslider);
   app.component('DbTextarea', DbTextarea);
@@ -97,8 +104,11 @@ export const setGlobalComps = (app: App<Element>) => {
   app.component('AuthRouterLink', AuthRouterLink);
   app.component('TableDetailDialog', TableDetailDialog);
   app.component('NewFeatureGuide', NewFeatureGuide);
-  // app.component('TTable', PrimaryTable);
-  // app.component('TTableColumn', PrimaryTableColumn);
+  app.component('PrimaryTable', PrimaryTable);
+  app.component('TableColumn', PrimaryTableColumn);
+  app.component('DbQuickSearch', DbQuickSearch);
+  app.component('TicketInfoTable', InfoTable);
+  app.component('TicketInfoTableColumn', InfoTableColumn);
   setTimeout(() => {
     // eslint-disable-next-line
     delete app._context.components.BkTable;

@@ -10,6 +10,7 @@ specific language governing permissions and limitations under the License.
 
 import logging
 
+from django.utils.translation import gettext as _
 from pipeline.component_framework.component import Component
 
 from backend.flow.plugins.components.collections.common.base_service import BaseService
@@ -28,11 +29,12 @@ class SqlserverDBMetaService(BaseService):
         global_data = data.get_one_of_inputs("global_data")
         trans_data = data.get_one_of_inputs("trans_data")
 
+        self.log_info(_("个性化参数体component_kwargs:{}").format(kwargs.get("component_kwargs", {})))
+
         meta = SqlserverDBMeta(global_data=global_data, trans_data=trans_data)
+        result = getattr(meta, kwargs.get("db_meta_class_func"))(**kwargs.get("component_kwargs", {}))
 
-        result = getattr(meta, kwargs.get("db_meta_class_func"))()
-
-        self.log_info("successfully")
+        self.log_info("Successfully wrote SQL Server metadata")
         data.outputs.ext_result = result
         return result
 

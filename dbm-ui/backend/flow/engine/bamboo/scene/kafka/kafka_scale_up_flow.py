@@ -13,7 +13,8 @@ import logging.config
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.db.models import Max
+from django.utils.translation import gettext as _
 
 from backend.components import DBConfigApi
 from backend.components.dbconfig.constants import ConfType, FormatType, LevelName, ReqType
@@ -36,6 +37,7 @@ from backend.flow.plugins.components.collections.kafka.dns_manage import KafkaDn
 from backend.flow.plugins.components.collections.kafka.exec_actuator_script import ExecuteDBActuatorScriptComponent
 from backend.flow.plugins.components.collections.kafka.get_kafka_resource import GetKafkaResourceComponent
 from backend.flow.plugins.components.collections.kafka.kafka_db_meta import KafkaDBMetaComponent
+from backend.flow.plugins.components.collections.kafka.kafka_rebalance_ticket import KafkaRebalanceTicketComponent
 from backend.flow.plugins.components.collections.kafka.trans_flies import TransFileComponent
 from backend.flow.utils.kafka.kafka_act_playload import KafkaActPayload
 from backend.flow.utils.kafka.kafka_context_dataclass import ActKwargs, ApplyContext, DnsKwargs
@@ -61,11 +63,16 @@ class KafkaScaleUpFlow(object):
         zookeeper_list = StorageInstance.objects.filter(cluster=cluster, instance_role=InstanceRole.ZOOKEEPER).all()
         zookeeper_ip = ",".join([zookeeper.machine.ip for zookeeper in zookeeper_list])
         self.data["zookeeper_ip"] = zookeeper_ip
-        broker_list = StorageInstance.objects.filter(cluster=cluster, instance_role=InstanceRole.BROKER).all()
+        # broker 查询 queryset（复用）
+        broker_qs = StorageInstance.objects.filter(cluster=cluster, instance_role=InstanceRole.BROKER)
+        # 获取该条件下最大的 id
+        max_id = broker_qs.aggregate(max_id=Max("id"))["max_id"]
+        self.data["broker_max_id"] = int(max_id)
+        broker_first = broker_qs.first()
         self.data["db_version"] = cluster.major_version
         self.data["domain"] = cluster.immute_domain
         self.data["cluster_name"] = cluster.name
-        self.data["port"] = broker_list[0].port
+        self.data["port"] = broker_first.port
         # 写入cluster_type，转模块会使用
         self.data["cluster_type"] = ClusterType.Kafka.value
 
@@ -85,10 +92,10 @@ class KafkaScaleUpFlow(object):
 
         kafka_config = content["content"]
         self.data["kafka_config"] = kafka_config
-        self.data["retention_hours"] = int(kafka_config["retention_hours"])
-        self.data["replication_num"] = int(kafka_config["replication_num"])
-        self.data["partition_num"] = int(kafka_config["partition_num"])
-        self.data["factor"] = int(kafka_config["factor"])
+        self.data["retention_hours"] = int(kafka_config.get("retention_hours", 4))
+        self.data["replication_num"] = int(kafka_config.get("replication_num", 2))
+        self.data["partition_num"] = int(kafka_config.get("partition_num", 2))
+        self.data["factor"] = int(kafka_config.get("factor", 2))
         self.data["no_security"] = int(kafka_config["no_security"])
 
         # get username
@@ -120,6 +127,20 @@ class KafkaScaleUpFlow(object):
         for role in self.data["nodes"]:
             exec_ip.extend(self.__get_node_ips_by_role(role))
         return exec_ip
+
+    def __get_dbmeta_brokers(self) -> list:
+        """
+        获取DBMeta中的broker节点
+        """
+        cluster = Cluster.objects.get(id=self.data["cluster_id"])
+        brokers = list(
+            set(
+                StorageInstance.objects.filter(cluster=cluster, instance_role=InstanceRole.BROKER).values_list(
+                    "machine__ip", flat=True
+                )
+            )
+        )
+        return brokers
 
     def scale_up_kafka_flow(self):
         """
@@ -179,10 +200,15 @@ class KafkaScaleUpFlow(object):
 
         # 安装broker
         broker_act_list = []
-        for broker in self.data["nodes"]["broker"]:
+        for i, broker in enumerate(self.data["nodes"]["broker"], self.data["broker_max_id"] + 1):
             act_kwargs.exec_ip = [broker]
+            rack = broker.get("rack_id", "RACK1")
             act_kwargs.template = act_payload.get_payload(
-                action=KafkaActuatorActionEnum.installBroker.value, host=broker["ip"]
+                action=KafkaActuatorActionEnum.installBroker.value,
+                host=broker["ip"],
+                rack=rack,
+                role="broker",
+                node_id=i,
             )
             ip = broker["ip"]
             broker_act = {
@@ -209,4 +235,26 @@ class KafkaScaleUpFlow(object):
             act_name=_("更新DBMeta元信息"), act_component_code=KafkaDBMetaComponent.code, kwargs=asdict(act_kwargs)
         )
 
-        kafka_pipeline.run_pipeline()
+        # 生成rebalance单据
+        all_ips = list(set(all_new_ips + self.__get_dbmeta_brokers()))
+        instance_list = [
+            {"ip": ip, "port": self.data["port"], "bk_cloud_id": self.data["bk_cloud_id"]} for ip in all_ips
+        ]
+        details = {
+            "cluster_id": self.data["cluster_id"],
+            "throttle_rate": 100000000,
+            "topics": ["*"],
+            "instance_list": instance_list,
+        }
+        kafka_pipeline.add_act(
+            act_name=_("生成rebalance单据"),
+            act_component_code=KafkaRebalanceTicketComponent.code,
+            kwargs={
+                "bk_biz_id": self.data["bk_biz_id"],
+                "created_by": self.data["created_by"],
+                "uid": self.data["uid"],
+                "details": details,
+            },
+        )
+
+        kafka_pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=[self.data["cluster_id"]])

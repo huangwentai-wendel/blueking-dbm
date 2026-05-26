@@ -38,6 +38,7 @@
           <BkPopover
             ext-cls="copy-popover"
             placement="top"
+            :popover-delay="[200, 100]"
             theme="light">
             <DbIcon type="copy" />
             <template #content>
@@ -76,12 +77,12 @@
       @closed="handleHideMore">
       <div class="action-box">
         <BkButton
-          class="mr8"
+          class="mr-8"
           @click="handleCopyAbnormal">
           {{ t('复制异常实例') }}
         </BkButton>
         <BkButton
-          class="mr8"
+          class="mr-8"
           @click="handleCopyListAll">
           {{ t('复制全部实例') }}
         </BkButton>

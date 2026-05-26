@@ -15,7 +15,12 @@
   <div class="machine-resource-selector-preview-result">
     <div class="header">
       <span>{{ t('结果预览') }}</span>
-      <BkDropdown class="result-dropdown">
+      <BkDropdown
+        class="result-dropdown"
+        :popover-options="{
+          clickContentAutoHide: true,
+        }"
+        trigger="click">
         <DbIcon type="bk-dbm-icon db-icon-more result-trigger" />
         <template #content>
           <BkDropdownMenu>
@@ -107,7 +112,7 @@
   .machine-resource-selector-preview-result {
     display: flex;
     height: 100%;
-    max-height: 680px;
+    max-height: 660px;
     padding: 12px 24px;
     overflow: hidden;
     font-size: @font-size-mini;
@@ -116,8 +121,8 @@
 
     .header {
       display: flex;
-      padding: 16px 0;
       align-items: center;
+      margin-bottom: 16px;
 
       > span {
         flex: 1;

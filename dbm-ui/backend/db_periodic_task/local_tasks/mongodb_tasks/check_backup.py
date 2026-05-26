@@ -9,6 +9,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 import logging
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -17,9 +18,10 @@ from django.utils import timezone
 
 from backend.db_meta.enums import ClusterType
 from backend.db_meta.models import Cluster
-from backend.db_periodic_task.local_tasks.mongodb_tasks.report_op import addr, create_failed_record, dev_debug
+from backend.db_periodic_task.local_tasks.mongodb_tasks.report_op import ClusterReport, RecordBatchOps, addr, dev_debug
+from backend.db_report.enums import ReportStateType
 from backend.db_report.enums.mongodb_check_sub_type import MongodbBackupCheckSubType
-from backend.db_report.models.monogdb_check_report import MongodbBackupCheckReport
+from backend.db_report.repo.task_record_repo import get_report_day_from_time
 from backend.db_services.mongodb.restore.handlers import MongoDBRestoreHandler
 from backend.flow.utils.mongodb.mongodb_repo import MongoDBCluster, MongoRepository
 
@@ -27,21 +29,25 @@ logger = logging.getLogger("root")
 
 # CheckMongoBackupRecordTask 用于检查备份记录，全备和增量备份都检查
 # 检查结果:
-# 1. 全备记录:1 - 增量备份记录连续
-# 2. 全备记录:2 - 增量备份记录不连续，或者增量备份数量小于12个
-# 3. 全备时长大于8小时
-# 业务级检查结果:
-# 业务id:{} 集群数量{} 已检查{} 成功{} 失败{}
-# 平台级检查结果:
-# 业务id:{} 集群数量{} 已检查{} 成功{} 失败{}
-# 平台级检查结果:
+# 1. 全备
+# - NORMAL: 存在，且备份时间小于8小时.
+# - WARNING: 存在，且备份时间大于8小时.
+# - ABNORMAL: 不存在.
+# 2. 增量备份
+# - NORMAL: 存在且连续
+# - WARNING:
+# - ABNORMAL: 不存在或不连续
 
 
 class CheckMongoBackupRecordTask:
-    def __init__(self):
-        pass
+    """检查mongodb备份记录"""
 
-    def start(self):
+    check_type: str
+
+    def __init__(self):
+        self.check_type = MongodbBackupCheckSubType.FullBackup.value
+
+    def start(self, report_day: int = None, batch_size: int = 20) -> tuple[int, int, int, int]:
         """
         cluster_type: replicaset, sharded cluster
         1, list all cluster
@@ -51,29 +57,51 @@ class CheckMongoBackupRecordTask:
         """
         Delete records older than 60 days, both full backup and binlog are in the same table
         """
-        failed_records = []
-        MongodbBackupCheckReport.objects.filter(create_at__lte=timezone.now() - timedelta(days=60)).delete()
-
+        if report_day is None:
+            report_day = get_report_day_from_time(timezone.now())
+        record_batch_ops = RecordBatchOps(self.check_type, report_day)
+        deleted_count = record_batch_ops.delete_old_record(360)
+        logger.info(
+            f"CheckMongoBackupRecordTask report_day: {report_day} "
+            f"sub_type: {self.check_type} "
+            f"delete_old_record: {deleted_count}"
+        )
+        deleted_count = record_batch_ops.delete_today_record()
+        logger.info(
+            f"CheckMongoBackupRecordTask report_day: {report_day} "
+            f"sub_type: {self.check_type} "
+            f"delete_today_record: {deleted_count}"
+        )
         # Build query conditions: cluster creation time greater than 8 hours
         query = Q(cluster_type__in=[ClusterType.MongoShardedCluster, ClusterType.MongoReplicaSet]) & Q(
             create_at__lt=timezone.now() - timedelta(hours=8)
         )
-        cluster_list = Cluster.objects.filter(query)
-        batch_size = 100
-        for c in cluster_list:
-            cluster = MongoRepository.fetch_one_cluster(with_tags=True, id=c.id)
-            ret = self.check_cluster(cluster)
-            failed_records.extend(ret)
-            if len(failed_records) > batch_size:
-                dev_debug("cluster {} failed_records {}".format(cluster.cluster_id, len(failed_records)))
-                # 批量插入备份失败记录
-                MongodbBackupCheckReport.objects.bulk_create(failed_records)
-                failed_records = []
 
-        if failed_records:
-            dev_debug("cluster {} failed_records {}".format(cluster.cluster_id, len(failed_records)))
-            # 批量插入备份失败记录
-            MongodbBackupCheckReport.objects.bulk_create(failed_records)
+        total_num = 0
+        success_num = 0
+        warning_num = 0
+        abnormal_num = 0
+        cluster_id_list = [c.id for c in Cluster.objects.filter(query)]  # fetch all cluster_id
+        for i in range(0, len(cluster_id_list), batch_size):
+            for cluster_id in cluster_id_list[i : i + batch_size]:
+                cluster = MongoRepository.fetch_one_cluster(with_tags=True, id=cluster_id)
+                ret = self.check_cluster(cluster, report_day)
+                total_num += 1
+                if ret[0].state == ReportStateType.NORMAL.value:
+                    success_num += 1
+                elif ret[0].state == ReportStateType.WARNING.value:
+                    warning_num += 1
+                elif ret[0].state == ReportStateType.ABNORMAL.value:
+                    abnormal_num += 1
+                for record in ret:
+                    record_batch_ops.append(record)
+            record_batch_ops.bulk_create()
+        logger.info(
+            f"CheckMongoBackupRecordTask report_day: {report_day} "
+            f"sub_type: {self.check_type} "
+            f"total_num: {total_num}, success_num: {success_num}, warning_num: {warning_num}, abnormal_num: {abnormal_num}"
+        )
+        return total_num, success_num, warning_num, abnormal_num
 
     def is_skip_check(self, cluster: MongoDBCluster) -> tuple[bool, str]:
         """
@@ -84,13 +112,33 @@ class CheckMongoBackupRecordTask:
         tags = {tag.key: tag.value for tag in cluster.tags} if cluster.tags else {}
         v = tags.get("backup", "")
         if v in ["no", "false"]:
-            return True, "skipped by backup:{}".format(v)
+            return True, "skipped by tag backup:{}".format(v)
         v = tags.get("temporary", "")
         if v == "true":
-            return True, "skipped by temporary:{}".format(v)
+            return True, "skipped by tag temporary:{}".format(v)
         return False, ""
 
-    def check_cluster(self, cluster: MongoDBCluster):
+    def check_cluster(self, cluster: MongoDBCluster, report_day: int):
+        """
+        执行_do_check_cluster_inner, 如果异常，Sleep 10秒后重试，最多试3次
+        如果重试3次都失败，则返回异常记录
+        """
+        last_error = None
+        for i in range(3):
+            try:
+                records = self._do_check_cluster_inner(cluster, report_day)
+                if records is not None:
+                    return records
+
+            except Exception as e:
+                logger.error(f"check_cluster error: {e}, retry {i + 1} times, sleep {i * 3 + 1} seconds")
+                last_error = e
+                time.sleep(i * 3 + 1)
+
+        cluster_report = ClusterReport(cluster, report_day, self.check_type)
+        return cluster_report.make_error_record(f"system error after 3 times retry: {last_error}")
+
+    def _do_check_cluster_inner(self, cluster: MongoDBCluster, report_day: int):
         """
         1. 获得所有的分片的m1节点. 和 backup节点
         2. 允许所有的分片都没有backup节点,这种情况跳过检查
@@ -98,51 +146,37 @@ class CheckMongoBackupRecordTask:
         4. 检查所有的分片的backup节点是否存在全备文件记录
         5. 检查所有的分片的backup节点的增量备份记录是否连续
         """
-        full_backup = MongodbBackupCheckSubType.FullBackup.value
-        failed_records = []
-
-        skipped, reason = self.is_skip_check(cluster)
+        cluster_report = ClusterReport(cluster, report_day, self.check_type)
+        skipped, skip_reason = self.is_skip_check(cluster)
         if skipped:
-            dev_debug(f"=== check_one {cluster.cluster_id} {cluster.immute_domain} {reason} === ")
-            failed_records.append(create_failed_record(cluster, "all", "all", True, reason, full_backup))
-            return failed_records
-
-        msg = ""
-        ok_num = 0
-        shard_num = 0
+            dev_debug(f"=== check_one {cluster.cluster_id} {cluster.immute_domain} {skip_reason} === ")
+            return cluster_report.make_skip_record(skip_reason)
 
         backup_records = fetch_backup_record_from_es(cluster) or {}
 
         dev_debug(f"cluster.tags {cluster.cluster_id} {cluster.immute_domain} tags: {cluster.tags}")
 
         for shard in cluster.get_shards(with_config=True, sort_by_set_name=True):
-            shard_num += 1
-            ok = False
+            msg = ""
+            state = ReportStateType.NORMAL.value
             shard_id = shard.set_name
+            node = None
             if shard_id is None:
                 msg = "no-shard-id"
+                state = ReportStateType.ABNORMAL.value
             else:
                 node = shard.get_backup_node()
                 if node is None:
                     msg = "no backup node"
+                    state = ReportStateType.ABNORMAL.value
                 else:
-                    ok, msg = self.check_one_shard(cluster, shard_id, backup_records)
+                    state, msg = self.check_one_shard(cluster, shard_id, backup_records)
 
-            if not ok:
-                failed_records.append(
-                    create_failed_record(cluster, shard_id, addr(node), msg == "ok", msg, full_backup)
-                )
-            else:
-                ok_num += 1
+            cluster_report.append(state, shard_id, addr(node) if node else "", msg)
 
-        if shard_num == ok_num:
-            failed_records.append(
-                create_failed_record(cluster, "all", "all", True, "all {} shards are ok".format(ok_num), full_backup)
-            )
+        return cluster_report.make_records()
 
-        return failed_records
-
-    def check_one_shard(self, cluster: MongoDBCluster, shard_id: str, backup_records: dict) -> (dict):
+    def check_one_shard(self, cluster: MongoDBCluster, shard_id: str, backup_records: dict) -> (str, str):
         """
         1. 获得所有的分片的m1节点. 和 backup节点
         2. 允许所有的分片都没有backup节点,这种情况跳过检查
@@ -153,33 +187,51 @@ class CheckMongoBackupRecordTask:
         # records[set_name][pitr_fullname][node].append(row)
         shard_backup_records = backup_records.get(shard_id, None)
         if shard_backup_records is None:
-            return False, "no-full-backup-file"
+            return ReportStateType.ABNORMAL.value, "no-full-backup-file"
 
         # 全备记录. pitr_fullname_list的成员是一个yyyymmddhh格式的数字, 此处做个排序, 先分析最新的记录.
-        pitr_fullname_list = sorted([int(x) for x in shard_backup_records.keys()], reverse=True)
+        pitr_fullname_list = []
+        for x in shard_backup_records.keys():
+            try:
+                pitr_fullname_list.append(int(x))
+            except (ValueError, TypeError):
+                logger.warning(f"check_one_shard invalid pitr_fullname: {x}, skip")
+                continue
+        pitr_fullname_list = sorted(pitr_fullname_list, reverse=True)
 
         ret_list = []
-        for i, pitr_fullname in enumerate(pitr_fullname_list):
+        for pitr_fullname in pitr_fullname_list:
             # do check full backup record
             node_list = list(shard_backup_records[str(pitr_fullname)].keys())
             # 一个pitr_fullname 只有一个节点，如果多个节点，则认为是异常
             if len(node_list) != 1:
                 ret_list.append(
                     {
-                        "ok": False,
-                        "msg": "unusual full backup record: "
-                        "pitr_fullname: {}, node_list: {}".format(pitr_fullname, node_list),
+                        "state": ReportStateType.ABNORMAL.value,
+                        "msg": "unusual full backup record: pitr_fullname: {}, node_list: {}".format(
+                            pitr_fullname, node_list
+                        ),
                     }
                 )
+                continue
 
             node = node_list[0]
             incr_list = shard_backup_records[str(pitr_fullname)][node]
+            if not incr_list:
+                ret_list.append(
+                    {
+                        "state": ReportStateType.ABNORMAL.value,
+                        "msg": "no incremental backup record for pitr_fullname: {}".format(pitr_fullname),
+                    }
+                )
+                continue
+
             # check incremental backup record]
-            for i, row in enumerate(incr_list):
+            for idx, row in enumerate(incr_list):
                 dev_debug(
                     "BackupRecordStat {} pitr_file_type {} pitr_fullname {} pitr_binlog_index: {} file_name: {} "
                     "file_size: {} backup_time: {} {}".format(
-                        i,
+                        idx,
                         row.get("pitr_file_type"),
                         row.get("pitr_fullname"),
                         row.get("pitr_binlog_index"),
@@ -190,31 +242,24 @@ class CheckMongoBackupRecordTask:
                     )
                 )
 
-            ret, msg = BackupRecordStat(incr_list[0]).check_incremental_backup_record(incr_list)
+            state, msg = BackupRecordStat(incr_list[0]).check_incremental_backup_record(incr_list)
             if msg == "skipped":
                 continue
-            ret_list.append({"ok": ret, "msg": msg})
+            ret_list.append({"state": state, "msg": msg})
 
         # 如果全备记录都ok，则返回ok
         # 如果没有正常的记录，返回其中一个异常的记录 msg
-
-        all_ok = True
-        msg = ""
-        for ret in ret_list:
-            if not ret["ok"]:
-                all_ok = False
-                msg = ret["msg"]
-                break
-
-        if all_ok:
-            return True, "ok"
-        if msg == "":
-            msg = "unknown-error"
-        return False, msg
+        for s in [ReportStateType.ABNORMAL.value, ReportStateType.WARNING.value, ReportStateType.NORMAL.value]:
+            for ret in ret_list:
+                if ret["state"] == s:
+                    return ret["state"], ret["msg"]
+        # 如果没有正常的记录，返回其中一个异常的记录 msg
+        return ReportStateType.ABNORMAL.value, "no-incremental-backup-record"
 
 
 # fetch_backup_record_from_es
-def fetch_backup_record_from_es(cluster: MongoDBCluster) -> (dict):
+def fetch_backup_record_from_es(cluster: MongoDBCluster) -> dict:
+    """从ES获取备份记录"""
     current_datetime = timezone.now()
 
     # 从es中获取备份记录
@@ -225,8 +270,8 @@ def fetch_backup_record_from_es(cluster: MongoDBCluster) -> (dict):
         current_datetime,
         "src=daily",
     )
-    # msg
-    cluster_backup_records = backup_records.get(cluster.cluster_id, None)
+
+    cluster_backup_records = backup_records.get(cluster.cluster_id)
     if not cluster_backup_records:
         logger.error(f"fetch_backup_record_from_es cluster_id: {cluster.cluster_id} fulls: 0")
         return None
@@ -291,54 +336,66 @@ class BackupRecordStat:
         except Exception:
             return None, None, None
 
-    def check_incremental_backup_record(self, incr_list: list) -> tuple[bool, str]:
+    def check_incremental_backup_record(self, incr_list: list) -> (str, str):
         if not incr_list:
-            return False, "no incremental backup record"
+            return ReportStateType.ABNORMAL.value, "no incremental backup record"
 
         # incr_list sort by pitr_binlog_index
         incr_list.sort(key=lambda x: x.get("pitr_binlog_index", -1))
 
+        # 第一个记录不是全备，返回 "skipped"，由上层处理
         if incr_list[0].get("pitr_file_type") != "FULL":
-            return False, "skipped"
+            return ReportStateType.WARNING.value, "skipped"
 
-        max_duration = timedelta(hours=1)
+        max_duration_in_hours = 0
         max_duration_file_name = ""
-        # 检查增量备份记录是否连续
+        full_backup_time_threshold = 8
+        incr_backup_time_threshold = 2
+        # 检查增量备份记录是否连续, 并找出最长的备份时长和备份文件名
+        # 不连续的增量备份记录，返回异常
+        # 备份时长超过阈值，返回警告
+        # abnormal 直接返回, warning 则要继续检查
+        warning_msg = []
         for i, v in enumerate(incr_list):
             start_time, end_time, duration = self.get_backup_time(v)
             # duration 有可能是0，正常
             if not all([start_time, end_time]):
-                return False, "get backup time error for record: {}".format(v)
+                abnormal_msg = f"get backup time error for record: {v}"
+                return ReportStateType.ABNORMAL.value, abnormal_msg
 
+            duration_in_hours = round(duration.total_seconds() / 3600, 2)
+            dev_debug(f"backup_time_in_hours: {duration_in_hours}")
+
+            # first record, full backup
             if i == 0:
-                # 检查全备时长
-                if duration > timedelta(hours=8):
-                    return False, "full backup time too long: {} hours".format((duration).total_seconds() / 3600)
+                if duration_in_hours >= full_backup_time_threshold:
+                    warning_msg.append(
+                        f"full backup time too long: {duration_in_hours}, gt {full_backup_time_threshold} hours"
+                    )
+            else:
+                idx = v.get("pitr_binlog_index", -2)
+                prev_idx = incr_list[i - 1].get("pitr_binlog_index", -2)
+                if int(idx) - int(prev_idx) != 1:
+                    abnormal_msg = "incremental backup record not continuous"
+                    return ReportStateType.ABNORMAL.value, abnormal_msg
 
-                continue
+                if duration_in_hours > max_duration_in_hours:
+                    max_duration_in_hours = duration_in_hours
+                    max_duration_file_name = v.get("file_name", "")
 
-            idx = v.get("pitr_binlog_index", -2)
-            prev_idx = incr_list[i - 1].get("pitr_binlog_index", -2)
-            if int(idx) - int(prev_idx) != 1:
-                return False, "incremental backup record not continuous"
-
-            if duration > max_duration:
-                max_duration = duration
-                max_duration_file_name = v.get("file_name")
-
-        if max_duration_file_name != "":
-            dev_debug(
-                "incremental backup time too long: {} hours file_name: {}".format(
-                    (max_duration).total_seconds() / 3600,
-                    max_duration_file_name,
-                )
+        if max_duration_in_hours >= incr_backup_time_threshold:
+            err_msg = (
+                f"incr backup time too long: {max_duration_in_hours} hours, "
+                f"gt {incr_backup_time_threshold} hours, file_name: {max_duration_file_name}"
             )
-            return False, "incremental backup time too long: {} hours file_name: {}".format(
-                (max_duration).total_seconds() / 3600,
-                max_duration_file_name,
-            )
+            dev_debug(err_msg)
+            warning_msg.append(err_msg)
 
-        return True, "ok"
+        # 如果有警告，返回第一个警告
+        if warning_msg:
+            return ReportStateType.WARNING.value, warning_msg[0]
+        # 没有警告，返回正常
+        return ReportStateType.NORMAL.value, "ok"
 
 
 def cluster_tags_is_skip_backup(cluster: MongoDBCluster) -> bool:

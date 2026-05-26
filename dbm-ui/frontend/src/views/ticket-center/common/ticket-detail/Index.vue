@@ -42,9 +42,9 @@
             <TicketRevoke
               class="mr-8"
               :data="ticketData" />
-            <!-- <TicketTerminate
+            <TicketTerminate
               class="mr-8"
-              :data="ticketData" /> -->
+              :data="ticketData" />
           </template>
         </SmartAction>
       </PermissionCatch>
@@ -64,8 +64,8 @@
 
   import TicketClone from '@views/ticket-center/common/TicketClone.vue';
   import TicketRevoke from '@views/ticket-center/common/TicketRevoke.vue';
+  import TicketTerminate from '@views/ticket-center/common/TicketTerminate.vue';
 
-  // import TicketTerminate from '@views/ticket-center/common/TicketTerminate.vue';
   import BaseInfo from './components/BaseInfo.vue';
   import FlowInfos from './components/flow-info/Index.vue';
   import TaskInfo from './components/task-info/Index.vue';
@@ -142,9 +142,11 @@
     font-size: 12px;
 
     .db-card {
+      position: relative;
+      z-index: 0;
       box-shadow: unset;
 
-      .db-card__content {
+      .db-card-content {
         padding-left: 116px;
         overflow: hidden;
       }

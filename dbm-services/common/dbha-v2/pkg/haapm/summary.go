@@ -1,0 +1,193 @@
+/**
+ * MIT License
+ *
+ * Copyright (c) 2023 腾讯蓝鲸
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+package haapm
+
+import (
+	"sync"
+
+	"dbm-services/common/dbha-v2/pkg/gerrors"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// HaSummary A HaSummary captures individual observations from an event or sample stream and
+// summarizes them in a manner similar to traditional summary statistics: 1. sum
+// of observations, 2. observation count, 3. rank estimations.
+//
+// A typical use-case is the observation of request latencies. By default, a
+// Summary provides the median, the 90th and the 99th percentile of the latency
+// as rank estimations. However, the default behavior will change in the
+// upcoming v1.0.0 of the library. There will be no rank estimations at all by
+// default. For a sane transition, it is recommended to set the desired rank
+// estimations explicitly.
+//
+// Note that the rank estimations cannot be aggregated in a meaningful way with
+// the Prometheus query language (i.e. you cannot average or add them). If you
+// need aggregatable quantiles (e.g. you want the 99th percentile latency of all
+// queries served across all instances of a service), consider the Histogram
+// metric type. See the Prometheus documentation for more details.
+//
+// To create HaSummary instances, use NewHaSummary.
+type HaSummary struct {
+	Error error
+
+	mu          sync.Mutex
+	metric      *Metric
+	labelNames  []string
+	labelValues map[string]string
+}
+
+// ToMetric returns the metric.
+func (m *HaSummary) ToMetric() *Metric {
+	return m.metric
+}
+
+// WithLabels returns a BoundSummary with fixed labels. For static resources, create once
+// and use the bound in business code so only Observe() is needed.
+func (m *HaSummary) WithLabels(labels map[string]string) *BoundSummary {
+	return &BoundSummary{summary: m, labels: copyLabels(labels)}
+}
+
+// UpdateLabel sets label values for the next Observe call.
+//
+// WARNING: This method is NOT atomic with the subsequent Observe call.
+// In concurrent code, use ObserveWithLabels instead, which performs the full
+// label-write + observe + reset atomically under a single lock.
+func (m *HaSummary) UpdateLabel(lvs map[string]string) *HaSummary {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.Error != nil {
+		return m
+	}
+
+	if len(m.labelNames) == 0 {
+		m.Error = gerrors.New(gerrors.InvalidParameter, "invalid labels")
+		return m
+	}
+
+	for key, val := range lvs {
+		if _, ok := m.labelValues[key]; ok {
+			m.labelValues[key] = val
+			continue
+		}
+
+		m.Error = gerrors.Newf(gerrors.InvalidParameter, "label is mismatched: %s", key)
+		return m
+
+	}
+
+	m.Error = nil
+	return m
+}
+
+// Observe adds a single observation to the summary.
+func (m *HaSummary) Observe(val float64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	defer m.reset()
+
+	if m.Error != nil {
+		return m.Error
+	}
+
+	if m.metric.Collector == nil {
+		return nil
+	}
+
+	if len(m.labelNames) == 0 {
+		m.metric.Collector.(prometheus.Summary).Observe(val)
+		return m.Error
+	}
+
+	if len(m.labelValues) != len(m.labelNames) {
+		m.Error = gerrors.New(gerrors.InvalidParameter, "label is mismatched")
+		return m.Error
+	}
+
+	m.metric.Collector.(*prometheus.SummaryVec).With(m.labelValues).Observe(val)
+	return m.Error
+}
+
+// ObserveWithLabels performs the full label-write + observe + reset atomically
+// under a single lock. This is the goroutine-safe entry point for concurrent code.
+func (m *HaSummary) ObserveWithLabels(labels map[string]string, val float64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	defer m.reset()
+
+	if m.metric.Collector == nil {
+		return nil
+	}
+
+	if len(m.labelNames) == 0 {
+		m.metric.Collector.(prometheus.Summary).Observe(val)
+		return nil
+	}
+
+	for k, v := range labels {
+		if _, ok := m.labelValues[k]; !ok {
+			return gerrors.Newf(gerrors.InvalidParameter, "label is mismatched: %s", k)
+		}
+		m.labelValues[k] = v
+	}
+
+	if len(m.labelValues) != len(m.labelNames) {
+		return gerrors.New(gerrors.InvalidParameter, "label is mismatched")
+	}
+
+	m.metric.Collector.(*prometheus.SummaryVec).With(m.labelValues).Observe(val)
+	return nil
+}
+
+func (m *HaSummary) reset() {
+	m.labelValues = map[string]string{}
+	for _, name := range m.labelNames {
+		m.labelValues[name] = "" // set default label value
+	}
+
+	m.Error = nil
+}
+
+// NewHaSummary creates a new HaSummary.
+func NewHaSummary(name, help string, labelNames ...string) *HaSummary {
+	summary := &HaSummary{}
+	summary.metric = &Metric{
+		Name:        name,
+		Description: help,
+	}
+
+	if len(labelNames) == 0 {
+		summary.metric.Type = MetricTypeSummary.String()
+		return summary
+	}
+
+	summary.metric.Type = MetricTypeSummaryVec.String()
+	summary.labelNames = append(summary.labelNames, labelNames...)
+	summary.metric.Labels = summary.labelNames
+
+	summary.reset()
+	return summary
+}

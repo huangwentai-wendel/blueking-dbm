@@ -62,7 +62,9 @@ type PredixyConfParams struct {
 	PredixyAdminPasswd string   `json:"predixyadminpasswd" validate:"required"`
 	RedisPasswd        string   `json:"redispasswd" validate:"required"`
 	Servers            []string `json:"servers" validate:"required"`
+	ClusterType        string   `json:"cluster_type"` // 集群类型, 如 PredixyTendisplusInstance
 	LoadModules        []string `json:"load_modules"` // 需要加载的模块, [redisbloom,rediscell,redisjson]
+	Databases          string   `json:"databases"`    // Standalone模式专用
 	DbConfig           struct {
 		WorkerThreads        string `json:"workerthreads" validate:"required"`
 		ClientTimeout        string `json:"clienttimeout"`
@@ -71,8 +73,10 @@ type PredixyConfParams struct {
 		ServerRetryTimeout   string `json:"serverretrytimeout" validate:"required"`
 		KeepAlive            string `json:"keepalive"`
 		ServerTimeout        string `json:"servertimeout"`
+		ServerConnections    string `json:"serverconnections"`
 		SlowlogLogSlowerThan string `json:"slowloglogslowerthan"`
 		SlowlogMaxLen        string `json:"slowlogmaxlen"`
+		HashTag              string `json:"hash_tag"` // Standalone模式专用
 	} `json:"dbconfig" validate:"required"`
 }
 
@@ -130,10 +134,19 @@ func (p *PredixyInstall) Init(runtime *jobruntime.JobGenericRuntime) error {
 
 // getConfFileContent 获取配置文件内容
 func (p *PredixyInstall) getConfFileContent() {
-	p.runtime.Logger.Info("start to make config file content")
-	// 配置文件
+	p.runtime.Logger.Info("start to make config file content, cluster_type: %s", p.ConfParams.ClusterType)
+
+	if p.ConfParams.ClusterType == consts.TendisTypePredixyTendisplusInstance {
+		p.getStandaloneConfFileContent()
+	} else {
+		p.getClusterConfFileContent()
+	}
+	p.runtime.Logger.Info("make config file content successfully")
+}
+
+// getClusterConfFileContent 生成ClusterServerPool模式的配置文件(原有逻辑)
+func (p *PredixyInstall) getClusterConfFileContent() {
 	conf := common.PredixConf
-	// 修改配置文件
 	bind := fmt.Sprintf("%s:%s", p.ConfParams.IP, strconv.Itoa(p.ConfParams.Port))
 	log := fmt.Sprintf("%s/log", p.LogDir)
 	var servers string
@@ -153,7 +166,6 @@ func (p *PredixyInstall) getConfFileContent() {
 	conf = strings.Replace(conf, "{{log_path}}", log, -1)
 	conf = strings.Replace(conf, "{{redis_password}}", p.ConfParams.RedisPasswd, -1)
 	conf = strings.Replace(conf, "{{server:port}}", servers, -1)
-	// 指定 worker_threads 为cpu核数
 	conf = strings.Replace(conf, "{{worker_threads}}", strconv.Itoa(runtime.NumCPU()), -1)
 	conf = strings.Replace(conf, "{{server_timeout}}", p.ConfParams.DbConfig.ServerTimeout, -1)
 	conf = strings.Replace(conf, "{{keep_alive}}", p.ConfParams.DbConfig.KeepAlive, -1)
@@ -167,12 +179,72 @@ func (p *PredixyInstall) getConfFileContent() {
 		p.ConfParams.DbConfig.ServerFailureLimit, -1)
 	conf = strings.Replace(conf, "{{server_retry_timeout}}",
 		p.ConfParams.DbConfig.ServerRetryTimeout, -1)
-	// 配置文件加入module commands
 	if len(p.ConfParams.LoadModules) != 0 {
 		conf = conf + consts.GetPredixyModuleCommands(p.ConfParams.LoadModules)
 	}
 	p.ConfFileContent = conf
-	p.runtime.Logger.Info("make config file content successfully")
+}
+
+// getStandaloneConfFileContent 生成StandaloneServerPool模式的配置文件(用于PredixyTendisplusInstance集群类型)
+func (p *PredixyInstall) getStandaloneConfFileContent() {
+	conf := common.PredixyStandaloneConf
+	bind := fmt.Sprintf("%s:%d", p.ConfParams.IP, p.ConfParams.Port)
+	log := fmt.Sprintf("%s/log", p.LogDir)
+
+	var servers string
+	for _, v := range p.ConfParams.Servers {
+		servers += fmt.Sprintf("        + %s\n", v)
+	}
+
+	databases := "2"
+	if p.ConfParams.Databases != "" {
+		databases = p.ConfParams.Databases
+	}
+	hashTag := "{}"
+	if p.ConfParams.DbConfig.HashTag != "" {
+		hashTag = p.ConfParams.DbConfig.HashTag
+	}
+	serverConnections := "10"
+	if p.ConfParams.DbConfig.ServerConnections != "" {
+		serverConnections = p.ConfParams.DbConfig.ServerConnections
+	}
+	slowloglogslowerthan := "100000"
+	if p.ConfParams.DbConfig.SlowlogLogSlowerThan != "" {
+		slowloglogslowerthan = p.ConfParams.DbConfig.SlowlogLogSlowerThan
+	}
+	slowlogmaxlen := "1024"
+	if p.ConfParams.DbConfig.SlowlogMaxLen != "" {
+		slowlogmaxlen = p.ConfParams.DbConfig.SlowlogMaxLen
+	}
+	clientTimeout := "0"
+	if p.ConfParams.DbConfig.ClientTimeout != "" {
+		clientTimeout = p.ConfParams.DbConfig.ClientTimeout
+	}
+
+	conf = strings.Replace(conf, "{{ip:port}}", bind, -1)
+	conf = strings.Replace(conf, "{{worker_threads}}", strconv.Itoa(runtime.NumCPU()), -1)
+	conf = strings.Replace(conf, "{{client_timeout}}", clientTimeout, -1)
+	conf = strings.Replace(conf, "{{slowlog_Log_slower_than}}", slowloglogslowerthan, -1)
+	conf = strings.Replace(conf, "{{slowlog_max_len}}", slowlogmaxlen, -1)
+	conf = strings.Replace(conf, "{{predixy_password}}", p.ConfParams.PredixyPasswd, -1)
+	conf = strings.Replace(conf, "{{predixy_admin_password}}", p.ConfParams.PredixyAdminPasswd, -1)
+	conf = strings.Replace(conf, "{{redis_password}}", p.ConfParams.RedisPasswd, -1)
+	conf = strings.Replace(conf, "{{log_path}}", log, -1)
+	conf = strings.Replace(conf, "{{databases}}", databases, -1)
+	conf = strings.Replace(conf, "{{hash_tag}}", hashTag, -1)
+	conf = strings.Replace(conf, "{{refresh_interval}}", p.ConfParams.DbConfig.RefreshInterval, -1)
+	conf = strings.Replace(conf, "{{server_failure_limit}}", p.ConfParams.DbConfig.ServerFailureLimit, -1)
+	conf = strings.Replace(conf, "{{server_retry_timeout}}", p.ConfParams.DbConfig.ServerRetryTimeout, -1)
+	conf = strings.Replace(conf, "{{server_timeout}}", p.ConfParams.DbConfig.ServerTimeout, -1)
+	conf = strings.Replace(conf, "{{server_connections}}", serverConnections, -1)
+	conf = strings.Replace(conf, "{{keep_alive}}", p.ConfParams.DbConfig.KeepAlive, -1)
+	conf = strings.Replace(conf, "{{server:port seg}}", servers, -1)
+
+	if len(p.ConfParams.LoadModules) != 0 {
+		conf = conf + consts.GetPredixyModuleCommands(p.ConfParams.LoadModules)
+	}
+
+	p.ConfFileContent = conf
 }
 
 // checkParams 校验参数
@@ -196,11 +268,10 @@ func (p *PredixyInstall) checkParams() error {
 	}
 
 	// 校验servers
-	if len(p.ConfParams.Servers) < 2 {
-		p.runtime.Logger.Error(fmt.Sprintf(
-			"%s:validate parameters of predixy configer file fail, ser, the number of server is incorrect", p.Name()))
-		return errors.New(fmt.Sprintf(
-			"%s:validate parameters of predixy configer file fail, ser, the number of server is incorrect", p.Name()))
+	if len(p.ConfParams.Servers) < 1 {
+		err_msg := fmt.Sprintf("%s:validate parameters of predixy configer file fail, ser, the number of server is fewer than 1", p.Name())
+		p.runtime.Logger.Error("%s", err_msg)
+		return errors.New(err_msg)
 	}
 	// 校验安装包是否存在，md5值是否一致
 	if flag := util.FileExists(p.InstallFilePath); !flag {
@@ -278,7 +349,7 @@ func (p *PredixyInstall) mkdir() error {
 	}
 	// 修改属主
 	if _, err := util.RunBashCmd(
-		fmt.Sprintf("chown -R %s.%s %s/predixy", p.OsUser, p.OsGroup, p.DataDir),
+		fmt.Sprintf("chown -R %s:%s %s/predixy", p.OsUser, p.OsGroup, p.DataDir),
 		"", nil,
 		10*time.Second); err != nil {
 		p.runtime.Logger.Error(fmt.Sprintf("%s:chown directory fail, error:%s", p.Name(), err))
@@ -312,14 +383,14 @@ func (p *PredixyInstall) unTarAndCreateSoftLink() error {
 		}
 		// 修改属主
 		if _, err := util.RunBashCmd(
-			fmt.Sprintf("chown -R %s.%s %s/predixy", p.OsUser, p.OsGroup, p.BinDir),
+			fmt.Sprintf("chown -R %s:%s %s/predixy", p.OsUser, p.OsGroup, p.BinDir),
 			"", nil,
 			10*time.Second); err != nil {
 			p.runtime.Logger.Error(fmt.Sprintf("%s:chown softlink directory fail, error:%s", p.Name(), err))
 			return errors.New(fmt.Sprintf("%s:chown softlink directory fail, error:%s", p.Name(), err))
 		}
 		if _, err := util.RunBashCmd(
-			fmt.Sprintf("chown -R %s.%s %s/%s", p.OsUser, p.OsGroup, p.BinDir, p.ConfParams.MediaPkg.GePkgBaseName()),
+			fmt.Sprintf("chown -R %s:%s %s/%s", p.OsUser, p.OsGroup, p.BinDir, p.ConfParams.MediaPkg.GePkgBaseName()),
 			"", nil,
 			10*time.Second); err != nil {
 			p.runtime.Logger.Error(fmt.Sprintf("%s:chown untar directory fail, error:%s", p.Name(), err))
@@ -348,7 +419,7 @@ func (p *PredixyInstall) createConfFile() error {
 	}
 	// 修改配置文件属主
 	if _, err = util.RunBashCmd(
-		fmt.Sprintf("chown -R %s.%s %s", p.OsUser, p.OsGroup, p.ConfFilePath),
+		fmt.Sprintf("chown -R %s:%s %s", p.OsUser, p.OsGroup, p.ConfFilePath),
 		"", nil,
 		10*time.Second); err != nil {
 		p.runtime.Logger.Error(fmt.Sprintf("%s:chown configer file fail, error:%s", p.Name(), err))

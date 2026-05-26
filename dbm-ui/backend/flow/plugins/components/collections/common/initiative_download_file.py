@@ -21,9 +21,9 @@ from backend.flow.utils.script_template import fast_execute_script_common_kwargs
 from backend.utils.string import base64_encode
 
 download_script_content = """
-    #/bin/bash 
+    #/bin/bash
     if [ ! -f /data/install/dbactuator ];then
-        cd /data/install/&& wget --header "Host:{{domain}}" --tries=10  {{file_url}} -o dbactuator 
+        cd /data/install/&& wget --header "Host:{{domain}}" --tries=10  {{file_url}} -O dbactuator
         if [ $? -eq 0 ];then
             echo "download dbactor success"
             exit 0
@@ -77,7 +77,8 @@ class InitiativeDownloadFile(BkShortJobService):
         exec_ips = self.__get_exec_ips(kwargs=kwargs, trans_data=trans_data)
         target_ip_info = [{"bk_cloud_id": kwargs["bk_cloud_id"], "ip": ip} for ip in exec_ips]
         body = {
-            "bk_biz_id": env.JOB_BLUEKING_BIZ_ID,
+            "bk_scope_type": "biz_set",
+            "bk_scope_id": env.JOB_BLUEKING_BIZ_ID,
             "task_name": "initiative_download_file",
             "script_content": base64_encode(script_content),
             "script_language": 1,

@@ -49,9 +49,10 @@ func (config *PartitionConfig) GetPartitionDbLikeTbLike(dbtype string, splitCnt 
 					Addresses: []string{fmt.Sprintf("%s:%d", host.Ip, host.Port)},
 					Cmds: []string{
 						"set lock_wait_timeout=10",
-						fmt.Sprintf("FLUSH TABLE `%s`.`%s` with read lock", tb.DbName, tb.TbName),
+						// fmt.Sprintf("FLUSH TABLE `%s`.`%s` with read lock", tb.DbName, tb.TbName),
+						fmt.Sprintf("FLUSH TABLE `%s`.`%s`", tb.DbName, tb.TbName),
 					},
-					Force:        true,
+					Force:        false,
 					QueryTimeout: 10,
 					BkCloudId:    host.BkCloudId,
 				})
@@ -115,9 +116,10 @@ func (config *PartitionConfig) getOneTableInfo(address string, bkCloudId int, ro
 			// 转换成锁等待, 能正常退出
 			Cmds: []string{
 				"set lock_wait_timeout=10",
-				fmt.Sprintf("FLUSH TABLES `%s`.`%s` with read lock", db, tb),
+				// fmt.Sprintf("FLUSH TABLES `%s`.`%s` with read lock", db, tb),
+				fmt.Sprintf("FLUSH TABLES `%s`.`%s`", db, tb),
 			},
-			Force:        true,
+			Force:        false,
 			QueryTimeout: 10,
 			BkCloudId:    bkCloudId,
 		})
@@ -828,8 +830,8 @@ func GetMaster(immuteDomain, clusterType string) (Host, error) {
 	var host Host
 	cluster, err := GetCluster(Domain{immuteDomain}, clusterType)
 	if err != nil {
-		slog.Error("msg", "GetCluster err", err)
-		return host, fmt.Errorf("GetCluster err: %s", err.Error())
+		slog.Error("msg", "GetClusterInfo err", err)
+		return host, fmt.Errorf("GetClusterInfo err: %s", err.Error())
 	}
 	for _, storage := range cluster.Storages {
 		if storage.InstanceRole == Orphan || storage.InstanceRole == BackendMaster {

@@ -8,6 +8,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+import importlib
 import json
 import logging
 from collections import defaultdict
@@ -18,6 +19,8 @@ from django.utils import timezone
 from django.utils.translation import gettext as _
 
 from backend import env
+from backend.bk_dataview.prometheus import metrics
+from backend.bk_dataview.prometheus.handlers import observe
 from backend.bk_web.constants import LEN_L_LONG, LEN_LONG, LEN_NORMAL, LEN_SHORT
 from backend.bk_web.models import AuditedModel
 from backend.configuration.constants import PLAT_BIZ_ID, DBType, SystemSettingsEnum
@@ -25,9 +28,11 @@ from backend.configuration.models import DBAdministrator, SystemSettings
 from backend.core.encrypt.constants import AsymmetricCipherConfigType
 from backend.core.encrypt.handlers import AsymmetricHandler
 from backend.db_monitor.exceptions import AutofixException
+from backend.flow.engine.revoke.base import RevokeFlowBase
 from backend.ticket.constants import (
     EXCLUSIVE_TICKET_EXCEL_PATH,
     TICKET_RUNNING_STATUS_SET,
+    FlowContext,
     FlowErrCode,
     FlowRetryType,
     FlowType,
@@ -66,6 +71,7 @@ class Flow(models.Model):
     retry_type = models.CharField(
         _("重试类型(专用于inner_flow)"), max_length=LEN_SHORT, choices=FlowRetryType.get_choices(), blank=True, null=True
     )
+    # 流程上下文不适用于存储大量数据，定义详见dataclass/FlowContext
     context = models.JSONField(_("流程上下文(用于扩展字段)"), default=dict)
 
     class Meta:
@@ -86,10 +92,10 @@ class Flow(models.Model):
         return data
 
     @property
-    def flow_output_v2(self):
-        context = self.context or {}
-        flow_output = context.get("__flow_output_v2", {})
-        return flow_output
+    def output_data(self):
+        if not hasattr(self, "flowsummary"):
+            return []
+        return self.flowsummary.summary
 
     def update_details(self, **kwargs):
         self.details.update(kwargs)
@@ -101,6 +107,27 @@ class Flow(models.Model):
             self.status = status
             self.save(update_fields=["status", "update_at"])
         return status
+
+    def update_context(self, **kwargs):
+        self.context.update(kwargs)
+        self.save(update_fields=["context", "update_at"])
+        return self.context
+
+    def get_inner_controller_func(self):
+        if self.flow_type != FlowType.INNER_FLOW:
+            return None
+        controller_info = self.details["controller_info"]
+        controller_class = getattr(importlib.import_module(controller_info["module"]), controller_info["class_name"])
+        controller_inst = controller_class(root_id=self.flow_obj_id, ticket_data=self.details["ticket_data"])
+        controller_func = getattr(controller_inst, controller_info["func_name"])
+        return controller_func
+
+
+class FlowSummary(models.Model):
+    """流程运行时摘要/交付结果"""
+
+    flow = models.OneToOneField(Flow, on_delete=models.PROTECT, unique=True)
+    summary = models.JSONField(_("流程摘要"), default=list, blank=True, null=True)
 
 
 class Ticket(AuditedModel):
@@ -164,7 +191,7 @@ class Ticket(AuditedModel):
     def msg_config(self):
         """单据通知配置"""
         self.config = self.config or {}
-        return self.config.get("msg_config", {})
+        return self.config.get("send_msg_config", {})
 
     def set_status(self, status):
         self.status = status
@@ -184,15 +211,10 @@ class Ticket(AuditedModel):
         flow = self.current_flow()
         # 系统终止
         if flow.err_code == FlowErrCode.SYSTEM_TERMINATED_ERROR:
-            return _("超时自动终止")
-        # 用户终止，获取所有失败的todo，拿到里面的备注
-        fail_todo = flow.todo_of_flow.filter(status=TodoStatus.DONE_FAILED).first()
-        if not fail_todo:
-            return ""
-        # 格式化终止文案
-        remark = fail_todo.context.get("remark", "")
-        reason = _("{}已处理（人工终止，备注: {}）").format(fail_todo.done_by, remark)
-        return reason
+            return _("system已处理（备注: 超过{}天未处理自动终止）").format(flow.context[FlowContext.EXPIRE_TIME])
+        # 用户终止，获取flow的备注
+        remark = flow.context.get("remark", "")
+        return _("{}已处理（人工终止，备注: {}）").format(self.updater, remark)
 
     def get_current_operators(self):
         # 获取当前流程处理人和协助人
@@ -281,22 +303,23 @@ class Ticket(AuditedModel):
 
         from backend.ticket.builders import BuilderFactory
 
-        with transaction.atomic():
-            config = {"send_msg_config": send_msg_config or {}, "helpers": helpers or []}
-            ticket = Ticket.objects.create(
-                group=BuilderFactory.get_builder_cls(ticket_type).group,
-                creator=creator,
-                updater=creator,
-                bk_biz_id=bk_biz_id,
-                ticket_type=ticket_type,
-                remark=remark,
-                details=details,
-                config=config,
-            )
-            logger.info(_("正在自动创建单据，单据详情: {}").format(ticket.__dict__))
-            builder = BuilderFactory.create_builder(ticket)
-            builder.patch_ticket_detail()
-            builder.init_ticket_flows()
+        with observe(metrics.ticket_create_duration_histogram, bk_biz_id=bk_biz_id, ticket_type=ticket_type):
+            with transaction.atomic():
+                config = {"send_msg_config": send_msg_config or {}, "helpers": helpers or []}
+                ticket = Ticket.objects.create(
+                    group=BuilderFactory.get_builder_cls(ticket_type).group,
+                    creator=creator,
+                    updater=creator,
+                    bk_biz_id=bk_biz_id,
+                    ticket_type=ticket_type,
+                    remark=remark,
+                    details=details,
+                    config=config,
+                )
+                logger.info(_("正在自动创建单据，单据详情: {}").format(ticket.__dict__))
+                builder = BuilderFactory.create_builder(ticket)
+                builder.patch_ticket_detail()
+                builder.init_ticket_flows()
 
         if auto_execute:
             # 开始单据流程
@@ -315,12 +338,50 @@ class Ticket(AuditedModel):
         :param hosts: 回收机器列表
         :param ticket_type: 回收单据类型
         """
+
+        from backend.db_meta.models import Machine
+
         revoke_ticket = Ticket.objects.get(id=revoke_ticket_id)
+
+        # 已下架回收单据，如果存在元数据主机或者不存在回收主机，则不允许发起回收单据
+        if ticket_type == TicketType.RECYCLE_OLD_HOST:
+            host_ids = [host["bk_host_id"] for host in hosts]
+            if not host_ids:
+                logger.error(_("不存在可回收主机，跳过旧主机回收"))
+                return
+
+            if Machine.objects.filter(bk_host_id__in=host_ids).exists():
+                logger.error(_("回收校验不通过，存在元数据主机: {}").format(host_ids))
+                return
+
+        # 对于新机回收，如果未定义revoke flow，则不发起回收单
+        if ticket_type == TicketType.RECYCLE_APPLY_HOST:
+            flow = revoke_ticket.current_flow()
+            if flow.flow_type != FlowType.INNER_FLOW:
+                logger.error(_("当前流程并非inner flow，跳过新机回收").format(flow))
+                return
+
+            func = flow.get_inner_controller_func()
+            if not hasattr(func, RevokeFlowBase.revoke_flow.__name__):
+                logger.error(_("{} 未定义revoke_flow，跳过新机回收").format(func.__name__))
+                return
+
+        # 主机回收时用于判断是否托管在业务下，mysql需要用到集群类型，别的db则是用db type即可
+        def __add_cluster_types(clusters, group):
+            if not clusters or group != DBType.MySQL.value:
+                return group
+            cluster_types = [clusters[cluster_id]["cluster_type"] for cluster_id in clusters]
+            if len(set(cluster_types)) == 1:
+                return cluster_types[0]
+            return group
 
         # 回收单的创建者为业务第一DBA，协助人为其他DBA，如果没有dba则取原单据创建者
         dba, second_dba, other_dba = DBAdministrator.get_dba_for_db_type(revoke_ticket.bk_biz_id, revoke_ticket.group)
         creator = dba[0] if dba else revoke_ticket.creator
         helpers = [*second_dba, *other_dba]
+        # 支持通过终止单据设置立刻执行清理单据
+        immediate_recycle = revoke_ticket.details.get("immediate_recycle", False)
+        send_msg_config = revoke_ticket.details.get("send_msg_config", None)
         # 创建回收单据流程
         recycle_ticket = Ticket.create_ticket(
             ticket_type=ticket_type,
@@ -330,9 +391,13 @@ class Ticket(AuditedModel):
             remark=_("单据{}结束后自动发起{}单据").format(revoke_ticket.id, TicketType.get_choice_label(ticket_type)),
             details={
                 "parent_ticket": revoke_ticket_id,
+                "parent_ticket_type": revoke_ticket.ticket_type,
                 "group": revoke_ticket.group,
+                "cluster_type": __add_cluster_types(revoke_ticket.details.get("clusters", {}), revoke_ticket.group),
                 "recycle_hosts": hosts,
+                "immediate_recycle": immediate_recycle,
             },
+            send_msg_config=send_msg_config,
         )
 
         # 对原单据动态插入一个描述flow，关联这个回收单
@@ -408,7 +473,12 @@ class TicketFlowsConfig(AuditedModel):
 class ClusterOperateRecordManager(models.Manager):
     def filter_actives(self, cluster_id, *args, **kwargs):
         """获得集群正在运行的单据记录"""
-        return self.filter(cluster_id=cluster_id, ticket__status=TicketStatus.RUNNING, *args, **kwargs)
+        return self.filter(
+            cluster_id=cluster_id,
+            ticket__status__in=[TicketStatus.RUNNING, TicketStatus.INNER_TODO, TicketStatus.FAILED],
+            *args,
+            **kwargs,
+        )
 
     def filter_inner_actives(self, cluster_id, *args, **kwargs):
         """
@@ -540,7 +610,7 @@ class ClusterOperateRecord(AuditedModel):
             "flow_id": self.flow.id,
             "ticket_id": self.ticket.id,
             "ticket_type": self.ticket.ticket_type,
-            "title": TicketType.get_choice_label(self.ticket.ticket_type),
+            "title": str(TicketType.get_choice_label(self.ticket.ticket_type)),
             "status": self.ticket.status,
         }
 

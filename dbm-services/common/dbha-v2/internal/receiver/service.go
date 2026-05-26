@@ -1,0 +1,292 @@
+/**
+ * MIT License
+ *
+ * Copyright (c) 2023 腾讯蓝鲸
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+package receiver
+
+import (
+	"context"
+	"encoding/json"
+	"sync"
+	"time"
+
+	"dbm-services/common/dbha-v2/internal/receiver/apm"
+	"dbm-services/common/dbha-v2/internal/receiver/config"
+	"dbm-services/common/dbha-v2/internal/receiver/sink"
+	"dbm-services/common/dbha-v2/internal/receiver/source"
+	"dbm-services/common/dbha-v2/pkg/constant"
+	"dbm-services/common/dbha-v2/pkg/discovery"
+	"dbm-services/common/dbha-v2/pkg/gerrors"
+	"dbm-services/common/dbha-v2/pkg/haapm"
+	"dbm-services/common/dbha-v2/pkg/hanet"
+	"dbm-services/common/dbha-v2/pkg/logger"
+	"dbm-services/common/dbha-v2/pkg/machine"
+	"dbm-services/common/go-pubpkg/apm/trace"
+
+	"github.com/google/uuid"
+	"github.com/hako/durafmt"
+	"go.uber.org/zap"
+)
+
+// Name returns the process name from the current executable (same as Makefile binary name).
+// When Makefile BIN_PREFIX or service name changes, this automatically reflects it.
+func Name() string {
+	return "receiver"
+}
+
+// Service is the receiver service
+type Service struct {
+	quit         chan struct{}
+	info         discovery.ServiceInfo
+	apmSvr       *haapm.Server
+	discoveryCli *discovery.Client
+	regCli       *discovery.Registry
+	sources      []source.Inputter
+	sinkers      []sink.Sinker
+	wg           sync.WaitGroup
+	etcdLogger   *zap.Logger
+}
+
+// Run run receiver service
+func (s *Service) Run(ctx context.Context) error {
+	ips, err := machine.GetLocalIPs()
+	if err != nil {
+		return err
+	}
+
+	s.info.Name = Name()
+	s.info.ID = uuid.New().String()
+	s.info.StartTime = time.Now().Local()
+	s.info.IPs = ips
+
+	// create discovery client
+	if err := s.createDiscovery(); err != nil {
+		return err
+	}
+
+	// create sinks
+	if err := s.createSinkers(); err != nil {
+		return err
+	}
+
+	// create sources
+	if err := s.createSource(ctx); err != nil {
+		return err
+	}
+
+	// create apm server
+	if err := s.createApmServer(); err != nil {
+		return err
+	}
+
+	if err := haapm.AppStartupMetric.Set(float64(s.info.StartTime.Unix())); err != nil {
+		logger.Warn("failed to update the startup time for this process, errmsg: %s", err)
+	}
+
+	if s.quit == nil {
+		s.quit = make(chan struct{})
+	}
+
+	timerTimeout := config.Cfg.Discovery.ServiceTimerInterval
+	if timerTimeout == 0 {
+		timerTimeout = constant.DefaultServiceTimerInterval
+	}
+	timer := time.NewTimer(timerTimeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-s.quit:
+			return nil
+
+		case <-ctx.Done():
+			return nil
+
+		case <-timer.C:
+			s.updateInfo()
+			timer.Reset(timerTimeout)
+		}
+	}
+}
+
+// Close close receiver service
+func (s *Service) Close() {
+	if s.apmSvr != nil {
+		_ = s.apmSvr.Stop()
+		s.apmSvr = nil
+	}
+
+	wg := sync.WaitGroup{}
+	for _, inputter := range s.sources {
+		wg.Add(1)
+		go func(in source.Inputter) {
+			defer wg.Done()
+			in.Close()
+		}(inputter)
+	}
+
+	for _, outputer := range s.sinkers {
+		wg.Add(1)
+		go func(out sink.Sinker) {
+			defer wg.Done()
+			out.Close()
+		}(outputer)
+	}
+
+	wg.Wait()
+	close(s.quit)
+	s.quit = nil
+}
+
+func (s *Service) createDiscovery() error {
+	discoveryTLSEnabled := config.Cfg.Discovery.CertFile != "" && config.Cfg.Discovery.KeyFile != ""
+	etcdEndpoints, err := discovery.ParseEtcdEndpoints(config.Cfg.Discovery.Endpoint, discoveryTLSEnabled)
+	if err != nil {
+		return err
+	}
+
+	opts := []discovery.Option{
+		discovery.OptionEndpoints(etcdEndpoints),
+		discovery.OptionUser(config.Cfg.Discovery.User),
+		discovery.OptionPassword(config.Cfg.Discovery.Password),
+		discovery.OptionServiceName(s.info.Name),
+		discovery.OptionServiceID(s.info.ID),
+		discovery.OptionLogger(s.etcdLogger),
+	}
+
+	if config.Cfg.Discovery.CertFile != "" {
+		opts = append(opts, discovery.OptionCertFile(config.Cfg.Discovery.CertFile))
+	}
+	if config.Cfg.Discovery.KeyFile != "" {
+		opts = append(opts, discovery.OptionKeyFile(config.Cfg.Discovery.KeyFile))
+	}
+	if config.Cfg.Discovery.TrustedCAFile != "" {
+		opts = append(opts, discovery.OptionTrustedCAFile(config.Cfg.Discovery.TrustedCAFile))
+	}
+
+	cli, err := discovery.NewClientWithOptions(opts...)
+	if err != nil {
+		return err
+	}
+	s.discoveryCli = cli
+
+	s.regCli = cli.CreateRegistry()
+	s.updateInfo()
+	return nil
+}
+
+func (s *Service) updateInfo() {
+	s.info.UpdatedAt = time.Now().Local()
+	s.info.Uptime = durafmt.Parse(time.Now().Local().Sub(s.info.StartTime)).String()
+
+	data, err := json.Marshal(s.info)
+	if err != nil {
+		logger.Warn("failed to marshal service info to json, errmsg: %s", err)
+		return
+	}
+
+	updateTimeout := config.Cfg.Discovery.ServiceUpdateTimeout
+	if updateTimeout == 0 {
+		updateTimeout = constant.DefaultServiceUpdateTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), updateTimeout)
+	defer cancel()
+
+	if err = s.regCli.SetService(ctx, string(data)); err != nil {
+		logger.Warn("failed to update the service info in the registry, errmsg: %s", err)
+	}
+}
+
+func (s *Service) createSource(ctx context.Context) error {
+	if len(config.Cfg.Service.Sources) == 0 {
+		return gerrors.New(gerrors.InvalidConfiguration, "not set any source")
+	}
+
+	for _, sourceCfg := range config.Cfg.Service.Sources {
+		if !sourceCfg.Enable {
+			logger.Info("the inputer(%s) is disabled", sourceCfg.Name)
+			continue
+		}
+
+		inputter, err := source.NewInputter(sourceCfg)
+		if err != nil {
+			logger.Warn("create new inputer failed, inputer: %s, errmsg: %s", sourceCfg.Name, err)
+			continue
+		}
+
+		err = inputter.Harvest(ctx, s.sinkers)
+		if err != nil {
+			logger.Warn("do not start harvest for inputer, inputer: %s, errmsg: %s", sourceCfg.Name, err)
+			continue
+		}
+
+		s.sources = append(s.sources, inputter)
+	}
+
+	return nil
+}
+
+func (s *Service) createSinkers() error {
+	if len(config.Cfg.Service.Sinks) == 0 {
+		return gerrors.New(gerrors.InvalidConfiguration, "not set any sink")
+	}
+
+	for _, sinkCfg := range config.Cfg.Service.Sinks {
+		if !sinkCfg.Enable {
+			logger.Info("the outputer(%s) is disabled", sinkCfg.Name)
+			continue
+		}
+
+		sinker, err := sink.NewSinker(sinkCfg)
+		if err != nil {
+			logger.Warn("create new outputer failed, outputer: %s, errmsg: %s", sinkCfg.Name, err)
+			continue
+		}
+
+		s.sinkers = append(s.sinkers, sinker)
+	}
+
+	return nil
+}
+
+func (s *Service) createApmServer() error {
+	trace.Setup()
+	apm.InitAPM(s.info.ID, s.info.Name)
+
+	ep, err := hanet.Parse(config.Cfg.Apm.ListenAddress, "http")
+	if err != nil {
+		logger.Error("invalid receiver apm listen address, errmsg: %s", err)
+		return gerrors.Newf(gerrors.InvalidConfiguration, "invalid receiver apm listen address, errmsg: %s", err)
+	}
+
+	s.apmSvr, err = haapm.Serve(haapm.ServerConfig{
+		Addr:         ep.HostPort(),
+		Subsystem:    "dbha-v2-receiver",
+		ReadTimeout:  config.Cfg.Apm.ReadTimeout,
+		WriteTimeout: config.Cfg.Apm.WriteTimeout,
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}

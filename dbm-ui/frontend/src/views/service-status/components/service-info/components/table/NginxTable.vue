@@ -10,7 +10,7 @@
       :label="t('状态')"
       :width="100">
       <template #default="{ data }: { data: NgnixServiceStatusModel }">
-        <DbStatus :theme="data.statusInfo.theme">{{ data.statusInfo.text }}</DbStatus>
+        <ClusterInstanceStatus :data="data.status" />
       </template>
     </BkTableColumn>
     <BkTableColumn
@@ -31,7 +31,9 @@
 <script setup lang="tsx">
   import { useI18n } from 'vue-i18n';
 
-  import NgnixServiceStatusModel from '@/services/model/db-extension/nginx-service-status';
+  import NgnixServiceStatusModel from '@services/model/db-extension/nginx-service-status';
+
+  import ClusterInstanceStatus from '@components/cluster-instance-status/Index.vue';
 
   interface Props {
     list: NgnixServiceStatusModel[];

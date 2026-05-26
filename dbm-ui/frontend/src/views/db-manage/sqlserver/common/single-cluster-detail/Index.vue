@@ -48,8 +48,8 @@
             {{ t('重置') }}
           </BkButton>
         </OperationBtnStatusTips>
-        <MoreActionExtend trigger="hover">
-          <template #handler>
+        <MoreActionExtend>
+          <template #trigger>
             <BkButton
               v-bk-tooltips="t('更多操作')"
               class="ml-4"
@@ -58,7 +58,7 @@
               <DbIcon type="more" />
             </BkButton>
           </template>
-          <BkDropdownItem v-db-console="'sqlserver.singleClusterList.disable'">
+          <div v-db-console="'sqlserver.singleClusterList.disable'">
             <OperationBtnStatusTips :data="data">
               <BkButton
                 :disabled="data.isOffline || Boolean(data.operationTicketId)"
@@ -67,8 +67,8 @@
                 {{ t('禁用') }}
               </BkButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem v-db-console="'sqlserver.singleClusterList.delete'">
+          </div>
+          <div v-db-console="'sqlserver.singleClusterList.delete'">
             <OperationBtnStatusTips :data="data">
               <BkButton
                 v-bk-tooltips="{
@@ -81,10 +81,8 @@
                 {{ t('删除') }}
               </BkButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem>
-            <ClusterDomainDnsRelation :data="data" />
-          </BkDropdownItem>
+          </div>
+          <ClusterDomainDnsRelation :data="data" />
         </MoreActionExtend>
       </DisplayBox>
       <ActionPanel
@@ -93,8 +91,15 @@
         :cluster-type="ClusterTypes.SQLSERVER_SINGLE">
         <template #infoContent>
           <BaseInfo
+            :cluster-type="ClusterTypes.SQLSERVER_SINGLE"
             :data="data"
-            @refresh="fetchDetailData" />
+            @refresh="fetchDetailData">
+            <template #moduleName>
+              <ModuleNameInfo
+                :cluster-type="ClusterTypes.SQLSERVER_SINGLE"
+                :data="data" />
+            </template>
+          </BaseInfo>
         </template>
       </ActionPanel>
       <!-- 集群授权 -->
@@ -127,14 +132,12 @@
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
 
   import ClusterAuthorize from '@views/db-manage/common/cluster-authorize/Index.vue';
-  import { ActionPanel, DisplayBox } from '@views/db-manage/common/cluster-details';
+  import { ActionPanel, BaseInfo, BaseInfoField, DisplayBox } from '@views/db-manage/common/cluster-details';
   import ClusterDomainDnsRelation from '@views/db-manage/common/cluster-domain-dns-relation/Index.vue';
   import ExcelAuthorize from '@views/db-manage/common/ExcelAuthorize.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
-  import ClusterReset from '@views/db-manage/sqlserver/components/cluster-reset/Index.vue';
-
-  import BaseInfo from './components/BaseInfo.vue';
+  import ClusterReset from '@views/db-manage/sqlserver/common/cluster-operations/cluster-reset/Index.vue';
 
   interface Props {
     clusterId: number;
@@ -144,6 +147,8 @@
 
   const props = defineProps<Props>();
   const emits = defineEmits<Emits>();
+
+  const { ModuleNameInfo } = BaseInfoField;
 
   const { t } = useI18n();
 

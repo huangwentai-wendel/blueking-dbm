@@ -13,7 +13,7 @@ import os
 import re
 
 from django.utils import timezone
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from pipeline.component_framework.component import Component
 from pipeline.core.flow.activity import StaticIntervalGenerator
 from pipeline.core.flow.io import StringItemSchema
@@ -52,7 +52,11 @@ class SleepTimerService(BaseService):
         global_data = data.get_one_of_inputs("global_data")
         kwargs = data.get_one_of_inputs("kwargs")
 
-        timing = global_data["timing"]
+        if "timing" in kwargs:
+            timing = kwargs["timing"]
+        else:
+            timing = global_data["timing"]
+
         force_check = kwargs["force_check_timing"]
 
         now = datetime.datetime.now(timezone.utc)

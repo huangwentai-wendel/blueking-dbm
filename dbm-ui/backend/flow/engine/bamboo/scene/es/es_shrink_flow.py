@@ -12,7 +12,7 @@ import logging.config
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.flow.consts import ManagerDefaultPort, ManagerOpType, ManagerServiceType
@@ -194,4 +194,4 @@ class EsShrinkFlow(EsFlow):
         # 清理DBMeta
         es_pipeline.add_act(act_name=_("清理DBMeta"), act_component_code=EsMetaComponent.code, kwargs=asdict(act_kwargs))
 
-        es_pipeline.run_pipeline()
+        es_pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=[self.cluster_id])

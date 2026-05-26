@@ -9,7 +9,6 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 import copy
-import datetime
 import logging
 import uuid
 from dataclasses import asdict
@@ -22,33 +21,40 @@ from backend.configuration.constants import DBType
 from backend.constants import IP_PORT_DIVIDER
 from backend.db_meta.enums import ClusterPhase, InstanceStatus
 from backend.db_meta.models import Cluster
-from backend.db_services.mysql.fixpoint_rollback.handlers import FixPointRollbackHandler
-from backend.flow.consts import MySQLBackupTypeEnum, RollbackType
+from backend.db_report.mysql_backup.handers import MySQLBackupHandler
+from backend.flow.consts import DBA_SYSTEM_USER, MySQLBackupTypeEnum, RollbackType
 from backend.flow.engine.bamboo.scene.common.builder import Builder, SubBuilder
 from backend.flow.engine.bamboo.scene.common.get_file_list import GetFileList
-from backend.flow.engine.bamboo.scene.mysql.common.get_local_backup import check_storage_database
+from backend.flow.engine.bamboo.scene.mysql.common.mysql_resotre_data_sub_flow import (
+    change_master_by_master_status,
+    tendbha_rollback_data_sub_flow,
+)
 from backend.flow.engine.bamboo.scene.spider.common.exceptions import (
     NormalSpiderFlowException,
     TendbGetBackupInfoFailedException,
 )
-from backend.flow.engine.bamboo.scene.spider.spider_recover import remote_node_rollback, spider_recover_sub_flow
 from backend.flow.plugins.components.collections.common.add_alarm_shield import AddAlarmShieldComponent
+from backend.flow.plugins.components.collections.common.disable_alarm_shield import DisableAlarmShieldComponent
 from backend.flow.plugins.components.collections.mysql.exec_actuator_script import ExecuteDBActuatorScriptComponent
-from backend.flow.plugins.components.collections.mysql.mysql_crond_control import MysqlCrondMonitorControlComponent
+from backend.flow.plugins.components.collections.mysql.mysql_check_processlist import MySQLCheckProcesslistComponent
+from backend.flow.plugins.components.collections.mysql.mysql_check_slave_delay import MySQLCheckSlaveDelayComponent
+from backend.flow.plugins.components.collections.mysql.mysql_rds_execute import MySQLExecuteRdsComponent
 from backend.flow.plugins.components.collections.mysql.trans_flies import TransFileComponent
 from backend.flow.plugins.components.collections.spider.remotedb_node_priv_recover import RemoteDbPrivRecoverComponent
 from backend.flow.plugins.components.collections.spider.spider_db_meta import SpiderDBMetaComponent
 from backend.flow.utils.mysql.common.mysql_cluster_info import get_version_and_charset
 from backend.flow.utils.mysql.mysql_act_dataclass import (
-    CrondMonitorKwargs,
+    CheckSlaveStatusKwargs,
     DBMetaOPKwargs,
     DownloadMediaKwargs,
     ExecActuatorKwargs,
+    ExecuteRdsKwargs,
 )
 from backend.flow.utils.mysql.mysql_act_playload import MysqlActPayload
 from backend.flow.utils.mysql.mysql_context_dataclass import ClusterInfoContext
 from backend.flow.utils.spider.spider_db_meta import SpiderDBMeta
 from backend.flow.utils.spider.tendb_cluster_info import get_rollback_clusters_info
+from backend.ticket.builders.common.constants import MySQLBackupSource
 from backend.utils.time import str2datetime
 
 logger = logging.getLogger("flow")
@@ -56,7 +62,7 @@ logger = logging.getLogger("flow")
 
 class TenDBRollBackDataFlow(object):
     """
-    TenDB 后端节点主从成对迁移
+    TenDBCluster 回档流程
     """
 
     def __init__(self, root_id: str, ticket_data: Optional[Dict]):
@@ -69,9 +75,9 @@ class TenDBRollBackDataFlow(object):
         self.data = {}
         self.backup_target_path = f"/data/dbbak/{self.root_id}"
 
-    def tendb_rollback_data(self):
+    def tendb_rollback_data(self):  # noqa C901
         """
-        tendb rollback data
+        tendbCluster 回档到指定集群。要求源集群和目标集群必须相同的shard数
         增加单据临时ADMIN账号的添加和删除逻辑
         """
         cluster_ids = [i["source_cluster_id"] for i in self.ticket_data["infos"]]
@@ -85,14 +91,14 @@ class TenDBRollBackDataFlow(object):
         tendb_rollback_list = []
         for info in self.ticket_data["infos"]:
             self.data = info
-            # 判断是否全库回档,默认是全库,全库包括逻辑备份，物理备份. todo 如果指定部分库。则只能使用逻辑备份。
-            self.data["all_database_rollback"] = True
-            if not (
+            # 全库回档或者物理备份回档要求stop slave
+            all_db_rollback = False
+            if (
                 self.data["databases"][0] == "*"
                 and self.data["tables"][0] == "*"
                 and len(self.data["databases_ignore"]) == 0
             ):
-                self.data["all_database_rollback"] = False
+                all_db_rollback = True
             source_cluster = Cluster.objects.get(id=self.data["source_cluster_id"])
             target_cluster = Cluster.objects.get(id=self.data["target_cluster_id"])
             self.data["uid"] = self.ticket_data["uid"]
@@ -102,112 +108,82 @@ class TenDBRollBackDataFlow(object):
             self.data["module"] = source_cluster.db_module_id
             self.data["ticket_type"] = self.ticket_data["ticket_type"]
             tendb_rollback_pipeline = SubBuilder(root_id=self.root_id, data=copy.deepcopy(self.data))
-            clusters_info = get_rollback_clusters_info(
+            clusters_info, check_message = get_rollback_clusters_info(
                 source_cluster_id=self.data["source_cluster_id"], target_cluster_id=self.data["target_cluster_id"]
             )
+            if len(check_message) > 0:
+                raise NormalSpiderFlowException(",".join(check_message))
             charset, db_version = get_version_and_charset(
                 bk_biz_id=source_cluster.bk_biz_id,
                 db_module_id=source_cluster.db_module_id,
                 cluster_type=source_cluster.cluster_type,
             )
-            # 先查询恢复介质
+
+            # 如果指定了backup_id,则使用backup_id去查询备份信息
+            backup_handler = MySQLBackupHandler(cluster_id=source_cluster.id, is_full_backup=True)
+            backup_id = self.data.get("backup_id", None)
+            if backup_id is None or backup_id == "":
+                backup_id = self.data.get("backupinfo", {}).get("backup_id", None)
+            backup_handler.backup_id = backup_id
+            rollback_time = None
             if self.data["rollback_type"] == RollbackType.REMOTE_AND_BACKUPID.value:
-                backup_info = self.data["backupinfo"]
+                if backup_id is None or backup_id.strip() == "":
+                    raise TendbGetBackupInfoFailedException(message="backup_id key is not exist")
             else:
-                rollback_handler = FixPointRollbackHandler(self.data["source_cluster_id"], check_full_backup=True)
-                rollback_time = self.data["rollback_time"]
-                backup_info = rollback_handler.query_latest_backup_log(str2datetime(rollback_time))
-                if backup_info is None:
-                    logger.error("cluster {} backup info not exists".format(self.data["source_cluster_id"]))
-                    raise TendbGetBackupInfoFailedException(
-                        message=_("获取实例 {} 的备份信息失败".format(self.data["source_cluster_id"]))
+                rollback_time = str2datetime(self.data["rollback_time"])
+            backup_info = backup_handler.get_spider_rollback_backup_info(latest_time=rollback_time, limit_one=True)
+            if backup_info is None:
+                logger.error("cluster {} backup info not exists".format(self.data["source_cluster_id"]))
+                raise TendbGetBackupInfoFailedException(
+                    message=_(
+                        "获取实例 {} 的备份信息失败 {} sql: {}".format(
+                            self.data["source_cluster_id"], backup_handler.errmsg, backup_handler.query
+                        )
                     )
-            # 将shard id 转换为int类型。TODO: 字段入库后，后端存储是json字段，会自动把key为int --> str。
+                )
+            # 将shard id 转换为int类型。字段入库后，后端存储是json字段，会自动把key为int --> str。
             backup_info["remote_node"] = {int(shard_id): info for shard_id, info in backup_info["remote_node"].items()}
+            logger.info(_("集群 {} 的备份信息如下:  {}".format(source_cluster.id, backup_info)))
 
-            # 下发 actuator
-            tendb_rollback_pipeline.add_act(
-                act_name=_("下发actuator工具 {}".format(clusters_info["ip_list"])),
-                act_component_code=TransFileComponent.code,
-                kwargs=asdict(
-                    DownloadMediaKwargs(
-                        bk_cloud_id=target_cluster.bk_cloud_id,
-                        exec_ip=clusters_info["ip_list"],
-                        file_list=GetFileList(DBType.MySQL).get_db_actuator_package(),
-                    )
-                ),
-            )
-
+            check_connect_list = []
             ins_sub_pipeline_list = []
             # rds先抽取出spider spider_slave 实例列表
             remote_node_users = {}
             spider_instance_list = []
 
-            cluster = {
-                "cluster_id": target_cluster.id,
-                "cluster_phase": ClusterPhase.OFFLINE.value,
-            }
-            tendb_rollback_pipeline.add_act(
-                act_name=_("设置集群为禁用状态"),
-                act_component_code=SpiderDBMetaComponent.code,
-                kwargs=asdict(
-                    DBMetaOPKwargs(
-                        db_meta_class_func=SpiderDBMeta.tendb_modify_cluster_phase.__name__,
-                        cluster=cluster,
-                        is_update_trans_data=False,
-                    )
-                ),
-            )
-            tendb_rollback_pipeline.add_act(
-                act_name=_("屏蔽 {} 告警".format(clusters_info["target_immute_domain"])),
-                act_component_code=AddAlarmShieldComponent.code,
-                kwargs={
-                    "begin_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "end_time": (datetime.datetime.now() + datetime.timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S"),
-                    "description": clusters_info["target_immute_domain"],
-                    "dimensions": [
-                        {
-                            "name": "instance_host",
-                            "values": clusters_info["ip_list"],
-                        }
-                    ],
-                },
-            )
-            cluster = {
+            cluster_for_backup = {
                 "host": clusters_info["target"]["dbctl_ip"],
                 "port": clusters_info["target"]["spider_port"],
-                "backup_id": str(uuid.uuid1()),
+                "backup_id_for_restore": str(uuid.uuid1()),
             }
-            exec_act_kwargs = ExecActuatorKwargs(
+            exec_act_kwargs_for_backup = ExecActuatorKwargs(
                 exec_ip=clusters_info["target"]["dbctl_ip"],
                 bk_cloud_id=target_cluster.bk_cloud_id,
                 cluster_type=target_cluster.cluster_type,
-                cluster=cluster,
+                run_as_system_user=DBA_SYSTEM_USER,
+                cluster=copy.deepcopy(cluster_for_backup),
                 get_mysql_payload_func=MysqlActPayload.spider_priv_backup_demand_payload.__name__,
             )
-            tendb_rollback_pipeline.add_act(
-                act_name=_("回滚前在中控节点备份权限{}").format(exec_act_kwargs.exec_ip),
-                act_component_code=ExecuteDBActuatorScriptComponent.code,
-                kwargs=asdict(exec_act_kwargs),
-            )
 
+            exec_act_kwargs = copy.deepcopy(exec_act_kwargs_for_backup)
+            exec_act_kwargs.run_as_system_user = None
             for spider_node in clusters_info["target_spiders"]:
                 if "spider_node" not in backup_info:
                     raise TendbGetBackupInfoFailedException(message=_("获取spider节点备份信息不存在"))
                 if backup_info["spider_node"] == "" or len(backup_info["spider_node"]) == 0:
                     raise TendbGetBackupInfoFailedException(message=_("获取spider节点备份信息为空"))
-                if not check_storage_database(target_cluster.bk_cloud_id, spider_node["ip"], spider_node["port"]):
-                    logger.error("cluster {} check database fail".format(target_cluster.id))
-                    raise NormalSpiderFlowException(
-                        message=_("回档集群 {} 空闲检查不通过，请确认回档集群是否存在非系统数据库".format(target_cluster.id))
-                    )
                 spider_instance_list.append(spider_node["instance"])
                 target_spider = target_cluster.proxyinstance_set.get(
                     machine__ip=spider_node["ip"], port=spider_node["port"]
                 )
+                # todo 后续考虑使用backup_source和rollback_type分开。
+                # 这里spider、dbctl节点的恢复都只需要BACKUPID的方式恢复，不需要前滚binlog
+                rollback_type = RollbackType.REMOTE_AND_BACKUPID
+                if self.data.get("backup_source", MySQLBackupSource.REMOTE.value) == MySQLBackupSource.LOCAL.value:
+                    rollback_type = RollbackType.LOCAL_AND_BACKUPID
                 spd_cluster = {
                     "charset": charset,
-                    "backupinfo": backup_info["spider_node"],
+                    # "backupinfo": backup_info["spider_node"],
                     "file_target_path": f'{self.backup_target_path}/{spider_node["port"]}',
                     "rollback_ip": spider_node["ip"],
                     "rollback_port": spider_node["port"],
@@ -215,27 +191,33 @@ class TenDBRollBackDataFlow(object):
                     "bk_cloud_id": source_cluster.bk_cloud_id,
                     "cluster_id": source_cluster.id,
                     "rollback_time": self.data["rollback_time"],
-                    "rollback_type": self.data["rollback_type"],
                     "databases": self.data["databases"],
                     "tables": self.data["tables"],
                     "databases_ignore": self.data["databases_ignore"],
                     "tables_ignore": self.data["tables_ignore"],
                     "change_master": False,
-                    "all_database_rollback": self.data["all_database_rollback"],
+                    # 由于不恢复binlog。所以设置为仅 backupId 恢复
+                    "rollback_type": rollback_type,
                 }
-                spd_sub_pipeline = SubBuilder(root_id=self.root_id, data=copy.deepcopy(self.data))
-                # spd_sub_pipeline.add_act(
-                #     act_name=_("屏蔽监控 {}").format(spider_node["instance"]),
-                #     act_component_code=MysqlCrondMonitorControlComponent.code,
-                #     kwargs=asdict(
-                #         CrondMonitorKwargs(
-                #             bk_cloud_id=target_cluster.bk_cloud_id,
-                #             exec_ips=[spider_node["ip"]],
-                #             port=spider_node["port"],
-                #         )
-                #     ),
-                # )
+                check_connect_pipeline = SubBuilder(root_id=self.root_id, data=copy.deepcopy(self.data))
+                check_connect_pipeline.add_act(
+                    act_name=_("检查spider链接 {}").format(spider_node["instance"]),
+                    act_component_code=MySQLCheckProcesslistComponent.code,
+                    kwargs=asdict(
+                        ExecuteRdsKwargs(
+                            bk_cloud_id=target_cluster.bk_cloud_id,
+                            instance_ip=spider_node["ip"],
+                            instance_port=spider_node["port"],
+                        )
+                    ),
+                )
+                check_connect_list.append(
+                    check_connect_pipeline.build_sub_process(
+                        sub_name=_("检查spider链接 {}".format(spider_node["instance"]))
+                    )
+                )
 
+                spd_sub_pipeline = SubBuilder(root_id=self.root_id, data=copy.deepcopy(self.data))
                 cluster = {"proxy_status": InstanceStatus.RESTORING.value, "proxy_ids": [target_spider.id]}
                 spd_sub_pipeline.add_act(
                     act_name=_("设置节点为恢复中状态"),
@@ -248,11 +230,14 @@ class TenDBRollBackDataFlow(object):
                         )
                     ),
                 )
-                spd_sub_pipeline.add_sub_pipeline(
-                    sub_flow=spider_recover_sub_flow(
-                        root_id=self.root_id, ticket_data=copy.deepcopy(self.data), cluster=spd_cluster
-                    )
+                backup_info_tmp, spider_restore_sub_flow = tendbha_rollback_data_sub_flow(
+                    root_id=self.root_id,
+                    uid=self.ticket_data["uid"],
+                    cluster_model=source_cluster,
+                    cluster_info=spd_cluster,
+                    backup_info=copy.deepcopy(backup_info["spider_node"]),
                 )
+                spd_sub_pipeline.add_sub_pipeline(sub_flow=spider_restore_sub_flow)
 
                 cluster = {"proxy_status": InstanceStatus.RUNNING.value, "proxy_ids": [target_spider.id]}
                 spd_sub_pipeline.add_act(
@@ -266,18 +251,7 @@ class TenDBRollBackDataFlow(object):
                         )
                     ),
                 )
-                spd_sub_pipeline.add_act(
-                    act_name=_("解除监控屏蔽 {}").format(spider_node["instance"]),
-                    act_component_code=MysqlCrondMonitorControlComponent.code,
-                    kwargs=asdict(
-                        CrondMonitorKwargs(
-                            bk_cloud_id=target_cluster.bk_cloud_id,
-                            exec_ips=[spider_node["ip"]],
-                            port=spider_node["port"],
-                            enable=True,
-                        )
-                    ),
-                )
+
                 ins_sub_pipeline_list.append(
                     spd_sub_pipeline.build_sub_process(sub_name=_("{} spider节点恢复".format(spider_node["instance"])))
                 )
@@ -289,17 +263,21 @@ class TenDBRollBackDataFlow(object):
                         raise TendbGetBackupInfoFailedException(message=_("获取中控节点备份信息为空"))
                     ctl_sub_pipeline = SubBuilder(root_id=self.root_id, data=copy.deepcopy(self.data))
                     ctl_cluster = copy.deepcopy(spd_cluster)
-                    ctl_cluster["backupinfo"] = backup_info["tdbctl_node"]
+                    # ctl_cluster["backupinfo"] = backup_info["tdbctl_node"]
                     ctl_cluster["rollback_port"] = spider_node["admin_port"]
                     ctl_cluster["file_target_path"] = f'{self.backup_target_path}/{spider_node["admin_port"]}'
                     ctl_cluster["instance"] = f'{spider_node["ip"]}{IP_PORT_DIVIDER}{spider_node["admin_port"]}'
                     ctl_cluster["init_command"] = "set tc_admin=0"
                     ctl_cluster["enable_binlog"] = True
-                    ctl_sub_pipeline.add_sub_pipeline(
-                        sub_flow=spider_recover_sub_flow(
-                            root_id=self.root_id, ticket_data=copy.deepcopy(self.data), cluster=ctl_cluster
-                        )
+
+                    backup_info_tmp, dbctl_restore_sub_flow = tendbha_rollback_data_sub_flow(
+                        root_id=self.root_id,
+                        uid=self.ticket_data["uid"],
+                        cluster_model=source_cluster,
+                        cluster_info=ctl_cluster,
+                        backup_info=copy.deepcopy(backup_info["tdbctl_node"]),
                     )
+                    ctl_sub_pipeline.add_sub_pipeline(sub_flow=dbctl_restore_sub_flow)
                     ins_sub_pipeline_list.insert(
                         0, ctl_sub_pipeline.build_sub_process(sub_name=_("{} 中控节点恢复".format(ctl_cluster["instance"])))
                     )
@@ -353,37 +331,26 @@ class TenDBRollBackDataFlow(object):
                 shard = target_cluster.tendbclusterstorageset_set.get(shard_id=shard_id)
                 target_slave = target_cluster.storageinstance_set.get(id=shard.storage_instance_tuple.receiver.id)
                 target_master = target_cluster.storageinstance_set.get(id=shard.storage_instance_tuple.ejector.id)
+                ms_diff_node = True
+                if remote_node["new_master"]["instance"] == remote_node["new_slave"]["instance"]:
+                    ms_diff_node = False
 
-                shd_cluster = {
-                    "charset": charset,
-                    "shard_id": shard_id,
-                    "new_master_ip": remote_node["new_master"]["ip"],
-                    "new_master_port": remote_node["new_master"]["port"],
-                    "new_slave_ip": remote_node["new_slave"]["ip"],
-                    "new_master": remote_node["new_master"],
-                    "new_slave": remote_node["new_slave"],
-                    "new_slave_port": remote_node["new_slave"]["port"],
-                    "master_ip": remote_node["master"]["ip"],
-                    "master_port": remote_node["master"]["port"],
-                    "slave_ip": remote_node["slave"]["ip"],
-                    "slave_port": remote_node["slave"]["port"],
-                    "master": remote_node["master"],
-                    "slave": remote_node["slave"],
-                    "file_target_path": f'{self.backup_target_path}/{remote_node["new_master"]["port"]}',
-                    "cluster_id": source_cluster.id,
-                    "bk_cloud_id": source_cluster.bk_cloud_id,
-                    "backupinfo": backup_info["remote_node"][int(shard_id)],
-                    "rollback_time": self.data["rollback_time"],
-                    "rollback_type": self.data["rollback_type"],
-                    "databases": self.data["databases"],
-                    "tables": self.data["tables"],
-                    "databases_ignore": self.data["databases_ignore"],
-                    "tables_ignore": self.data["tables_ignore"],
-                    "change_master": False,
-                    "all_database_rollback": self.data["all_database_rollback"],
-                }
-
+                shard_backup_info = copy.deepcopy(backup_info["remote_node"][int(shard_id)])
                 ins_sub_pipeline = SubBuilder(root_id=self.root_id, data=copy.deepcopy(self.data))
+
+                if ms_diff_node:
+                    ins_sub_pipeline.add_act(
+                        act_name=_("检查主从延迟 {}").format(remote_node["new_slave"]["instance"]),
+                        act_component_code=MySQLCheckSlaveDelayComponent.code,
+                        kwargs=asdict(
+                            CheckSlaveStatusKwargs(
+                                bk_cloud_id=target_cluster.bk_cloud_id,
+                                instance_ip=remote_node["new_slave"]["ip"],
+                                instance_port=remote_node["new_slave"]["port"],
+                            )
+                        ),
+                    )
+
                 cluster = {
                     "storage_status": InstanceStatus.RESTORING.value,
                     "storage_ids": [target_slave.id, target_master.id],
@@ -399,26 +366,107 @@ class TenDBRollBackDataFlow(object):
                         )
                     ),
                 )
-                # # 屏蔽监控
-                # ins_sub_pipeline.add_act(
-                #     act_name=_("屏蔽监控 {}").format(shard_id),
-                #     act_component_code=MysqlCrondMonitorControlComponent.code,
-                #     kwargs=asdict(
-                #         CrondMonitorKwargs(
-                #             bk_cloud_id=target_cluster.bk_cloud_id,
-                #             exec_ips=[remote_node["new_master"]["ip"], remote_node["new_slave"]["ip"]],
-                #             port=remote_node["new_master"]["port"],
-                #         )
-                #     ),
-                # )
-
-                ins_sub_pipeline.add_sub_pipeline(
-                    sub_flow=remote_node_rollback(
-                        root_id=self.root_id, ticket_data=copy.deepcopy(self.data), cluster=shd_cluster
+                if ms_diff_node and all_db_rollback:
+                    ins_sub_pipeline.add_act(
+                        act_name=_("从库stop slave {}").format(remote_node["new_slave"]["instance"]),
+                        act_component_code=MySQLExecuteRdsComponent.code,
+                        kwargs=asdict(
+                            ExecuteRdsKwargs(
+                                bk_cloud_id=target_cluster.bk_cloud_id,
+                                instance_ip=remote_node["new_slave"]["ip"],
+                                instance_port=remote_node["new_slave"]["port"],
+                                sqls=["stop slave"],
+                            )
+                        ),
                     )
+
+                rollback_dbs = []
+                for db in self.data["databases"]:
+                    if db == "*":
+                        rollback_dbs.append("*")
+                    else:
+                        rollback_dbs.append("{}_{}".format(db, shard_id))
+                data_restore_sub_list = []
+                master_cluster_info = {
+                    "rollback_ip": remote_node["new_master"]["ip"],
+                    "rollback_port": remote_node["new_master"]["port"],
+                    "file_target_path": f'{self.backup_target_path}/{remote_node["new_master"]["port"]}',
+                    "rollback_type": self.data["rollback_type"],
+                    "charset": charset,
+                    "databases": rollback_dbs,
+                    "tables": self.data["tables"],
+                    "databases_ignore": self.data["databases_ignore"],
+                    "tables_ignore": self.data["tables_ignore"],
+                    "rollback_time": self.data["rollback_time"],
+                    # "backupinfo": shard_backup_info,
+                }
+                backup_info_tmp, master_restore_sub_flow = tendbha_rollback_data_sub_flow(
+                    root_id=self.root_id,
+                    uid=self.ticket_data["uid"],
+                    cluster_model=source_cluster,
+                    cluster_info=master_cluster_info,
+                    backup_info=shard_backup_info,
                 )
-                # 恢复权限
-                if shd_cluster["backupinfo"].get("backup_type", "") == MySQLBackupTypeEnum.PHYSICAL.value:
+                data_restore_sub_list.append(master_restore_sub_flow)
+
+                # 由于构造到新tendbCluster集群remote从节点可能是虚拟出来的节点，有可能实际上是主节点信息。
+                if ms_diff_node:
+                    slave_cluster_info = {
+                        "rollback_ip": remote_node["new_slave"]["ip"],
+                        "rollback_port": remote_node["new_slave"]["port"],
+                        "file_target_path": f'{self.backup_target_path}/{remote_node["new_slave"]["port"]}',
+                        "rollback_type": self.data["rollback_type"],
+                        "charset": charset,
+                        "databases": rollback_dbs,
+                        "tables": self.data["tables"],
+                        "databases_ignore": self.data["databases_ignore"],
+                        "tables_ignore": self.data["tables_ignore"],
+                        "rollback_time": self.data["rollback_time"],
+                        # "backupinfo": shard_backup_info,
+                    }
+                    backup_info_tmp, slave_restore_sub_flow = tendbha_rollback_data_sub_flow(
+                        root_id=self.root_id,
+                        uid=self.ticket_data["uid"],
+                        cluster_model=source_cluster,
+                        cluster_info=slave_cluster_info,
+                        backup_info=shard_backup_info,
+                    )
+                    data_restore_sub_list.append(slave_restore_sub_flow)
+
+                ins_sub_pipeline.add_parallel_sub_pipeline(data_restore_sub_list)
+                if ms_diff_node:
+                    backup_type = shard_backup_info.get("backup_type", "")
+                    if backup_type == MySQLBackupTypeEnum.PHYSICAL.value:
+                        change_master_info = {
+                            "target_ip": remote_node["new_master"]["ip"],
+                            "target_port": remote_node["new_master"]["port"],
+                            "repl_ip": remote_node["new_slave"]["ip"],
+                            "repl_port": remote_node["new_slave"]["port"],
+                            "bk_cloud_id": target_cluster.bk_cloud_id,
+                            "cluster_type": target_cluster.cluster_type,
+                            "change_master_force": True,
+                        }
+                        ins_sub_pipeline.add_sub_pipeline(
+                            sub_flow=change_master_by_master_status(
+                                root_id=self.root_id, uid=self.ticket_data["uid"], cluster_info=change_master_info
+                            )
+                        )
+                    elif backup_type == MySQLBackupTypeEnum.LOGICAL.value and all_db_rollback:
+                        ins_sub_pipeline.add_act(
+                            act_name=_("从库start slave {}").format(remote_node["new_slave"]["instance"]),
+                            act_component_code=MySQLExecuteRdsComponent.code,
+                            kwargs=asdict(
+                                ExecuteRdsKwargs(
+                                    bk_cloud_id=target_cluster.bk_cloud_id,
+                                    instance_ip=remote_node["new_slave"]["ip"],
+                                    instance_port=remote_node["new_slave"]["port"],
+                                    sqls=["start slave"],
+                                )
+                            ),
+                        )
+
+                # 如果备份是物理备份，spider层的路由账号需要恢复
+                if shard_backup_info.get("backup_type", "") == MySQLBackupTypeEnum.PHYSICAL.value:
                     ins_sub_pipeline.add_act(
                         act_name=_("恢复所有remoteDB->spider的权限"),
                         act_component_code=RemoteDbPrivRecoverComponent.code,
@@ -457,29 +505,36 @@ class TenDBRollBackDataFlow(object):
                         )
                     ),
                 )
-                ins_sub_pipeline.add_act(
-                    act_name=_("解除监控屏蔽 {}").format(shard_id),
-                    act_component_code=MysqlCrondMonitorControlComponent.code,
-                    kwargs=asdict(
-                        CrondMonitorKwargs(
-                            bk_cloud_id=target_cluster.bk_cloud_id,
-                            exec_ips=[remote_node["new_master"]["ip"], remote_node["new_slave"]["ip"]],
-                            port=remote_node["new_master"]["port"],
-                            enable=True,
-                        )
-                    ),
-                )
                 ins_sub_pipeline_list.append(
                     ins_sub_pipeline.build_sub_process(sub_name=_("{} 分片主从恢复".format(shard_id)))
                 )
 
-            tendb_rollback_pipeline.add_parallel_sub_pipeline(sub_flow_list=ins_sub_pipeline_list)
+            # 检查链接
+            tendb_rollback_pipeline.add_parallel_sub_pipeline(sub_flow_list=check_connect_list)
+            tendb_rollback_pipeline.add_act(
+                act_name=_("下发actuator工具 {}".format(clusters_info["ip_list"])),
+                act_component_code=TransFileComponent.code,
+                kwargs=asdict(
+                    DownloadMediaKwargs(
+                        bk_cloud_id=target_cluster.bk_cloud_id,
+                        exec_ip=clusters_info["ip_list"],
+                        file_list=GetFileList(DBType.MySQL).get_db_actuator_package(),
+                    )
+                ),
+            )
+            tendb_rollback_pipeline.add_act(
+                act_name=_("回滚前在中控节点备份权限{} {}").format(
+                    exec_act_kwargs_for_backup.exec_ip, cluster_for_backup["backup_id_for_restore"]
+                ),
+                act_component_code=ExecuteDBActuatorScriptComponent.code,
+                kwargs=asdict(exec_act_kwargs_for_backup),
+            )
             cluster = {
                 "cluster_id": target_cluster.id,
-                "cluster_phase": ClusterPhase.ONLINE.value,
+                "cluster_phase": ClusterPhase.OFFLINE.value,
             }
             tendb_rollback_pipeline.add_act(
-                act_name=_("设置集群为正常状态"),
+                act_name=_("修改集群元数据为禁用状态{} (仅元数据)".format(ClusterPhase.OFFLINE.value)),
                 act_component_code=SpiderDBMetaComponent.code,
                 kwargs=asdict(
                     DBMetaOPKwargs(
@@ -489,9 +544,44 @@ class TenDBRollBackDataFlow(object):
                     )
                 ),
             )
+            tendb_rollback_pipeline.add_act(
+                act_name=_("屏蔽告警24小时"),
+                act_component_code=AddAlarmShieldComponent.code,
+                kwargs={
+                    "duration_seconds": 24 * 3600,
+                    "description": target_cluster.immute_domain,
+                    "dimensions": [
+                        {
+                            "name": "instance_host",
+                            "values": clusters_info["ip_list"],
+                        }
+                    ],
+                },
+            )
+            tendb_rollback_pipeline.add_parallel_sub_pipeline(sub_flow_list=ins_sub_pipeline_list)
+            cluster = {
+                "cluster_id": target_cluster.id,
+                "cluster_phase": ClusterPhase.ONLINE.value,
+            }
+            tendb_rollback_pipeline.add_act(
+                act_name=_("修改集群元数据为正常状态{} (仅元数据)".format(ClusterPhase.ONLINE.value)),
+                act_component_code=SpiderDBMetaComponent.code,
+                kwargs=asdict(
+                    DBMetaOPKwargs(
+                        db_meta_class_func=SpiderDBMeta.tendb_modify_cluster_phase.__name__,
+                        cluster=cluster,
+                        is_update_trans_data=False,
+                    )
+                ),
+            )
+            tendb_rollback_pipeline.add_act(
+                act_name=DisableAlarmShieldComponent.node_name,
+                act_component_code=DisableAlarmShieldComponent.code,
+                kwargs={},
+            )
             tendb_rollback_list.append(
                 tendb_rollback_pipeline.build_sub_process(
-                    sub_name=_("集群回档: src:{} desc:{}".format(source_cluster.id, target_cluster.id))
+                    sub_name=_("回档集群: {} -> {}".format(source_cluster.id, target_cluster.id))
                 )
             )
         tendb_rollback_pipeline_all.add_parallel_sub_pipeline(sub_flow_list=tendb_rollback_list)

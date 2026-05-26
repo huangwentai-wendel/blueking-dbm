@@ -12,7 +12,7 @@ import itertools
 from collections import defaultdict
 
 from django.db.models import Q
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.db_meta.enums import ClusterType, MachineType
@@ -21,7 +21,6 @@ from backend.db_services.dbbase.constants import IpSource
 from backend.db_services.mongodb.resources.query import MongoDBListRetrieveResource
 from backend.flow.engine.controller.mongodb import MongoDBController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import HostRecycleSerializer
 from backend.ticket.builders.mongodb.base import (
     BaseMongoDBOperateDetailSerializer,
     BaseMongoDBOperateResourceParamBuilder,
@@ -48,9 +47,9 @@ class MongoDBCutoffDetailSerializer(BaseMongoDBOperateDetailSerializer):
         help_text=_("主机来源"), choices=IpSource.get_choices(), default=IpSource.RESOURCE_POOL
     )
     infos = serializers.ListSerializer(help_text=_("整机替换信息"), child=ACutoffDetailSerializer())
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.DEFAULT)
 
     def validate(self, attrs):
+        attrs = super().validate(attrs)
         # 校验替换的mongodb机器不在同一分片中
         machines_ips = []
         for info in attrs["infos"]:
@@ -75,6 +74,8 @@ class MongoDBCutoffFlowParamBuilder(builders.FlowParamBuilder):
 
 class MongoDBCutoffResourceParamBuilder(BaseMongoDBOperateResourceParamBuilder):
     def format(self):
+        # 补充城市和亲和性
+        self.patch_info_affinity_location(replace_zone=True)
         super().format()
 
     @staticmethod
@@ -172,7 +173,8 @@ class MongoDBCutoffApplyFlowBuilder(BaseMongoDBTicketFlowBuilder):
         cluster_map = Cluster.objects.in_bulk(cluster_ids)
         old_nodes = defaultdict(list)
         for info in self.ticket.details["infos"]:
-            city = cluster_map[info["cluster_id"]].region
+            cluster = cluster_map[info["cluster_id"]]
+            city = cluster.region
             # 打包资源信息：按照role_ip这样的命名格式构造每一个资源申请信息组，每组的城市同集群，数量为1
             resource_spec = {}
             for role in mongo_roles:
@@ -181,9 +183,13 @@ class MongoDBCutoffApplyFlowBuilder(BaseMongoDBTicketFlowBuilder):
                     resource_spec[group_name] = {
                         "spec_id": host["spec_id"],
                         "count": 1,
-                        "location_spec": {"city": city, "sub_zone_ids": []},
+                        "location_spec": {
+                            "city": city,
+                            "sub_zone_ids": cluster.zone_list,
+                            "include_or_exclue": bool(cluster.zone_list),
+                        },
                     }
-                    old_nodes[role].append({"bk_host_id": host["bk_host_id"]})
+                    old_nodes[role].append({"bk_host_id": host["bk_host_id"], "ip": host["ip"]})
             info["resource_spec"] = resource_spec
             info["old_nodes"] = old_nodes
 

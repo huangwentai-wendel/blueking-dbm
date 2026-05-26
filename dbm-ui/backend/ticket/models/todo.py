@@ -12,13 +12,15 @@ import logging
 
 from django.db import models
 from django.utils import timezone
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend import env
 from backend.bk_web.constants import LEN_MIDDLE, LEN_SHORT
 from backend.bk_web.models import AuditedModel
 from backend.configuration.models import BizSettings, DBAdministrator
+from backend.db_dirty.constants import MachineEventType
 from backend.ticket.constants import TODO_RUNNING_STATUS, TicketFlowStatus, TodoStatus, TodoType
+from backend.ticket.models import Flow
 
 logger = logging.getLogger("root")
 
@@ -26,6 +28,9 @@ logger = logging.getLogger("root")
 class TodoManager(models.Manager):
     def exist_unfinished(self):
         return self.filter(status__in=TODO_RUNNING_STATUS).exists()
+
+    def exist_lack_unfinished(self):
+        return self.filter(status__in=TODO_RUNNING_STATUS, type=TodoType.RESOURCE_REPLENISH).exists()
 
     def get_operators(self, todo_type, flow, ticket, operators):
         # 获得提单人，dba，协助人.
@@ -35,7 +40,7 @@ class TodoManager(models.Manager):
         # 从flow中获取单据审批人
         from backend.ticket.handler import TicketHandler
 
-        itsm_operators = TicketHandler.get_itsm_approvers(flow)
+        itsm_operators, itsm_helpers = TicketHandler.get_itsm_todo_operators(flow)
 
         # 构造单据状态与处理人之间的对应关系
         # - 审批中：提单人可撤销，dba可处理，
@@ -46,7 +51,7 @@ class TodoManager(models.Manager):
         # - 待补货：operators[提单人 + dba] + helpers[单据协助人 + second_dba + other_dba]
         # - 已失败：operators[提单人 + dba] + helpers[单据协助人 + second_dba + other_dba]
         todo_operators_map = {
-            TodoType.ITSM: itsm_operators[:1],
+            TodoType.ITSM: itsm_operators,
             TodoType.APPROVE: creator,
             TodoType.TIMER: creator,
             TodoType.INNER_APPROVE: creator + dba,
@@ -54,7 +59,7 @@ class TodoManager(models.Manager):
             TodoType.INNER_FAILED: creator + dba,
         }
         todo_helpers_map = {
-            TodoType.ITSM: itsm_operators[1:],
+            TodoType.ITSM: itsm_helpers,
             TodoType.APPROVE: ticket_helpers,
             TodoType.TIMER: ticket_helpers,
             TodoType.INNER_APPROVE: ticket_helpers + second_dba + other_dba,
@@ -82,8 +87,12 @@ class Todo(AuditedModel):
     """
 
     name = models.CharField(_("待办标题"), max_length=LEN_MIDDLE, default="")
-    flow = models.ForeignKey("Flow", help_text=_("关联流程任务"), related_name="todo_of_flow", on_delete=models.CASCADE)
-    ticket = models.ForeignKey("Ticket", help_text=_("关联工单"), related_name="todo_of_ticket", on_delete=models.CASCADE)
+    flow = models.ForeignKey(
+        "Flow", help_text=_("关联流程任务"), related_name="todo_of_flow", on_delete=models.CASCADE, null=True
+    )
+    ticket = models.ForeignKey(
+        "Ticket", help_text=_("关联工单"), related_name="todo_of_ticket", on_delete=models.CASCADE, null=True
+    )
     operators = models.JSONField(_("待办人"), default=list)
     helpers = models.JSONField(_("协助人"), default=list)
     type = models.CharField(
@@ -128,8 +137,64 @@ class Todo(AuditedModel):
 
     def set_terminated(self, username, action):
         self.set_status(username, TodoStatus.DONE_FAILED)
-        self.flow.update_status(TicketFlowStatus.TERMINATED)
+        if self.flow:
+            self.flow.update_status(TicketFlowStatus.TERMINATED)
+        if self.ticket:
+            self.ticket.updater = username
+            self.ticket.save(update_fields=["updater", "update_at"])
         TodoHistory.objects.create(creator=username, todo=self, action=action)
+
+    @classmethod
+    def host_todo_trigger(cls, host_ids, operators, event, ticket=None):
+        if event in [MachineEventType.ToRecycle.value, MachineEventType.ToFault.value]:
+            from backend.ticket.todos.host_todo import HostTodoContext
+
+            todo_list = []
+            todo_type_map = {
+                MachineEventType.ToRecycle.value: TodoType.RECYCLE_HOST,
+                MachineEventType.ToFault.value: TodoType.FAULT_HOST,
+            }
+
+            if ticket:
+                flow = Flow.objects.filter(ticket=ticket).first()
+            else:
+                flow = None
+            for host_id in host_ids:
+                todo_list.append(
+                    Todo(
+                        name=_("主机{}后续相关操作，待处理").format(MachineEventType.get_choice_label(event)),
+                        flow=flow,
+                        ticket=ticket,
+                        operators=operators,
+                        type=todo_type_map[event],
+                        context=HostTodoContext(host_id).to_dict(),
+                        status=TodoStatus.TODO,
+                    )
+                )
+            Todo.objects.bulk_create(todo_list)
+        elif event in [MachineEventType.ReturnResource, MachineEventType.ImportResource, MachineEventType.Recycled]:
+            todos = Todo.objects.filter(type__in=[TodoType.RECYCLE_HOST, TodoType.FAULT_HOST], status=TodoStatus.TODO)
+            todo_host_map = {todo.context.get("host_id"): todo for todo in todos}
+            for host_id in host_ids:
+                todo = todo_host_map.get(host_id)
+                if todo:
+                    username = ticket.creator if ticket else operators[0]
+                    todo.set_success(username, _("主机导入/回收"))
+
+    @classmethod
+    def update_recycle_host_todo_type(cls, host_ids, operator):
+        """
+        故障池的主机转入待回收池
+        """
+        # 构建 OR 条件查询
+        todos = Todo.objects.filter(
+            type=TodoType.FAULT_HOST,
+            status=TodoStatus.TODO,
+            operators__contains=operator,
+        ).only("id", "context")
+        todo_ids_to_update = [todo.id for todo in todos if todo.context.get("host_id") in host_ids]
+        if todo_ids_to_update:
+            Todo.objects.filter(id__in=todo_ids_to_update).update(type=TodoType.RECYCLE_HOST)
 
 
 class TodoHistory(AuditedModel):

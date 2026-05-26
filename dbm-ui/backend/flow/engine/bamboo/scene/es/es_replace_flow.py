@@ -12,7 +12,7 @@ import logging.config
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.flow.consts import ES_DEFAULT_INSTANCE_NUM, ManagerDefaultPort, ManagerOpType, ManagerServiceType
@@ -181,6 +181,10 @@ class EsReplaceFlow(EsFlow):
                 scale_up_act_kwargs.exec_ip = ip
                 scale_up_act_kwargs.es_role = role
                 scale_up_act_kwargs.instance_num = instance_num
+                # 写入亲合度相关信息，目前为园区、机房、机架三个维度
+                scale_up_act_kwargs.sub_zone_id = node.get("sub_zone_id") or ""
+                scale_up_act_kwargs.idc_id = node.get("idc_id") or ""
+                scale_up_act_kwargs.rack_id = node.get("rack_id") or ""
                 sub_pipeline.add_act(
                     act_name=_("安装ES {}-{}节点").format(role, ip),
                     act_component_code=ExecuteEsActuatorScriptComponent.code,
@@ -210,9 +214,11 @@ class EsReplaceFlow(EsFlow):
             kwargs={**asdict(scale_up_act_kwargs), **asdict(dns_kwargs)},
         )
         """
+        """
         sub_pipeline_access = get_access_manager_atom_job(root_id=self.root_id, ticket_data=scale_up_data)
         if sub_pipeline_access:
             scale_up_sub_pipeline.add_sub_pipeline(sub_pipeline_access)
+        """
 
         # 校验扩容是否成功
         scale_up_act_kwargs.get_es_payload_func = EsActPayload.get_check_nodes_payload.__name__
@@ -224,6 +230,14 @@ class EsReplaceFlow(EsFlow):
         )
 
         es_pipeline.add_sub_pipeline(sub_flow=scale_up_sub_pipeline.build_sub_process(sub_name=_("扩容子流程")))
+
+        # 域名变更
+        main_flow_data = self.get_flow_base_data()
+        main_flow_data["new_nodes"] = self.new_nodes
+        main_flow_data["old_nodes"] = self.old_nodes
+        sub_pipeline_access = get_access_manager_atom_job(root_id=self.root_id, ticket_data=main_flow_data)
+        if sub_pipeline_access:
+            es_pipeline.add_sub_pipeline(sub_pipeline_access)
 
         # 缩容子流程
         shrink_data = self.__get_shrink_flow_data()
@@ -267,9 +281,11 @@ class EsReplaceFlow(EsFlow):
             kwargs={**asdict(shrink_act_kwargs), **asdict(dns_kwargs)},
         )
         """
+        """
         sub_pipeline_access = get_access_manager_atom_job(root_id=self.root_id, ticket_data=shrink_data)
         if sub_pipeline_access:
             shrink_sub_pipeline.add_sub_pipeline(sub_pipeline_access)
+        """
 
         # 检查下架节点上是否安装kibana
         manager_ip = get_manager_ip(
@@ -376,4 +392,4 @@ class EsReplaceFlow(EsFlow):
 
         es_pipeline.add_sub_pipeline(sub_flow=shrink_sub_pipeline.build_sub_process(sub_name=_("缩容子流程")))
 
-        es_pipeline.run_pipeline()
+        es_pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=[self.cluster_id])

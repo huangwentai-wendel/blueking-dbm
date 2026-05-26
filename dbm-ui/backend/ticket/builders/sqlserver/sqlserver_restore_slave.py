@@ -22,7 +22,7 @@ from backend.db_services.ipchooser.constants import BkOsType
 from backend.flow.engine.controller.sqlserver import SqlserverController
 from backend.flow.utils.sqlserver.sqlserver_bk_config import get_module_infos
 from backend.ticket import builders
-from backend.ticket.builders.common.base import HostInfoSerializer, HostRecycleSerializer
+from backend.ticket.builders.common.base import HostInfoSerializer
 from backend.ticket.builders.sqlserver.base import (
     BaseSQLServerHATicketFlowBuilder,
     SQLServerBaseOperateDetailSerializer,
@@ -47,13 +47,13 @@ class SQLServerRestoreSlaveDetailSerializer(SQLServerBaseOperateDetailSerializer
     ip_source = serializers.ChoiceField(
         help_text=_("主机来源"), choices=IpSource.get_choices(), default=IpSource.RESOURCE_POOL
     )
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.FAULT_DEFAULT)
 
     def validate(self, attrs):
         # 校验实例的角色为slave
         # super(MysqlRestoreLocalSlaveDetailSerializer, self).validate_instance_role(
         #     attrs, instance_key=["slave"], role=InstanceInnerRole.SLAVE
         # )
+        attrs = super(SQLServerBaseOperateDetailSerializer, self).validate(attrs)
         # 校验集群是否可用，集群类型为高可用
         super(SQLServerRestoreSlaveDetailSerializer, self).validate_cluster_can_access(attrs)
         super(SQLServerRestoreSlaveDetailSerializer, self).validated_cluster_type(attrs, ClusterType.SqlserverHA)
@@ -112,16 +112,22 @@ class SQLServerRestoreSlaveResourceParamBuilder(SQLServerBaseOperateResourcePara
             info.update(bk_cloud_id=master_machine.bk_cloud_id)
 
             # 补充操作系统、亲和性和城市信息
-            info["resource_params"] = {"os_type": BkOsType.WINDOWS.value}
             info["resource_spec"]["sqlserver_ha"].update(
                 affinity=cluster.disaster_tolerance_level,
                 location_spec={"city": master_machine.bk_city.logical_city.name, "sub_zone_ids": []},
+                os_type=BkOsType.WINDOWS.value,
+                os_names=info["system_version"],
             )
 
             # 根据亲和性补充园区信息
             if cluster.disaster_tolerance_level == AffinityEnum.CROS_SUBZONE:
+                master_subzone = master_machine.bk_sub_zone_id
+                if not cluster.zone_list:
+                    is_include, sub_zone_ids = False, [master_subzone]
+                else:
+                    is_include, sub_zone_ids = True, list(set(cluster.zone_list) - {master_subzone})
                 info["resource_spec"]["sqlserver_ha"]["location_spec"].update(
-                    sub_zone_ids=[master_machine.bk_sub_zone_id], include_or_exclue=False
+                    sub_zone_ids=sub_zone_ids, include_or_exclue=is_include
                 )
             elif cluster.disaster_tolerance_level in [
                 AffinityEnum.SAME_SUBZONE,

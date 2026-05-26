@@ -1,5 +1,6 @@
 <template>
   <EditableColumn
+    ref="editableColumn"
     :field="field"
     :label="label"
     :min-width="200"
@@ -94,6 +95,7 @@
   });
 
   const { t } = useI18n();
+  const editableColumnRef = useTemplateRef('editableColumn');
 
   let tippyIns: Instance | undefined;
 
@@ -120,8 +122,8 @@
   const tagInputPasteFn = (value: string) => value.split(batchSplitRegex).map((item) => ({ id: item }));
 
   onMounted(() => {
-    nextTick(() => {
-      if (slots.tip && rootRef.value !== null) {
+    setTimeout(() => {
+      if (slots.tip && rootRef.value && popRef.value) {
         tippyIns = tippy(rootRef.value as SingleTarget, {
           appendTo: () => document.body,
           arrow: true,
@@ -146,6 +148,12 @@
       tippyIns.destroy();
       tippyIns = undefined;
     }
+  });
+
+  defineExpose({
+    validate() {
+      return editableColumnRef.value?.validate();
+    },
   });
 </script>
 

@@ -43,16 +43,19 @@ export enum FlowTypes {
  */
 export function getTaskflow(params: {
   bk_biz_id?: number;
+  bk_biz_id__in?: string;
   created_at__gte?: string;
   created_at__lte?: string;
   limit: number;
   offset: number;
   root_id?: string;
+  root_id__in?: string;
   status?: string;
   status__in?: string;
   ticket_type?: string;
   ticket_type__in?: string;
   uid?: number;
+  uid__in?: string;
 }) {
   return http.get<ListBase<TaskFlowModel[]>>(`${path}/`, params).then((res) => ({
     ...res,
@@ -108,13 +111,14 @@ interface FlowsDetail {
       incoming: string[];
       name?: string;
       optional: boolean;
-      outgoing: string;
+      outgoing: string | string[];
       pipeline?: FlowsDetail;
+      retry: number;
       retryable: boolean;
       skip: boolean;
       skippable: boolean;
       started_at: number;
-      status: 'FINISHED' | 'RUNNING' | 'FAILED' | 'READY' | 'CREATED' | 'SKIPPED';
+      status: 'FINISHED' | 'RUNNING' | 'FAILED' | 'READY' | 'CREATED' | 'SKIPPED' | 'REVOKED';
       timeout?: number;
       type: keyof typeof FlowTypes;
       updated_at: number;
@@ -134,10 +138,12 @@ interface FlowsDetail {
   };
   flow_info: {
     bk_biz_id: number;
+    bk_biz_name: string;
     bk_host_ids: number[];
     cost_time: number;
     created_at: string;
     created_by: string;
+    flow_alias: string;
     root_id: string;
     status: string;
     ticket_type: string;
@@ -182,7 +188,7 @@ export function getRetryNodeHistories(params: { node_id: string; root_id: string
 /**
  * 节点日志
  */
-export function getNodeLog(params: { node_id: string; root_id: string; version_id: string }) {
+export function getNodeLog(params: { labels?: string; node_id: string; root_id: string; version_id: string }) {
   return http.get<
     {
       levelname: string;
@@ -195,7 +201,7 @@ export function getNodeLog(params: { node_id: string; root_id: string; version_i
 /**
  * 重试节点
  */
-export function retryTaskflowNode(params: { node_id: string; root_id: string }) {
+export function retryTaskflowNode(params: { is_force?: boolean; node_id: string; remark?: string; root_id: string }) {
   return http.post<{ node_id: string }>(`${path}/${params.root_id}/retry_node/`, params);
 }
 
@@ -209,7 +215,7 @@ export function revokePipeline(params: { rootId: string }) {
 /**
  * 跳过节点
  */
-export function skipTaskflowNode(params: { node_id: string; root_id: string }) {
+export function skipTaskflowNode(params: { is_force?: boolean; node_id: string; remark?: string; root_id: string }) {
   return http.post<{ node_id: string }>(`${path}/${params.root_id}/skip_node/`, params);
 }
 
@@ -223,6 +229,74 @@ export function forceFailflowNode(params: { node_id: string; root_id: string }) 
 /**
  * 批量重试
  */
-export function batchRetryNodes(params: { root_id: string }) {
-  return http.post<{ root_id: string }>(`${path}/${params.root_id}/batch_retry_nodes/`, params);
+export function batchRetryNodes(params: { is_force?: boolean; nodes?: string[]; remark?: string; root_id: string }) {
+  return http.post<{ id: number }[]>(`${path}/${params.root_id}/batch_retry_nodes/`, params);
 }
+
+/**
+ * 批量跳过节点
+ */
+export function batchSkipTaskflowNode(params: {
+  is_force?: boolean;
+  nodes?: string[];
+  remark?: string;
+  root_id: string;
+}) {
+  return http.post<{ id: number }[]>(`${path}/${params.root_id}/batch_skip_nodes/`, params);
+}
+
+/**
+ * 批量强制失败节点
+ */
+export function batchForceFailTaskflowNode(params: { nodes?: string[]; root_id: string }) {
+  return http.post<{ id: number }[]>(`${path}/${params.root_id}/batch_force_fail_nodes/`, params);
+}
+
+/**
+ * 获取节点运行时数据
+ */
+export function getNodeExecutionData(params: { node_id: string; root_id: string }) {
+  return http.get<{
+    inputs: Record<string, any>;
+    outputs: Record<string, any>;
+  }>(`${path}/${params.root_id}/node_execution_data/`, params);
+}
+
+/**
+ * 获取节点操作记录
+ */
+export function getNodeOperateRecord(params: { node_id?: string; root_id: string }) {
+  return http
+    .get<
+      {
+        id: number;
+        node_id: string;
+        node_name: string;
+        operate_date: string;
+        operate_type: string;
+        operator: string;
+        remark: string;
+        root_id: string;
+        version_id: string;
+      }[]
+    >(`${path}/${params.root_id}/node_operate_records/`, params)
+    .then((data) =>
+      Object.assign(
+        {},
+        {
+          count: data.length,
+          results: data,
+        },
+      ),
+    );
+}
+
+export const getSpecificNodes = (params: { root_id: string; status: string }) => {
+  return http.post<
+    {
+      node_id: string;
+      node_name: string;
+      version_id: string;
+    }[]
+  >(`${path}/get_specific_nodes/`, params);
+};

@@ -8,20 +8,26 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+import inspect
 from collections import Counter
 from typing import Dict, List
 
 from django.db import transaction
-from django.utils.translation import ugettext_lazy as _
+from django.db.models import Count, Q
+from django.utils.translation import gettext_lazy as _
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
+from backend.bk_dataview.prometheus import metrics
+from backend.bk_dataview.prometheus.handlers import observe
 from backend.bk_web import viewsets
 from backend.bk_web.pagination import AuditedLimitOffsetPagination
 from backend.bk_web.swagger import PaginatedResponseSwaggerAutoSchema, common_swagger_auto_schema
+from backend.configuration.constants import DBType
+from backend.db_meta.models import Cluster
 from backend.db_services.ipchooser.query.resource import ResourceQueryHelper
 from backend.iam_app.dataclass import ResourceEnum
 from backend.iam_app.dataclass.actions import ActionEnum
@@ -34,27 +40,34 @@ from backend.iam_app.handlers.drf_perm.ticket import (
 )
 from backend.iam_app.handlers.permission import Permission
 from backend.ticket.builders import BuilderFactory
-from backend.ticket.builders.common.base import fetch_cluster_ids
+from backend.ticket.builders.common.base import ParamValidateSerializerMixin, fetch_cluster_ids
 from backend.ticket.constants import (
     FLOW_NOT_EXECUTE_STATUS,
+    FLOW_TASK_TYPES,
     TICKET_FINISHED_STATUS_SET,
     TICKET_TODO_STATUS_SET,
     TODO_RUNNING_STATUS,
     CountType,
-    FlowType,
     TicketStatus,
     TicketType,
     TodoStatus,
+    TodoType,
 )
 from backend.ticket.contexts import TicketContext
-from backend.ticket.exceptions import TicketDuplicationException
-from backend.ticket.filters import ClusterOpRecordListFilter, InstanceOpRecordListFilter, TicketListFilter
+from backend.ticket.exceptions import TicketDuplicationException, TicketParamsVerifyException
+from backend.ticket.filters import (
+    ClusterDisableTodoFilter,
+    ClusterOpRecordListFilter,
+    InstanceOpRecordListFilter,
+    TicketListFilter,
+)
 from backend.ticket.flow_manager.manager import TicketFlowManager
 from backend.ticket.handler import TicketHandler
-from backend.ticket.models import ClusterOperateRecord, Flow, InstanceOperateRecord, Ticket, TicketFlowsConfig
+from backend.ticket.models import ClusterOperateRecord, Flow, InstanceOperateRecord, Ticket, TicketFlowsConfig, Todo
 from backend.ticket.serializers import (
     BatchTicketOperateSerializer,
     BatchTodoOperateSerializer,
+    ClusterDisableTodoSerializer,
     ClusterModifyOpSerializer,
     CreateTicketFlowConfigSerializer,
     DeleteTicketFlowConfigSerializer,
@@ -96,6 +109,8 @@ class TicketViewSet(viewsets.AuditedModelViewSet):
         # 创建单据，关联单据类型的动作
         if self.action == "create":
             return create_ticket_permission(self.request.data["ticket_type"])
+        if self.action == "batch_create_ticket":
+            return create_ticket_permission(self.request.data["tickets"][0]["ticket_type"], batch=True)
         if self.action == "batch_approval":
             return [BatchApprovalPermission()]
         # 创建敏感单据，只允许通过jwt校验的用户访问(warning: 这个网关接口授权需谨慎)
@@ -115,18 +130,21 @@ class TicketViewSet(viewsets.AuditedModelViewSet):
         elif self.action in ["update_ticket_flow_config", "create_ticket_flow_config", "delete_ticket_flow_config"]:
             return ticket_flows_config_permission(self.action, self.request)
         # 对于处理todo的接口，可以不用鉴权，todo本身会判断是否是确认人
-        elif self.action in ["process_todo", "batch_process_todo", "batch_process_ticket"]:
+        elif self.action in ["process_todo", "batch_process_todo", "batch_process_ticket", "cluster_disable_todo"]:
             return []
         # 其他非敏感GET接口，不鉴权
         elif self.action in [
             "list",
             "flow_types",
             "get_nodes",
+            "get_host_todo_count",
+            "get_cluster_disable_count",
             "get_tickets_count",
             "query_ticket_flow_describe",
             "list_ticket_status",
             "get_inner_flow_infos",
             "revoke_ticket",
+            "ticket_group_types",
         ]:
             return []
         # 回调和处理无需鉴权
@@ -172,19 +190,21 @@ class TicketViewSet(viewsets.AuditedModelViewSet):
 
     def perform_create(self, serializer):
         ticket_type = self.request.data["ticket_type"]
+        bk_biz_id = self.request.data["bk_biz_id"]
         ignore_duplication = self.request.data.get("ignore_duplication") or False
         # 如果不允许忽略重复提交，则进行校验
         if not ignore_duplication:
             self.verify_duplicate_ticket(ticket_type, self.request.data["details"])
 
-        with transaction.atomic():
-            # 设置单据类别 TODO: 这里会请求两次数据库，是否考虑group参数让前端传递
-            ticket = super().perform_create(serializer)
-            serializer.save(group=BuilderFactory.get_builder_cls(ticket_type).group)
-            # 初始化builder类
-            builder = BuilderFactory.create_builder(ticket)
-            builder.patch_ticket_detail()
-            builder.init_ticket_flows()
+        with observe(metrics.ticket_create_duration_histogram, bk_biz_id=bk_biz_id, ticket_type=ticket_type):
+            with transaction.atomic():
+                # 设置单据类别 TODO: 这里会请求两次数据库，是否考虑group参数让前端传递
+                ticket = super().perform_create(serializer)
+                serializer.save(group=BuilderFactory.get_builder_cls(ticket_type).group)
+                # 初始化builder类
+                builder = BuilderFactory.create_builder(ticket)
+                builder.patch_ticket_detail()
+                builder.init_ticket_flows()
 
         TicketFlowManager(ticket=ticket).run_next_flow()
 
@@ -234,8 +254,9 @@ class TicketViewSet(viewsets.AuditedModelViewSet):
         ticket_ids = self.params_validate(self.get_serializer_class())["ticket_ids"].split(",")
         tickets = Ticket.objects.filter(id__in=ticket_ids)
         ticket_status_map = {ticket.id: ticket.status for ticket in tickets}
-        # 对于包含任务代办的单据，状态更新为待继续
-        todo_tickets = tickets.filter(status=TicketStatus.RUNNING, todo_of_ticket__status=TodoStatus.TODO)
+        # 对于包含内置任务代办的单据，状态更新为待继续
+        pipe_todo_q = Q(todo_of_ticket__type=TodoType.INNER_APPROVE, todo_of_ticket__status=TodoStatus.TODO)
+        todo_tickets = tickets.filter(pipe_todo_q, status=TicketStatus.RUNNING)
         for ticket in todo_tickets:
             ticket_status_map[ticket.id] = TicketStatus.INNER_TODO
         return Response(ticket_status_map)
@@ -247,6 +268,47 @@ class TicketViewSet(viewsets.AuditedModelViewSet):
     )
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        operation_summary=_("批量创建单据"),
+        responses={status.HTTP_200_OK: TicketSerializer(label=_("批量创建单据"))},
+        tags=[TICKET_TAG],
+    )
+    @action(methods=["POST"], detail=False)
+    def batch_create_ticket(self, request, *args, **kwargs):
+        tickets = request.data.get("tickets", [])
+
+        # 校验单据
+        errors = []
+        for ticket in tickets:
+            try:
+                mixin_instance = ParamValidateSerializerMixin()
+                mixin_instance.context = {"ticket_type": ticket["ticket_type"]}
+                mixin_instance.validated_params(ticket["details"])
+            except TicketParamsVerifyException as e:
+                errors.extend(e.errors)
+
+        if errors:
+            raise TicketParamsVerifyException(errors=errors, ticket_type=tickets[0]["ticket_type"])
+
+        # 批量创建单据
+        ticket_datas = []
+        for ticket in tickets:
+            try:
+                # 获取 create_ticket 方法需要的参数名
+                create_ticket_params = inspect.signature(Ticket.create_ticket).parameters
+                # 使用字典表达式过滤掉不在方法参数中的键
+                filtered_ticket = {k: v for k, v in ticket.items() if k in create_ticket_params}
+
+                filtered_ticket["creator"] = request.user.username
+                obj = Ticket.create_ticket(**filtered_ticket)
+                serializer = self.get_serializer(instance=obj)
+                ticket_datas.append(serializer.data)
+
+            except Exception as e:
+                errors.append(e)
+                raise TicketParamsVerifyException(errors=errors, ticket_type=tickets[0]["ticket_type"])
+        return Response(ticket_datas)
 
     @common_swagger_auto_schema(
         operation_summary=_("创建单据(允许创建敏感单据)"),
@@ -267,7 +329,7 @@ class TicketViewSet(viewsets.AuditedModelViewSet):
     def flows(self, request, *args, **kwargs):
         """补充todo列表"""
         ticket = self.get_object()
-        serializer = self.get_serializer(ticket.flows, many=True)
+        serializer = self.get_serializer(ticket.flows.select_related("flowsummary").order_by("id"), many=True)
         return Response(serializer.data)
 
     @common_swagger_auto_schema(
@@ -300,9 +362,10 @@ class TicketViewSet(viewsets.AuditedModelViewSet):
     )
     @action(methods=["POST"], detail=True, serializer_class=RetryFlowSLZ)
     def revoke_flow(self, request, pk):
-        validated_data = self.params_validate(self.get_serializer_class())
+        data = self.params_validate(self.get_serializer_class())
         user = self.request.user.username
-        TicketHandler.operate_flow(ticket_id=pk, flow_id=validated_data["flow_id"], func="revoke", operator=user)
+        flow_id, remark = data["flow_id"], data["remark"]
+        TicketHandler.operate_flow(ticket_id=pk, flow_id=flow_id, func="revoke", remark=remark, operator=user)
         return Response()
 
     @common_swagger_auto_schema(
@@ -312,8 +375,10 @@ class TicketViewSet(viewsets.AuditedModelViewSet):
     )
     @action(methods=["POST"], detail=False, serializer_class=RevokeTicketSLZ)
     def revoke_ticket(self, request, *args, **kwargs):
-        ticket_ids = self.params_validate(self.get_serializer_class())["ticket_ids"]
-        TicketHandler.revoke_ticket(ticket_ids, operator=request.user.username)
+        data = self.params_validate(self.get_serializer_class())
+        ticket_ids = data["ticket_ids"]
+        remark = data["remark"]
+        TicketHandler.revoke_ticket(ticket_ids, operator=request.user.username, remark=remark)
         return Response()
 
     @swagger_auto_schema(
@@ -329,6 +394,42 @@ class TicketViewSet(viewsets.AuditedModelViewSet):
         for choice in TicketType.get_choices():
             if not is_apply or choice[0] in BuilderFactory.apply_ticket_type:
                 ticket_type_list.append({"key": choice[0], "value": choice[1]})
+        return Response(ticket_type_list)
+
+    @swagger_auto_schema(
+        operation_summary=_("获取单据类型优化版"),
+        query_serializer=TicketTypeSLZ(),
+        responses={status.HTTP_200_OK: TicketTypeResponseSLZ(many=True)},
+        tags=[TICKET_TAG],
+    )
+    @action(methods=["GET"], detail=False, filter_class=None, pagination_class=None, serializer_class=TicketTypeSLZ)
+    def ticket_group_types(self, request, *args, **kwargs):
+        is_apply = self.params_validate(self.get_serializer_class())["is_apply"]
+        ticket_type_list = []
+
+        resource_type = [("resource", "Resource"), ("recycle", "Recycle")]
+        all_type = resource_type + DBType.get_choices()
+        for db_type in all_type:
+            children = []
+            # 获取该DB类型的所有单据键值
+            ticket_keys = TicketType.get_ticket_type_by_db(db_type[0])
+
+            # 遍历每个单据键值，获取其详细信息
+            for ticket_key in ticket_keys:
+                # 获取该单据的枚举字段对象
+                ticket_field = TicketType.get_choice_label(ticket_key)
+
+                # 检查是否满足过滤条件
+                if not is_apply or ticket_key in BuilderFactory.apply_ticket_type:
+                    children.append({"label": ticket_field, "value": ticket_key})
+            ticket_type_list.append(
+                {
+                    "children": children,
+                    "label": db_type[1],
+                    "value": db_type[0],
+                }
+            )
+
         return Response(ticket_type_list)
 
     @common_swagger_auto_schema(
@@ -381,6 +482,77 @@ class TicketViewSet(viewsets.AuditedModelViewSet):
         return Response(TodoSerializer(ticket.todo_of_ticket.all(), many=True).data)
 
     @common_swagger_auto_schema(
+        operation_summary=_("集群下架代办"),
+        tags=[TICKET_TAG],
+    )
+    @action(
+        methods=["GET"],
+        detail=False,
+        queryset=Todo.objects.filter(type=TodoType.CLUSTER_DISABLE, status=TodoStatus.TODO)
+        .select_related("ticket")
+        .order_by("-update_at"),
+        serializer_class=ClusterDisableTodoSerializer,
+        filter_class=ClusterDisableTodoFilter,
+    )
+    def cluster_disable_todo(self, request, *args, **kwargs):
+        data = []
+        self.params_validate(self.get_serializer_class())
+        todo_queryset = super().filter_queryset(self.get_queryset())
+        pages = self.paginate_queryset(todo_queryset)
+
+        cluster_ids = [todo.context["cluster_id"] for todo in todo_queryset]
+        clusters = Cluster.objects.filter(id__in=cluster_ids)
+        cluster_map = {cluster.id: cluster.simple_desc for cluster in clusters}
+
+        for todo in pages:
+            cluster_info = cluster_map[todo.context["cluster_id"]]
+            cluster_info["disable_time"] = todo.create_at
+            cluster_info["disable_person"] = todo.ticket.creator
+            data.append(cluster_info)
+        return self.get_paginated_response(data=data)
+
+    @common_swagger_auto_schema(
+        operation_summary=_("集群下架待办单据数"),
+        tags=[TICKET_TAG],
+    )
+    @action(methods=["GET"], detail=False, filter_class=None, pagination_class=None)
+    def get_cluster_disable_count(self, request, *args, **kwargs):
+        user = request.user.username
+        data = {}
+
+        def calculate_count(field_name):
+            todos = Todo.objects.filter(
+                status=TodoStatus.TODO, type=TodoType.CLUSTER_DISABLE, **{f"{field_name}__contains": user}
+            )
+            cluster_type_count = {}
+            for todo in todos:
+                if todo.context["db_type"] not in cluster_type_count:
+                    cluster_type_count[todo.context["db_type"]] = 1
+                else:
+                    cluster_type_count[todo.context["db_type"]] += 1
+            return cluster_type_count
+
+        data["todo"] = calculate_count("operators")
+        data["to_assist"] = calculate_count("helpers")
+        return Response(data)
+
+    @common_swagger_auto_schema(
+        operation_summary=_("主机待办单据数"),
+        tags=[TICKET_TAG],
+    )
+    @action(methods=["GET"], detail=False, filter_class=None, pagination_class=None)
+    def get_host_todo_count(self, request, *args, **kwargs):
+        user = request.user.username
+
+        result = Todo.objects.filter(
+            operators__contains=user, status="TODO", type__in=["RECYCLE_HOST", "FAULT_HOST"]
+        ).aggregate(
+            recycle_count=Count("id", filter=Q(type="RECYCLE_HOST")),
+            fault_count=Count("id", filter=Q(type="FAULT_HOST")),
+        )
+        return Response(result)
+
+    @common_swagger_auto_schema(
         operation_summary=_("待办单据数"),
         tags=[TICKET_TAG],
     )
@@ -427,7 +599,8 @@ class TicketViewSet(viewsets.AuditedModelViewSet):
         results[CountType.MY_APPROVE] = tickets.filter(creator=user).count()
         # 我的已办
         results[CountType.DONE] = tickets.filter(todo_of_ticket__done_by=user).values("pk").distinct().count()
-
+        # 定时timer
+        results[CountType.TIMER] = tickets.filter(status=TicketStatus.TIMER).count()
         return Response(results)
 
     @common_swagger_auto_schema(
@@ -578,7 +751,7 @@ class TicketViewSet(viewsets.AuditedModelViewSet):
         获取单据关联后台任务的信息
         """
         ticket_ids = self.params_validate(self.get_serializer_class())["ticket_ids"].split(",")
-        inner_flows = Flow.objects.filter(flow_type=FlowType.INNER_FLOW, ticket_id__in=ticket_ids).values(
+        inner_flows = Flow.objects.filter(flow_type__in=FLOW_TASK_TYPES, ticket_id__in=ticket_ids).values(
             "ticket_id", "flow_obj_id", "flow_alias", "err_msg", "status"
         )
         ticket__inner_flow_map: Dict[int, List] = {int(t_id): [] for t_id in ticket_ids}

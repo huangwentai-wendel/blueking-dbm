@@ -23,8 +23,10 @@ export interface ClusterListSpec {
   spec_machine_type: string;
   spec_name: string;
   storage_spec: {
+    max: number;
+    min: number;
     mount_point: string;
-    size: number;
+    size?: number;
     type: string;
   }[];
   updater: string;

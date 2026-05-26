@@ -12,7 +12,7 @@ import logging
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.db_meta.enums import InstanceRole
@@ -97,4 +97,4 @@ class KafkaRebalanceFlow(object):
             kwargs=asdict(act_kwargs),
         )
 
-        kafka_pipeline.run_pipeline()
+        kafka_pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=[self.data["cluster_id"]])

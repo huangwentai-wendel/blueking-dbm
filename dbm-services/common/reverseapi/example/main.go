@@ -3,13 +3,15 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"time"
 
+	"dbm-services/common/reverseapi/pkg/core"
+
 	reversecommonapi "dbm-services/common/reverseapi/apis/common"
 	reversecommondef "dbm-services/common/reverseapi/define/common"
-	"dbm-services/common/reverseapi/internal/core"
 )
 
 type demoEvent struct {
@@ -22,14 +24,14 @@ func (c *demoEvent) ClusterType() string {
 }
 
 func (c *demoEvent) EventType() string {
-	return "ob-bench"
+	return "mysql-backup"
 }
 
-func (c *demoEvent) EventCreateTimeStamp() time.Time {
+func (c *demoEvent) EventCreateTime() time.Time {
 	return time.Now()
 }
 
-func (c *demoEvent) BkBizId() int64 {
+func (c *demoEvent) EventBkBizId() int64 {
 	return c.bkBizId
 }
 
@@ -39,14 +41,9 @@ func (c *demoEvent) String() string {
 	return string(b)
 }
 
-//func (c *demoEvent) MarshalJSON() ([]byte, error) {
-//	return json.Marshal(c)
-//}
-
 func main() {
-	//flag.Parse()
-	//apiCore := core.NewDebugCore(0, flag.Arg(0), flag.Arg(1))
-	apiCore := core.NewCore(0, "1.1.1.1:9090")
+	flag.Parse()
+	apiCore := core.NewDebugCore(0, flag.Arg(0), []string{flag.Arg(1)})
 
 	event := &demoEvent{
 		bkBizId:  21,

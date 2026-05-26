@@ -248,6 +248,82 @@
                     "$cluster_domain"
                   ]
                 }
+              ],
+              [
+                {
+                  "key": "kv2sqwjqfp",
+                  "list": [
+                    {
+                      "id": "and",
+                      "name": "AND"
+                    },
+                    {
+                      "id": "or",
+                      "name": "OR"
+                    }
+                  ],
+                  "type": "condition",
+                  "value": "and"
+                },
+                {
+                  "key": "9jtpy8uokf",
+                  "list": [
+                    {
+                      "id": "db_name",
+                      "name": "db_name"
+                    }
+                  ],
+                  "open": false,
+                  "type": "key",
+                  "value": "db_name"
+                },
+                {
+                  "key": "823od8c900",
+                  "list": [
+                    {
+                      "id": "is",
+                      "name": "is"
+                    },
+                    {
+                      "id": "is one of",
+                      "name": "is one of"
+                    },
+                    {
+                      "id": "is not",
+                      "name": "is not"
+                    },
+                    {
+                      "id": "is not one of",
+                      "name": "is not one of"
+                    },
+                    {
+                      "id": "gt",
+                      "name": ">"
+                    },
+                    {
+                      "id": "gte",
+                      "name": ">="
+                    },
+                    {
+                      "id": "lt",
+                      "name": "<"
+                    },
+                    {
+                      "id": "lte",
+                      "name": "<="
+                    }
+                  ],
+                  "type": "method",
+                  "value": "is"
+                },
+                {
+                  "key": "nvi1gpsaie",
+                  "list": [],
+                  "type": "value",
+                  "value": [
+                    "$db"
+                  ]
+                }
               ]
             ],
             "dimensions": [
@@ -273,7 +349,7 @@
               "periodUnit": "min",
               "timeNum": 1
             },
-            "queryString": "$query_string",
+            "queryString": "__parse_failure: false AND slow_query.query_digest_md5: $digest",
             "size": 50,
             "target": {
               "expandKeys": [],
@@ -446,7 +522,7 @@
         "type": "bk_log_datasource",
         "uid": "${DS_日志平台}"
       },
-      "description": "按  md5 过滤：slow_query.query_digest_md5 is 'xxx'",
+      "description": "按  db 过滤：db_name: \"xxx\"",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -484,7 +560,7 @@
             "properties": [
               {
                 "id": "custom.width",
-                "value": 153
+                "value": 163
               }
             ]
           },
@@ -587,14 +663,14 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 11,
         "w": 24,
         "x": 0,
         "y": 6
       },
       "id": 4,
       "options": {
-        "cellHeight": "sm",
+        "cellHeight": "md",
         "footer": {
           "countRows": false,
           "enablePagination": false,
@@ -608,7 +684,7 @@
         "sortBy": [
           {
             "desc": true,
-            "displayName": "rows_examined"
+            "displayName": "time"
           }
         ]
       },
@@ -754,6 +830,82 @@
                     "$instance_role"
                   ]
                 }
+              ],
+              [
+                {
+                  "key": "4vcchhq0l8",
+                  "list": [
+                    {
+                      "id": "and",
+                      "name": "AND"
+                    },
+                    {
+                      "id": "or",
+                      "name": "OR"
+                    }
+                  ],
+                  "type": "condition",
+                  "value": "and"
+                },
+                {
+                  "key": "pg44ctuns5",
+                  "list": [
+                    {
+                      "id": "db_name",
+                      "name": "db_name"
+                    }
+                  ],
+                  "open": false,
+                  "type": "key",
+                  "value": "db_name"
+                },
+                {
+                  "key": "zjjg9210n4",
+                  "list": [
+                    {
+                      "id": "is",
+                      "name": "is"
+                    },
+                    {
+                      "id": "is one of",
+                      "name": "is one of"
+                    },
+                    {
+                      "id": "is not",
+                      "name": "is not"
+                    },
+                    {
+                      "id": "is not one of",
+                      "name": "is not one of"
+                    },
+                    {
+                      "id": "gt",
+                      "name": ">"
+                    },
+                    {
+                      "id": "gte",
+                      "name": ">="
+                    },
+                    {
+                      "id": "lt",
+                      "name": "<"
+                    },
+                    {
+                      "id": "lte",
+                      "name": "<="
+                    }
+                  ],
+                  "type": "method",
+                  "value": "is"
+                },
+                {
+                  "key": "th3dcsrfnx",
+                  "list": [],
+                  "type": "value",
+                  "value": [
+                    "$db"
+                  ]
+                }
               ]
             ],
             "dimensions": [],
@@ -775,8 +927,8 @@
               "periodUnit": "min",
               "timeNum": 1
             },
-            "queryString": "$query_string",
-            "size": 100,
+            "queryString": "__parse_failure: false AND slow_query.query_digest_md5: $digest",
+            "size": 1000,
             "target": {
               "expandKeys": [],
               "realValues": [],
@@ -791,12 +943,13 @@
           "refId": "A"
         }
       ],
-      "title": "All slow query logs [$instance_role]",
+      "title": "Slow query logs detail [$instance_role]: limit 1000",
       "transformations": [
         {
           "id": "organize",
           "options": {
             "excludeByName": {
+              "__data_label": true,
               "__ext.app": true,
               "__ext.app_id": true,
               "__ext.bk_cloud_id": true,
@@ -804,9 +957,13 @@
               "__ext.cluster_domain": true,
               "__ext.cluster_name": true,
               "__ext.cluster_type": true,
+              "__id__": true,
+              "__index_set_id__": true,
               "__ipv6__": true,
               "__module__": true,
+              "__result_table": true,
               "__set__": true,
+              "_time": true,
               "access_source_host": true,
               "bk_host_id": true,
               "cloudId": true,
@@ -818,55 +975,63 @@
               "path": true,
               "serverIp": true,
               "slow_query.command": false,
-              "slow_query.db_name": true,
+              "slow_query.db_name": false,
               "slow_query.query_length": true,
-              "sql_text": true,
+              "slow_query.query_string": true,
+              "sql_text": false,
               "sql_timestamp": true
             },
             "includeByName": {},
             "indexByName": {
+              "__data_label": 40,
               "__ext.app": 25,
-              "__ext.app_id": 17,
-              "__ext.bk_cloud_id": 21,
-              "__ext.bk_collect_config_id": 23,
+              "__ext.app_id": 19,
+              "__ext.bk_cloud_id": 22,
+              "__ext.bk_collect_config_id": 24,
               "__ext.cluster_domain": 26,
-              "__ext.cluster_name": 19,
-              "__ext.cluster_type": 20,
-              "__ext.instance_host": 18,
-              "__ext.instance_port": 24,
-              "__ext.instance_role": 22,
+              "__ext.cluster_name": 20,
+              "__ext.cluster_type": 21,
+              "__ext.instance_host": 11,
+              "__ext.instance_port": 12,
+              "__ext.instance_role": 23,
+              "__id__": 44,
+              "__index_set_id__": 43,
               "__ipv6__": 37,
               "__module__": 35,
               "__parse_failure": 39,
+              "__result_table": 41,
               "__set__": 36,
+              "_time": 42,
               "bk_host_id": 27,
               "client_host": 5,
               "cloudId": 31,
               "db_name": 6,
-              "dtEventTimeStamp": 14,
+              "dtEventTimeStamp": 16,
               "gseIndex": 30,
               "index": 38,
-              "iterationIndex": 16,
+              "iterationIndex": 18,
               "lock_time": 32,
-              "log": 15,
+              "log": 17,
               "path": 28,
               "query_time": 1,
               "rows_examined": 2,
               "rows_sent": 3,
               "serverIp": 34,
-              "slow_query.command": 10,
-              "slow_query.db_name": 12,
+              "slow_query.command": 14,
+              "slow_query.db_name": 15,
               "slow_query.query_digest_md5": 7,
               "slow_query.query_digest_text": 8,
               "slow_query.query_length": 29,
-              "slow_query.query_string": 9,
-              "slow_query.table_name": 11,
-              "sql_text": 13,
+              "slow_query.query_string": 10,
+              "slow_query.table_name": 13,
+              "sql_text": 9,
               "sql_timestamp": 33,
               "time": 0,
               "user": 4
             },
-            "renameByName": {}
+            "renameByName": {
+              "__parse_failure": ""
+            }
           }
         },
         {
@@ -890,7 +1055,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 17
       },
       "id": 17,
       "panels": [],
@@ -961,7 +1126,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 18
       },
       "id": 18,
       "interval": "1m",
@@ -988,82 +1153,6 @@
             "alias": "$tag_slow_query.query_digest_md5[$tag_db_name]>> $tag_slow_query.query_digest_text",
             "conditions": [
               [
-                {
-                  "key": "2mxv8t9k0m",
-                  "list": [
-                    {
-                      "id": "__ext.app",
-                      "name": "__ext.app"
-                    }
-                  ],
-                  "open": false,
-                  "type": "key",
-                  "value": "__ext.app"
-                },
-                {
-                  "key": "zgl5rrl1sh",
-                  "list": [
-                    {
-                      "id": "is",
-                      "name": "is"
-                    },
-                    {
-                      "id": "is one of",
-                      "name": "is one of"
-                    },
-                    {
-                      "id": "is not",
-                      "name": "is not"
-                    },
-                    {
-                      "id": "is not one of",
-                      "name": "is not one of"
-                    },
-                    {
-                      "id": "gt",
-                      "name": ">"
-                    },
-                    {
-                      "id": "gte",
-                      "name": ">="
-                    },
-                    {
-                      "id": "lt",
-                      "name": "<"
-                    },
-                    {
-                      "id": "lte",
-                      "name": "<="
-                    }
-                  ],
-                  "type": "method",
-                  "value": "is"
-                },
-                {
-                  "key": "6bodoruhm3",
-                  "list": [],
-                  "type": "value",
-                  "value": [
-                    "$app"
-                  ]
-                }
-              ],
-              [
-                {
-                  "key": "d1nhrnsuiu",
-                  "list": [
-                    {
-                      "id": "and",
-                      "name": "AND"
-                    },
-                    {
-                      "id": "or",
-                      "name": "OR"
-                    }
-                  ],
-                  "type": "condition",
-                  "value": "and"
-                },
                 {
                   "key": "rjp12xuc3g",
                   "list": [
@@ -1199,6 +1288,82 @@
                     "$instance_role"
                   ]
                 }
+              ],
+              [
+                {
+                  "key": "g0ghuw0vke",
+                  "list": [
+                    {
+                      "id": "and",
+                      "name": "AND"
+                    },
+                    {
+                      "id": "or",
+                      "name": "OR"
+                    }
+                  ],
+                  "type": "condition",
+                  "value": "and"
+                },
+                {
+                  "key": "3znsgmr8od",
+                  "list": [
+                    {
+                      "id": "db_name",
+                      "name": "db_name"
+                    }
+                  ],
+                  "open": false,
+                  "type": "key",
+                  "value": "db_name"
+                },
+                {
+                  "key": "hwk7j4ztsu",
+                  "list": [
+                    {
+                      "id": "is",
+                      "name": "is"
+                    },
+                    {
+                      "id": "is one of",
+                      "name": "is one of"
+                    },
+                    {
+                      "id": "is not",
+                      "name": "is not"
+                    },
+                    {
+                      "id": "is not one of",
+                      "name": "is not one of"
+                    },
+                    {
+                      "id": "gt",
+                      "name": ">"
+                    },
+                    {
+                      "id": "gte",
+                      "name": ">="
+                    },
+                    {
+                      "id": "lt",
+                      "name": "<"
+                    },
+                    {
+                      "id": "lte",
+                      "name": "<="
+                    }
+                  ],
+                  "type": "method",
+                  "value": "is"
+                },
+                {
+                  "key": "z3el0jgk1l",
+                  "list": [],
+                  "type": "value",
+                  "value": [
+                    "$db"
+                  ]
+                }
               ]
             ],
             "dimensions": [
@@ -1224,7 +1389,7 @@
               "periodUnit": "min",
               "timeNum": 1
             },
-            "queryString": "$query_string",
+            "queryString": "__parse_failure: false AND slow_query.query_digest_md5: $digest",
             "size": 50,
             "target": {
               "expandKeys": [],
@@ -1397,7 +1562,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 25
       },
       "id": 22,
       "interval": "1m",
@@ -1424,82 +1589,6 @@
             "alias": "$tag_slow_query.query_digest_md5 >> $tag_slow_query.query_digest_text",
             "conditions": [
               [
-                {
-                  "key": "2mxv8t9k0m",
-                  "list": [
-                    {
-                      "id": "__ext.app",
-                      "name": "__ext.app"
-                    }
-                  ],
-                  "open": false,
-                  "type": "key",
-                  "value": "__ext.app"
-                },
-                {
-                  "key": "zgl5rrl1sh",
-                  "list": [
-                    {
-                      "id": "is",
-                      "name": "is"
-                    },
-                    {
-                      "id": "is one of",
-                      "name": "is one of"
-                    },
-                    {
-                      "id": "is not",
-                      "name": "is not"
-                    },
-                    {
-                      "id": "is not one of",
-                      "name": "is not one of"
-                    },
-                    {
-                      "id": "gt",
-                      "name": ">"
-                    },
-                    {
-                      "id": "gte",
-                      "name": ">="
-                    },
-                    {
-                      "id": "lt",
-                      "name": "<"
-                    },
-                    {
-                      "id": "lte",
-                      "name": "<="
-                    }
-                  ],
-                  "type": "method",
-                  "value": "is"
-                },
-                {
-                  "key": "6bodoruhm3",
-                  "list": [],
-                  "type": "value",
-                  "value": [
-                    "$app"
-                  ]
-                }
-              ],
-              [
-                {
-                  "key": "d1nhrnsuiu",
-                  "list": [
-                    {
-                      "id": "and",
-                      "name": "AND"
-                    },
-                    {
-                      "id": "or",
-                      "name": "OR"
-                    }
-                  ],
-                  "type": "condition",
-                  "value": "and"
-                },
                 {
                   "key": "rjp12xuc3g",
                   "list": [
@@ -1635,6 +1724,82 @@
                     "$instance_role"
                   ]
                 }
+              ],
+              [
+                {
+                  "key": "kgwkcrhugt",
+                  "list": [
+                    {
+                      "id": "and",
+                      "name": "AND"
+                    },
+                    {
+                      "id": "or",
+                      "name": "OR"
+                    }
+                  ],
+                  "type": "condition",
+                  "value": "and"
+                },
+                {
+                  "key": "yewavtrauv",
+                  "list": [
+                    {
+                      "id": "db_name",
+                      "name": "db_name"
+                    }
+                  ],
+                  "open": false,
+                  "type": "key",
+                  "value": "db_name"
+                },
+                {
+                  "key": "ibc6k9ieb8",
+                  "list": [
+                    {
+                      "id": "is",
+                      "name": "is"
+                    },
+                    {
+                      "id": "is one of",
+                      "name": "is one of"
+                    },
+                    {
+                      "id": "is not",
+                      "name": "is not"
+                    },
+                    {
+                      "id": "is not one of",
+                      "name": "is not one of"
+                    },
+                    {
+                      "id": "gt",
+                      "name": ">"
+                    },
+                    {
+                      "id": "gte",
+                      "name": ">="
+                    },
+                    {
+                      "id": "lt",
+                      "name": "<"
+                    },
+                    {
+                      "id": "lte",
+                      "name": "<="
+                    }
+                  ],
+                  "type": "method",
+                  "value": "is"
+                },
+                {
+                  "key": "vn8owx41nx",
+                  "list": [],
+                  "type": "value",
+                  "value": [
+                    "$db"
+                  ]
+                }
               ]
             ],
             "dimensions": [
@@ -1660,7 +1825,7 @@
               "periodUnit": "min",
               "timeNum": 1
             },
-            "queryString": "$query_string",
+            "queryString": "__parse_failure: false AND slow_query.query_digest_md5: $digest",
             "size": 50,
             "target": {
               "expandKeys": [],
@@ -1833,7 +1998,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 31
       },
       "id": 19,
       "interval": "1m",
@@ -1860,82 +2025,6 @@
             "alias": "$tag_slow_query.query_digest_md5 >> $tag_slow_query.query_digest_text",
             "conditions": [
               [
-                {
-                  "key": "2mxv8t9k0m",
-                  "list": [
-                    {
-                      "id": "__ext.app",
-                      "name": "__ext.app"
-                    }
-                  ],
-                  "open": false,
-                  "type": "key",
-                  "value": "__ext.app"
-                },
-                {
-                  "key": "zgl5rrl1sh",
-                  "list": [
-                    {
-                      "id": "is",
-                      "name": "is"
-                    },
-                    {
-                      "id": "is one of",
-                      "name": "is one of"
-                    },
-                    {
-                      "id": "is not",
-                      "name": "is not"
-                    },
-                    {
-                      "id": "is not one of",
-                      "name": "is not one of"
-                    },
-                    {
-                      "id": "gt",
-                      "name": ">"
-                    },
-                    {
-                      "id": "gte",
-                      "name": ">="
-                    },
-                    {
-                      "id": "lt",
-                      "name": "<"
-                    },
-                    {
-                      "id": "lte",
-                      "name": "<="
-                    }
-                  ],
-                  "type": "method",
-                  "value": "is"
-                },
-                {
-                  "key": "6bodoruhm3",
-                  "list": [],
-                  "type": "value",
-                  "value": [
-                    "$app"
-                  ]
-                }
-              ],
-              [
-                {
-                  "key": "d1nhrnsuiu",
-                  "list": [
-                    {
-                      "id": "and",
-                      "name": "AND"
-                    },
-                    {
-                      "id": "or",
-                      "name": "OR"
-                    }
-                  ],
-                  "type": "condition",
-                  "value": "and"
-                },
                 {
                   "key": "rjp12xuc3g",
                   "list": [
@@ -2071,6 +2160,82 @@
                     "$instance_role"
                   ]
                 }
+              ],
+              [
+                {
+                  "key": "1l1xsj9dke",
+                  "list": [
+                    {
+                      "id": "and",
+                      "name": "AND"
+                    },
+                    {
+                      "id": "or",
+                      "name": "OR"
+                    }
+                  ],
+                  "type": "condition",
+                  "value": "and"
+                },
+                {
+                  "key": "pmxihik980",
+                  "list": [
+                    {
+                      "id": "db_name",
+                      "name": "db_name"
+                    }
+                  ],
+                  "open": false,
+                  "type": "key",
+                  "value": "db_name"
+                },
+                {
+                  "key": "rsnfs9tmq3",
+                  "list": [
+                    {
+                      "id": "is",
+                      "name": "is"
+                    },
+                    {
+                      "id": "is one of",
+                      "name": "is one of"
+                    },
+                    {
+                      "id": "is not",
+                      "name": "is not"
+                    },
+                    {
+                      "id": "is not one of",
+                      "name": "is not one of"
+                    },
+                    {
+                      "id": "gt",
+                      "name": ">"
+                    },
+                    {
+                      "id": "gte",
+                      "name": ">="
+                    },
+                    {
+                      "id": "lt",
+                      "name": "<"
+                    },
+                    {
+                      "id": "lte",
+                      "name": "<="
+                    }
+                  ],
+                  "type": "method",
+                  "value": "is"
+                },
+                {
+                  "key": "dk3hmd6894",
+                  "list": [],
+                  "type": "value",
+                  "value": [
+                    "$db"
+                  ]
+                }
               ]
             ],
             "dimensions": [
@@ -2096,7 +2261,7 @@
               "periodUnit": "min",
               "timeNum": 1
             },
-            "queryString": "$query_string",
+            "queryString": "__parse_failure: false AND slow_query.query_digest_md5: $digest",
             "size": 50,
             "target": {
               "expandKeys": [],
@@ -2269,7 +2434,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 37
       },
       "id": 20,
       "interval": "1m",
@@ -2296,82 +2461,6 @@
             "alias": "$tag_slow_query.query_digest_md5 >> $tag_slow_query.query_digest_text",
             "conditions": [
               [
-                {
-                  "key": "2mxv8t9k0m",
-                  "list": [
-                    {
-                      "id": "__ext.app",
-                      "name": "__ext.app"
-                    }
-                  ],
-                  "open": false,
-                  "type": "key",
-                  "value": "__ext.app"
-                },
-                {
-                  "key": "zgl5rrl1sh",
-                  "list": [
-                    {
-                      "id": "is",
-                      "name": "is"
-                    },
-                    {
-                      "id": "is one of",
-                      "name": "is one of"
-                    },
-                    {
-                      "id": "is not",
-                      "name": "is not"
-                    },
-                    {
-                      "id": "is not one of",
-                      "name": "is not one of"
-                    },
-                    {
-                      "id": "gt",
-                      "name": ">"
-                    },
-                    {
-                      "id": "gte",
-                      "name": ">="
-                    },
-                    {
-                      "id": "lt",
-                      "name": "<"
-                    },
-                    {
-                      "id": "lte",
-                      "name": "<="
-                    }
-                  ],
-                  "type": "method",
-                  "value": "is"
-                },
-                {
-                  "key": "6bodoruhm3",
-                  "list": [],
-                  "type": "value",
-                  "value": [
-                    "$app"
-                  ]
-                }
-              ],
-              [
-                {
-                  "key": "d1nhrnsuiu",
-                  "list": [
-                    {
-                      "id": "and",
-                      "name": "AND"
-                    },
-                    {
-                      "id": "or",
-                      "name": "OR"
-                    }
-                  ],
-                  "type": "condition",
-                  "value": "and"
-                },
                 {
                   "key": "rjp12xuc3g",
                   "list": [
@@ -2507,6 +2596,82 @@
                     "$instance_role"
                   ]
                 }
+              ],
+              [
+                {
+                  "key": "js0t5ecrja",
+                  "list": [
+                    {
+                      "id": "and",
+                      "name": "AND"
+                    },
+                    {
+                      "id": "or",
+                      "name": "OR"
+                    }
+                  ],
+                  "type": "condition",
+                  "value": "and"
+                },
+                {
+                  "key": "txx6roff9j",
+                  "list": [
+                    {
+                      "id": "db_name",
+                      "name": "db_name"
+                    }
+                  ],
+                  "open": false,
+                  "type": "key",
+                  "value": "db_name"
+                },
+                {
+                  "key": "d3wsfs7m9x",
+                  "list": [
+                    {
+                      "id": "is",
+                      "name": "is"
+                    },
+                    {
+                      "id": "is one of",
+                      "name": "is one of"
+                    },
+                    {
+                      "id": "is not",
+                      "name": "is not"
+                    },
+                    {
+                      "id": "is not one of",
+                      "name": "is not one of"
+                    },
+                    {
+                      "id": "gt",
+                      "name": ">"
+                    },
+                    {
+                      "id": "gte",
+                      "name": ">="
+                    },
+                    {
+                      "id": "lt",
+                      "name": "<"
+                    },
+                    {
+                      "id": "lte",
+                      "name": "<="
+                    }
+                  ],
+                  "type": "method",
+                  "value": "is"
+                },
+                {
+                  "key": "otexf9qk43",
+                  "list": [],
+                  "type": "value",
+                  "value": [
+                    "$db"
+                  ]
+                }
               ]
             ],
             "dimensions": [
@@ -2532,7 +2697,7 @@
               "periodUnit": "min",
               "timeNum": 1
             },
-            "queryString": "$query_string",
+            "queryString": "__parse_failure: false AND slow_query.query_digest_md5: $digest",
             "size": 50,
             "target": {
               "expandKeys": [],
@@ -2705,7 +2870,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 40
+        "y": 43
       },
       "id": 21,
       "interval": "1m",
@@ -2732,82 +2897,6 @@
             "alias": "$tag_slow_query.query_digest_md5 >> $tag_slow_query.query_digest_text",
             "conditions": [
               [
-                {
-                  "key": "2mxv8t9k0m",
-                  "list": [
-                    {
-                      "id": "__ext.app",
-                      "name": "__ext.app"
-                    }
-                  ],
-                  "open": false,
-                  "type": "key",
-                  "value": "__ext.app"
-                },
-                {
-                  "key": "zgl5rrl1sh",
-                  "list": [
-                    {
-                      "id": "is",
-                      "name": "is"
-                    },
-                    {
-                      "id": "is one of",
-                      "name": "is one of"
-                    },
-                    {
-                      "id": "is not",
-                      "name": "is not"
-                    },
-                    {
-                      "id": "is not one of",
-                      "name": "is not one of"
-                    },
-                    {
-                      "id": "gt",
-                      "name": ">"
-                    },
-                    {
-                      "id": "gte",
-                      "name": ">="
-                    },
-                    {
-                      "id": "lt",
-                      "name": "<"
-                    },
-                    {
-                      "id": "lte",
-                      "name": "<="
-                    }
-                  ],
-                  "type": "method",
-                  "value": "is"
-                },
-                {
-                  "key": "6bodoruhm3",
-                  "list": [],
-                  "type": "value",
-                  "value": [
-                    "$app"
-                  ]
-                }
-              ],
-              [
-                {
-                  "key": "d1nhrnsuiu",
-                  "list": [
-                    {
-                      "id": "and",
-                      "name": "AND"
-                    },
-                    {
-                      "id": "or",
-                      "name": "OR"
-                    }
-                  ],
-                  "type": "condition",
-                  "value": "and"
-                },
                 {
                   "key": "rjp12xuc3g",
                   "list": [
@@ -2943,6 +3032,82 @@
                     "$instance_role"
                   ]
                 }
+              ],
+              [
+                {
+                  "key": "4vig1ht1uo",
+                  "list": [
+                    {
+                      "id": "and",
+                      "name": "AND"
+                    },
+                    {
+                      "id": "or",
+                      "name": "OR"
+                    }
+                  ],
+                  "type": "condition",
+                  "value": "and"
+                },
+                {
+                  "key": "zko3eznz9k",
+                  "list": [
+                    {
+                      "id": "db_name",
+                      "name": "db_name"
+                    }
+                  ],
+                  "open": false,
+                  "type": "key",
+                  "value": "db_name"
+                },
+                {
+                  "key": "d6rnvurv1c",
+                  "list": [
+                    {
+                      "id": "is",
+                      "name": "is"
+                    },
+                    {
+                      "id": "is one of",
+                      "name": "is one of"
+                    },
+                    {
+                      "id": "is not",
+                      "name": "is not"
+                    },
+                    {
+                      "id": "is not one of",
+                      "name": "is not one of"
+                    },
+                    {
+                      "id": "gt",
+                      "name": ">"
+                    },
+                    {
+                      "id": "gte",
+                      "name": ">="
+                    },
+                    {
+                      "id": "lt",
+                      "name": "<"
+                    },
+                    {
+                      "id": "lte",
+                      "name": "<="
+                    }
+                  ],
+                  "type": "method",
+                  "value": "is"
+                },
+                {
+                  "key": "omv94217xp",
+                  "list": [],
+                  "type": "value",
+                  "value": [
+                    "$db"
+                  ]
+                }
               ]
             ],
             "dimensions": [
@@ -2968,7 +3133,7 @@
               "periodUnit": "min",
               "timeNum": 1
             },
-            "queryString": "$query_string",
+            "queryString": "__parse_failure: false AND slow_query.query_digest_md5: $digest",
             "size": 50,
             "target": {
               "expandKeys": [],
@@ -3140,7 +3305,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 50
       },
       "id": 23,
       "interval": "1m",
@@ -3162,82 +3327,6 @@
             "alias": "$tag_db_name . $tag_slow_query.table_name",
             "conditions": [
               [
-                {
-                  "key": "cd62omqqjg",
-                  "list": [
-                    {
-                      "id": "__ext.app",
-                      "name": "__ext.app"
-                    }
-                  ],
-                  "open": false,
-                  "type": "key",
-                  "value": "__ext.app"
-                },
-                {
-                  "key": "5a54d4ddtb",
-                  "list": [
-                    {
-                      "id": "is",
-                      "name": "is"
-                    },
-                    {
-                      "id": "is one of",
-                      "name": "is one of"
-                    },
-                    {
-                      "id": "is not",
-                      "name": "is not"
-                    },
-                    {
-                      "id": "is not one of",
-                      "name": "is not one of"
-                    },
-                    {
-                      "id": "gt",
-                      "name": ">"
-                    },
-                    {
-                      "id": "gte",
-                      "name": ">="
-                    },
-                    {
-                      "id": "lt",
-                      "name": "<"
-                    },
-                    {
-                      "id": "lte",
-                      "name": "<="
-                    }
-                  ],
-                  "type": "method",
-                  "value": "is"
-                },
-                {
-                  "key": "bfwsce6lak",
-                  "list": [],
-                  "type": "value",
-                  "value": [
-                    "$app"
-                  ]
-                }
-              ],
-              [
-                {
-                  "key": "fsk3zn8o6c",
-                  "list": [
-                    {
-                      "id": "and",
-                      "name": "AND"
-                    },
-                    {
-                      "id": "or",
-                      "name": "OR"
-                    }
-                  ],
-                  "type": "condition",
-                  "value": "and"
-                },
                 {
                   "key": "5w1pk5lg3f",
                   "list": [
@@ -3373,6 +3462,82 @@
                     "$instance_role"
                   ]
                 }
+              ],
+              [
+                {
+                  "key": "shsmt9tw1i",
+                  "list": [
+                    {
+                      "id": "and",
+                      "name": "AND"
+                    },
+                    {
+                      "id": "or",
+                      "name": "OR"
+                    }
+                  ],
+                  "type": "condition",
+                  "value": "and"
+                },
+                {
+                  "key": "dlyvs8jud3",
+                  "list": [
+                    {
+                      "id": "db_name",
+                      "name": "db_name"
+                    }
+                  ],
+                  "open": false,
+                  "type": "key",
+                  "value": "db_name"
+                },
+                {
+                  "key": "702b2kmqij",
+                  "list": [
+                    {
+                      "id": "is",
+                      "name": "is"
+                    },
+                    {
+                      "id": "is one of",
+                      "name": "is one of"
+                    },
+                    {
+                      "id": "is not",
+                      "name": "is not"
+                    },
+                    {
+                      "id": "is not one of",
+                      "name": "is not one of"
+                    },
+                    {
+                      "id": "gt",
+                      "name": ">"
+                    },
+                    {
+                      "id": "gte",
+                      "name": ">="
+                    },
+                    {
+                      "id": "lt",
+                      "name": "<"
+                    },
+                    {
+                      "id": "lte",
+                      "name": "<="
+                    }
+                  ],
+                  "type": "method",
+                  "value": "is"
+                },
+                {
+                  "key": "itkfeuynhg",
+                  "list": [],
+                  "type": "value",
+                  "value": [
+                    "$db"
+                  ]
+                }
               ]
             ],
             "dimensions": [
@@ -3397,7 +3562,7 @@
               "periodUnit": "min",
               "timeNum": 1
             },
-            "queryString": "$query_string",
+            "queryString": "__parse_failure: false AND slow_query.query_digest_md5: $digest",
             "size": 50,
             "target": {
               "expandKeys": [],
@@ -3422,7 +3587,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 54
+        "y": 57
       },
       "id": 16,
       "panels": [
@@ -3486,10 +3651,10 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 11,
+            "h": 6,
             "w": 12,
             "x": 0,
-            "y": 55
+            "y": 19
           },
           "id": 13,
           "options": {
@@ -3747,7 +3912,7 @@
                   "periodUnit": "min",
                   "timeNum": 1
                 },
-                "queryString": "$query_string",
+                "queryString": "__parse_failure is false",
                 "size": 10000,
                 "target": {
                   "expandKeys": [],
@@ -3829,10 +3994,10 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 11,
+            "h": 6,
             "w": 12,
             "x": 12,
-            "y": 55
+            "y": 19
           },
           "id": 14,
           "options": {
@@ -3911,82 +4076,6 @@
                       "type": "value",
                       "value": [
                         "$cluster_domain"
-                      ]
-                    }
-                  ],
-                  [
-                    {
-                      "key": "2tvnqkzo08",
-                      "list": [
-                        {
-                          "id": "and",
-                          "name": "AND"
-                        },
-                        {
-                          "id": "or",
-                          "name": "OR"
-                        }
-                      ],
-                      "type": "condition",
-                      "value": "and"
-                    },
-                    {
-                      "key": "keu17lddu4",
-                      "list": [
-                        {
-                          "id": "__ext.app",
-                          "name": "__ext.app"
-                        }
-                      ],
-                      "open": false,
-                      "type": "key",
-                      "value": "__ext.app"
-                    },
-                    {
-                      "key": "lbqdsjbjp1",
-                      "list": [
-                        {
-                          "id": "is",
-                          "name": "is"
-                        },
-                        {
-                          "id": "is one of",
-                          "name": "is one of"
-                        },
-                        {
-                          "id": "is not",
-                          "name": "is not"
-                        },
-                        {
-                          "id": "is not one of",
-                          "name": "is not one of"
-                        },
-                        {
-                          "id": "gt",
-                          "name": ">"
-                        },
-                        {
-                          "id": "gte",
-                          "name": ">="
-                        },
-                        {
-                          "id": "lt",
-                          "name": "<"
-                        },
-                        {
-                          "id": "lte",
-                          "name": "<="
-                        }
-                      ],
-                      "type": "method",
-                      "value": "is"
-                    },
-                    {
-                      "key": "utfu38if9b",
-                      "list": [],
-                      "type": "value",
-                      "value": [
-                        "$app"
                       ]
                     }
                   ],
@@ -4090,7 +4179,7 @@
                   "periodUnit": "min",
                   "timeNum": 1
                 },
-                "queryString": "",
+                "queryString": "__parse_failure: false AND db_name: $db",
                 "size": 10000,
                 "target": {
                   "expandKeys": [],
@@ -4173,7 +4262,9 @@
                   "id": "byNames",
                   "options": {
                     "mode": "exclude",
-                    "names": [],
+                    "names": [
+                      "value_count(_index){__ext.instance_host='', __ext.instance_port=3306, __ext.instance_role=backend_master}"
+                    ],
                     "prefix": "All except:",
                     "readOnly": true
                   }
@@ -4192,10 +4283,10 @@
             ]
           },
           "gridPos": {
-            "h": 11,
+            "h": 7,
             "w": 8,
             "x": 0,
-            "y": 66
+            "y": 25
           },
           "id": 2,
           "options": {
@@ -4216,82 +4307,6 @@
                 "alias": "",
                 "conditions": [
                   [
-                    {
-                      "key": "gjwmwtvrmx",
-                      "list": [
-                        {
-                          "id": "__ext.app",
-                          "name": "__ext.app"
-                        }
-                      ],
-                      "open": false,
-                      "type": "key",
-                      "value": "__ext.app"
-                    },
-                    {
-                      "key": "pdsfpb6cb8",
-                      "list": [
-                        {
-                          "id": "is",
-                          "name": "is"
-                        },
-                        {
-                          "id": "is one of",
-                          "name": "is one of"
-                        },
-                        {
-                          "id": "is not",
-                          "name": "is not"
-                        },
-                        {
-                          "id": "is not one of",
-                          "name": "is not one of"
-                        },
-                        {
-                          "id": "gt",
-                          "name": ">"
-                        },
-                        {
-                          "id": "gte",
-                          "name": ">="
-                        },
-                        {
-                          "id": "lt",
-                          "name": "<"
-                        },
-                        {
-                          "id": "lte",
-                          "name": "<="
-                        }
-                      ],
-                      "type": "method",
-                      "value": "is"
-                    },
-                    {
-                      "key": "lab3662usi",
-                      "list": [],
-                      "type": "value",
-                      "value": [
-                        "$app"
-                      ]
-                    }
-                  ],
-                  [
-                    {
-                      "key": "dj6pbi2ros",
-                      "list": [
-                        {
-                          "id": "and",
-                          "name": "AND"
-                        },
-                        {
-                          "id": "or",
-                          "name": "OR"
-                        }
-                      ],
-                      "type": "condition",
-                      "value": "and"
-                    },
                     {
                       "key": "9yf3mkfotd",
                       "list": [
@@ -4452,7 +4467,7 @@
                   "periodUnit": "min",
                   "timeNum": 1
                 },
-                "queryString": "$query_string AND NOT \"# TIME\"",
+                "queryString": "__parse_failure: false AND db_name: $db",
                 "size": 50,
                 "target": {
                   "expandKeys": [],
@@ -4531,10 +4546,10 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 11,
+            "h": 7,
             "w": 8,
             "x": 8,
-            "y": 66
+            "y": 25
           },
           "id": 10,
           "options": {
@@ -4555,82 +4570,6 @@
                 "alias": "",
                 "conditions": [
                   [
-                    {
-                      "key": "mi91nl8jg6",
-                      "list": [
-                        {
-                          "id": "__ext.app",
-                          "name": "__ext.app"
-                        }
-                      ],
-                      "open": false,
-                      "type": "key",
-                      "value": "__ext.app"
-                    },
-                    {
-                      "key": "me8l2ech9x",
-                      "list": [
-                        {
-                          "id": "is",
-                          "name": "is"
-                        },
-                        {
-                          "id": "is one of",
-                          "name": "is one of"
-                        },
-                        {
-                          "id": "is not",
-                          "name": "is not"
-                        },
-                        {
-                          "id": "is not one of",
-                          "name": "is not one of"
-                        },
-                        {
-                          "id": "gt",
-                          "name": ">"
-                        },
-                        {
-                          "id": "gte",
-                          "name": ">="
-                        },
-                        {
-                          "id": "lt",
-                          "name": "<"
-                        },
-                        {
-                          "id": "lte",
-                          "name": "<="
-                        }
-                      ],
-                      "type": "method",
-                      "value": "is"
-                    },
-                    {
-                      "key": "t6va132nvj",
-                      "list": [],
-                      "type": "value",
-                      "value": [
-                        "$app"
-                      ]
-                    }
-                  ],
-                  [
-                    {
-                      "key": "19smufj0cw",
-                      "list": [
-                        {
-                          "id": "and",
-                          "name": "AND"
-                        },
-                        {
-                          "id": "or",
-                          "name": "OR"
-                        }
-                      ],
-                      "type": "condition",
-                      "value": "and"
-                    },
                     {
                       "key": "cs2kfob4jx",
                       "list": [
@@ -4787,7 +4726,7 @@
                   "periodUnit": "min",
                   "timeNum": 1
                 },
-                "queryString": "",
+                "queryString": "__parse_failure: false AND db_name: $db",
                 "size": 50,
                 "target": {
                   "expandKeys": [],
@@ -4866,10 +4805,10 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 11,
+            "h": 7,
             "w": 8,
             "x": 16,
-            "y": 66
+            "y": 25
           },
           "id": 11,
           "options": {
@@ -5166,7 +5105,7 @@
             "h": 15,
             "w": 8,
             "x": 0,
-            "y": 77
+            "y": 32
           },
           "id": 6,
           "options": {
@@ -5194,82 +5133,6 @@
                 "alias": "$tag_slow_query.query_digest_text",
                 "conditions": [
                   [
-                    {
-                      "key": "cd62omqqjg",
-                      "list": [
-                        {
-                          "id": "__ext.app",
-                          "name": "__ext.app"
-                        }
-                      ],
-                      "open": false,
-                      "type": "key",
-                      "value": "__ext.app"
-                    },
-                    {
-                      "key": "5a54d4ddtb",
-                      "list": [
-                        {
-                          "id": "is",
-                          "name": "is"
-                        },
-                        {
-                          "id": "is one of",
-                          "name": "is one of"
-                        },
-                        {
-                          "id": "is not",
-                          "name": "is not"
-                        },
-                        {
-                          "id": "is not one of",
-                          "name": "is not one of"
-                        },
-                        {
-                          "id": "gt",
-                          "name": ">"
-                        },
-                        {
-                          "id": "gte",
-                          "name": ">="
-                        },
-                        {
-                          "id": "lt",
-                          "name": "<"
-                        },
-                        {
-                          "id": "lte",
-                          "name": "<="
-                        }
-                      ],
-                      "type": "method",
-                      "value": "is"
-                    },
-                    {
-                      "key": "bfwsce6lak",
-                      "list": [],
-                      "type": "value",
-                      "value": [
-                        "$app"
-                      ]
-                    }
-                  ],
-                  [
-                    {
-                      "key": "fsk3zn8o6c",
-                      "list": [
-                        {
-                          "id": "and",
-                          "name": "AND"
-                        },
-                        {
-                          "id": "or",
-                          "name": "OR"
-                        }
-                      ],
-                      "type": "condition",
-                      "value": "and"
-                    },
                     {
                       "key": "5w1pk5lg3f",
                       "list": [
@@ -5429,7 +5292,7 @@
                   "periodUnit": "min",
                   "timeNum": 1440
                 },
-                "queryString": "$query_string AND NOT \"# TIME\"",
+                "queryString": "__parse_failure: false AND db_name: $db",
                 "size": 50,
                 "target": {
                   "expandKeys": [],
@@ -5473,7 +5336,7 @@
             "h": 15,
             "w": 8,
             "x": 8,
-            "y": 77
+            "y": 32
           },
           "id": 8,
           "options": {
@@ -5501,82 +5364,6 @@
                 "alias": "$tag_db_name . $tag_slow_query.table_name",
                 "conditions": [
                   [
-                    {
-                      "key": "cd62omqqjg",
-                      "list": [
-                        {
-                          "id": "__ext.app",
-                          "name": "__ext.app"
-                        }
-                      ],
-                      "open": false,
-                      "type": "key",
-                      "value": "__ext.app"
-                    },
-                    {
-                      "key": "5a54d4ddtb",
-                      "list": [
-                        {
-                          "id": "is",
-                          "name": "is"
-                        },
-                        {
-                          "id": "is one of",
-                          "name": "is one of"
-                        },
-                        {
-                          "id": "is not",
-                          "name": "is not"
-                        },
-                        {
-                          "id": "is not one of",
-                          "name": "is not one of"
-                        },
-                        {
-                          "id": "gt",
-                          "name": ">"
-                        },
-                        {
-                          "id": "gte",
-                          "name": ">="
-                        },
-                        {
-                          "id": "lt",
-                          "name": "<"
-                        },
-                        {
-                          "id": "lte",
-                          "name": "<="
-                        }
-                      ],
-                      "type": "method",
-                      "value": "is"
-                    },
-                    {
-                      "key": "bfwsce6lak",
-                      "list": [],
-                      "type": "value",
-                      "value": [
-                        "$app"
-                      ]
-                    }
-                  ],
-                  [
-                    {
-                      "key": "fsk3zn8o6c",
-                      "list": [
-                        {
-                          "id": "and",
-                          "name": "AND"
-                        },
-                        {
-                          "id": "or",
-                          "name": "OR"
-                        }
-                      ],
-                      "type": "condition",
-                      "value": "and"
-                    },
                     {
                       "key": "5w1pk5lg3f",
                       "list": [
@@ -5736,7 +5523,7 @@
                   "periodUnit": "min",
                   "timeNum": 1440
                 },
-                "queryString": "$query_string AND NOT \"# TIME\"",
+                "queryString": "__parse_failure: false AND db_name: $db",
                 "size": 50,
                 "target": {
                   "expandKeys": [],
@@ -5780,7 +5567,7 @@
             "h": 15,
             "w": 8,
             "x": 16,
-            "y": 77
+            "y": 32
           },
           "id": 15,
           "options": {
@@ -5808,82 +5595,6 @@
                 "alias": "",
                 "conditions": [
                   [
-                    {
-                      "key": "cd62omqqjg",
-                      "list": [
-                        {
-                          "id": "__ext.app",
-                          "name": "__ext.app"
-                        }
-                      ],
-                      "open": false,
-                      "type": "key",
-                      "value": "__ext.app"
-                    },
-                    {
-                      "key": "5a54d4ddtb",
-                      "list": [
-                        {
-                          "id": "is",
-                          "name": "is"
-                        },
-                        {
-                          "id": "is one of",
-                          "name": "is one of"
-                        },
-                        {
-                          "id": "is not",
-                          "name": "is not"
-                        },
-                        {
-                          "id": "is not one of",
-                          "name": "is not one of"
-                        },
-                        {
-                          "id": "gt",
-                          "name": ">"
-                        },
-                        {
-                          "id": "gte",
-                          "name": ">="
-                        },
-                        {
-                          "id": "lt",
-                          "name": "<"
-                        },
-                        {
-                          "id": "lte",
-                          "name": "<="
-                        }
-                      ],
-                      "type": "method",
-                      "value": "is"
-                    },
-                    {
-                      "key": "bfwsce6lak",
-                      "list": [],
-                      "type": "value",
-                      "value": [
-                        "$app"
-                      ]
-                    }
-                  ],
-                  [
-                    {
-                      "key": "fsk3zn8o6c",
-                      "list": [
-                        {
-                          "id": "and",
-                          "name": "AND"
-                        },
-                        {
-                          "id": "or",
-                          "name": "OR"
-                        }
-                      ],
-                      "type": "condition",
-                      "value": "and"
-                    },
                     {
                       "key": "5w1pk5lg3f",
                       "list": [
@@ -6042,7 +5753,7 @@
                   "periodUnit": "min",
                   "timeNum": 1440
                 },
-                "queryString": "$query_string AND NOT \"# TIME\"",
+                "queryString": "__parse_failure: false AND db_name: $db",
                 "size": 50,
                 "target": {
                   "expandKeys": [],
@@ -6095,7 +5806,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "red",
@@ -6110,7 +5822,7 @@
             "h": 12,
             "w": 24,
             "x": 0,
-            "y": 92
+            "y": 47
           },
           "id": 12,
           "options": {
@@ -6196,82 +5908,6 @@
                       "type": "value",
                       "value": [
                         "$cluster_domain"
-                      ]
-                    }
-                  ],
-                  [
-                    {
-                      "key": "2tvnqkzo08",
-                      "list": [
-                        {
-                          "id": "and",
-                          "name": "AND"
-                        },
-                        {
-                          "id": "or",
-                          "name": "OR"
-                        }
-                      ],
-                      "type": "condition",
-                      "value": "and"
-                    },
-                    {
-                      "key": "keu17lddu4",
-                      "list": [
-                        {
-                          "id": "__ext.app",
-                          "name": "__ext.app"
-                        }
-                      ],
-                      "open": false,
-                      "type": "key",
-                      "value": "__ext.app"
-                    },
-                    {
-                      "key": "lbqdsjbjp1",
-                      "list": [
-                        {
-                          "id": "is",
-                          "name": "is"
-                        },
-                        {
-                          "id": "is one of",
-                          "name": "is one of"
-                        },
-                        {
-                          "id": "is not",
-                          "name": "is not"
-                        },
-                        {
-                          "id": "is not one of",
-                          "name": "is not one of"
-                        },
-                        {
-                          "id": "gt",
-                          "name": ">"
-                        },
-                        {
-                          "id": "gte",
-                          "name": ">="
-                        },
-                        {
-                          "id": "lt",
-                          "name": "<"
-                        },
-                        {
-                          "id": "lte",
-                          "name": "<="
-                        }
-                      ],
-                      "type": "method",
-                      "value": "is"
-                    },
-                    {
-                      "key": "utfu38if9b",
-                      "list": [],
-                      "type": "value",
-                      "value": [
-                        "$app"
                       ]
                     }
                   ],
@@ -6447,7 +6083,7 @@
                   "periodUnit": "min",
                   "timeNum": 1
                 },
-                "queryString": "",
+                "queryString": "__parse_failure: false AND db_name: $db",
                 "size": 10000,
                 "target": {
                   "expandKeys": [],
@@ -6591,17 +6227,214 @@
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
-        "sort": 0,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": "*",
+        "current": {},
+        "datasource": {
+          "type": "bk_log_datasource",
+          "uid": "${DS_日志平台}"
+        },
+        "definition": "- Blueking Monitor - 维度",
+        "hide": 0,
+        "includeAll": true,
+        "label": "db",
+        "multi": false,
+        "name": "db",
+        "options": [],
+        "query": {
+          "dimensionData": {
+            "alias": "",
+            "conditions": [
+              [
+                {
+                  "key": "uiluqgi450",
+                  "list": [
+                    {
+                      "id": "__ext.cluster_domain",
+                      "name": "__ext.cluster_domain"
+                    }
+                  ],
+                  "open": false,
+                  "type": "key",
+                  "value": "__ext.cluster_domain"
+                },
+                {
+                  "key": "d52yizng3k",
+                  "list": [
+                    {
+                      "id": "is",
+                      "name": "is"
+                    },
+                    {
+                      "id": "is one of",
+                      "name": "is one of"
+                    },
+                    {
+                      "id": "is not",
+                      "name": "is not"
+                    },
+                    {
+                      "id": "is not one of",
+                      "name": "is not one of"
+                    },
+                    {
+                      "id": "gt",
+                      "name": ">"
+                    },
+                    {
+                      "id": "gte",
+                      "name": ">="
+                    },
+                    {
+                      "id": "lt",
+                      "name": "<"
+                    },
+                    {
+                      "id": "lte",
+                      "name": "<="
+                    }
+                  ],
+                  "type": "method",
+                  "value": "is"
+                },
+                {
+                  "key": "nh6pvtfabe",
+                  "list": [],
+                  "type": "value",
+                  "value": [
+                    "$cluster_domain"
+                  ]
+                }
+              ],
+              [
+                {
+                  "key": "t8u3vcsfak",
+                  "list": [
+                    {
+                      "id": "and",
+                      "name": "AND"
+                    },
+                    {
+                      "id": "or",
+                      "name": "OR"
+                    }
+                  ],
+                  "type": "condition",
+                  "value": "and"
+                },
+                {
+                  "key": "i5s6fywels",
+                  "list": [
+                    {
+                      "id": "__ext.instance_role",
+                      "name": "__ext.instance_role"
+                    }
+                  ],
+                  "open": false,
+                  "type": "key",
+                  "value": "__ext.instance_role"
+                },
+                {
+                  "key": "buspxidw7p",
+                  "list": [
+                    {
+                      "id": "is",
+                      "name": "is"
+                    },
+                    {
+                      "id": "is one of",
+                      "name": "is one of"
+                    },
+                    {
+                      "id": "is not",
+                      "name": "is not"
+                    },
+                    {
+                      "id": "is not one of",
+                      "name": "is not one of"
+                    },
+                    {
+                      "id": "gt",
+                      "name": ">"
+                    },
+                    {
+                      "id": "gte",
+                      "name": ">="
+                    },
+                    {
+                      "id": "lt",
+                      "name": "<"
+                    },
+                    {
+                      "id": "lte",
+                      "name": "<="
+                    }
+                  ],
+                  "type": "method",
+                  "value": "is"
+                },
+                {
+                  "key": "byek46z53j",
+                  "list": [],
+                  "type": "value",
+                  "value": [
+                    "$instance_role"
+                  ]
+                }
+              ]
+            ],
+            "dimensions": "db_name",
+            "index": {
+              "id": [
+                "host_process",
+                5913
+              ],
+              "labels": [
+                "进程",
+                "[采集项]mysql_slowlog"
+              ]
+            },
+            "indexSetString": "",
+            "method": "value_count",
+            "metric": "bk_host_id",
+            "period": 300,
+            "periodUnitSet": {
+              "periodUnit": "min",
+              "timeNum": 5
+            },
+            "queryString": "",
+            "size": 50,
+            "target": {
+              "expandKeys": [],
+              "realValues": [],
+              "treeData": [],
+              "values": []
+            }
+          },
+          "queryType": "dimension",
+          "variables": "$cluster_domain  $instance_role"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
         "type": "query"
       },
       {
         "current": {},
+        "description": "slow_query.query_digest_md5",
         "hide": 0,
-        "name": "query_string",
+        "includeAll": false,
+        "multi": false,
+        "name": "digest",
         "options": [],
         "query": "*",
+        "queryValue": "",
         "skipUrlSync": false,
-        "type": "textbox",
+        "type": "custom",
         "refresh": 1
       }
     ]
@@ -6613,7 +6446,7 @@
   "timepicker": {},
   "timezone": "default",
   "title": "MySQL慢查询",
-  "version": 56,
+  "version": 67,
   "weekStart": "",
   "__inputs": [
     {

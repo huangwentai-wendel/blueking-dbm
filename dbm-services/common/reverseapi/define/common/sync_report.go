@@ -8,10 +8,9 @@ import (
 type ISyncReportEvent interface {
 	ClusterType() string
 	EventType() string
-	EventCreateTimeStamp() time.Time
-	BkBizId() int64
-	// MarshalJSON 上报的 json 主体
-	MarshalJSON() ([]byte, error)
+	// EventCreateTime 会自动转成 UTC 时间的微秒上报
+	EventCreateTime() time.Time
+	EventBkBizId() int64
 }
 
 type SyncReportErrDetail[T ISyncReportEvent] struct {

@@ -81,20 +81,26 @@ REDIS_BACKUP_CHECK_DATA = {
     "results": [
         {
             "bk_biz_id": 3,
+            "dba": "admin",
             "cluster": "aa.bb.cc",
+            "instance": "1.1.1.1",
             "cluster_type": "TendisSSD",
-            "instance": "aa:bb",
-            "status": True,
-            "msg": "",
+            "state": "normal",
+            "failed_days": 0,
+            "create_at": "2026-04-10 00:00:00",
+            "msg": "3 instances checked, all normal",
         }
     ],
     "name": "redis备份检查",
     "title": [
         {"name": "bk_biz_id", "display_name": "业务", "format": "text"},
+        {"name": "dba", "display_name": "DBA", "format": "text"},
         {"name": "cluster", "display_name": "集群域名", "format": "text"},
-        {"name": "cluster_type", "display_name": "集群类型", "format": "text"},
-        {"name": "status", "display_name": "校验结果", "format": "status"},
         {"name": "instance", "display_name": "实例节点", "format": "text"},
+        {"name": "cluster_type", "display_name": "集群类型", "format": "text"},
+        {"name": "state", "display_name": "巡检状态", "format": "status"},
+        {"name": "failed_days", "display_name": "持续天数", "format": "text"},
+        {"name": "create_at", "display_name": "巡检时间", "format": "text"},
         {"name": "msg", "display_name": "详情", "format": "text"},
     ],
 }
@@ -140,8 +146,13 @@ REDIS_META_CHECK_DATA = {
         {"name": "bk_biz_id", "display_name": "业务", "format": "text"},
         {"name": "cluster", "display_name": "集群名", "format": "text"},
         {"name": "cluster_type", "display_name": "集群类型", "format": "text"},
-        {"name": "status", "display_name": "元数据状态", "format": "status"},
+        {"name": "ip", "display_name": "IP", "format": "text"},
+        {"name": "port", "display_name": "Port", "format": "text"},
+        {"name": "state", "display_name": "元数据状态", "format": "status"},
         {"name": "msg", "display_name": "详情", "format": "text"},
+        {"name": "ip", "display_name": "IP", "format": "text"},
+        {"name": "create_at", "display_name": "巡检时间", "format": "text"},
+        {"name": "failed_days", "display_name": "失败天数", "format": "text"},
     ],
 }
 
@@ -154,6 +165,7 @@ REPORT_OVERVIEW_DATA = {
         "status_abnormal_check",
     ],
     "mysql": ["full_backup_check", "binlog_backup_check", "meta_check", "checksum"],
+    "kafka": ["kafka_zookeeper_affinity_check", "kafka_broker_affinity_check"],
 }
 
 REPORT_COUNT_DATA = {
@@ -162,6 +174,10 @@ REPORT_COUNT_DATA = {
     },
     "mysql": {
         "full_backup_check": {"manage_count": 0, "assist_count": 26},
+    },
+    "kafka": {
+        "kafka_zookeeper_affinity_check": {"manage_count": 15, "assist_count": 3},
+        "kafka_broker_affinity_check": {"manage_count": 15, "assist_count": 3},
     },
 }
 
@@ -258,5 +274,406 @@ MONGODB_BACKUP_CHECK_DATA = {
         {"name": "status", "display_name": "校验结果", "format": "status"},
         {"name": "instance", "display_name": "实例节点", "format": "text"},
         {"name": "msg", "display_name": "详情", "format": "text"},
+    ],
+}
+# 备份恢复演练 mock data
+REPORT_BACKUP_RECOVER_DATA = {
+    "count": 2,
+    "next": None,
+    "previous": None,
+    "results": [
+        {
+            "bk_biz_id": 1,
+            "cluster_domain": "mysql-prod-01.db.example.com",
+            "backup_begin_time": "2024-04-01T02:00:00Z",
+            "recover_duration": 45,
+            "status": True,
+            "task_id": "task_20240401001",
+            "charset": "utf8mb4",
+            "mysql_version": "8.0.32",
+            "backup_type": "full",
+            "backup_tool": "xtrabackup",
+            "create_at": "2024-04-01T01:00:00Z",
+        },
+        {
+            "bk_biz_id": 2,
+            "cluster_domain": "mysql-test-02.db.example.com",
+            "backup_begin_time": "2024-04-02T03:30:00Z",
+            "recover_duration": 60,
+            "status": False,
+            "task_id": "task_20240402002",
+            "charset": "utf8",
+            "mysql_version": "5.7.41",
+            "backup_type": "incremental",
+            "backup_tool": "mysqldump",
+            "create_at": "2024-04-02T03:00:00Z",
+        },
+    ],
+    "name": "备份恢复演练",
+    "title": [
+        {"name": "bk_biz_id", "display_name": "业务", "format": "text"},
+        {"name": "cluster_domain", "display_name": "集群名称", "format": "text"},
+        {"name": "mysql_version", "display_name": "MySQL版本", "format": "text"},
+        {"name": "charset", "display_name": "备份字符集", "format": "text"},
+        {"name": "backup_type", "display_name": "备份类型", "format": "text"},
+        {"name": "backup_tool", "display_name": "备份工具", "format": "text"},
+        {"name": "backup_begin_time", "display_name": "备份开始时间", "format": "text"},
+        {"name": "recover_duration", "display_name": "恢复花费时间(分钟)", "format": "text"},
+        {"name": "status", "display_name": "任务状态", "format": "status"},
+        {"name": "task_id", "display_name": "任务ID", "format": "link"},
+        {"name": "create_at", "display_name": "创建时间", "format": "text"},
+    ],
+}
+# ES集群状态巡检报告
+ES_STATUS_CHECK_DATA = {
+    "count": 1,
+    "next": None,
+    "previous": None,
+    "results": [
+        {
+            "bk_biz_id": 1,
+            "app": "dba",
+            "domain": "aa.bb.cc",
+            "cluster_type": "es",
+            "dba": "aa:bb",
+            "created_at": "1111",
+            "msg": "aabb",
+            "state": "red",
+        }
+    ],
+    "title": [
+        {"name": "bk_biz_id", "display_name": "业务", "format": "text"},
+        {"name": "app", "display_name": "业务名", "format": "text"},
+        {"name": "domain", "display_name": "集群域名", "format": "text"},
+        {"name": "cluster_type", "display_name": "集群类型", "format": "text"},
+        {"name": "dba", "display_name": "业务所属dba", "format": "text"},
+        {"name": "create_at", "display_name": "巡检时间", "format": "text"},
+        {"name": "msg", "display_name": "检查结果", "format": "text"},
+        {"name": "state", "display_name": "检查状态", "format": "text"},
+    ],
+}
+
+# ES集群版本巡检报告
+ES_VERSION_CHECK_DATA = {
+    "count": 1,
+    "next": None,
+    "previous": None,
+    "results": [
+        {
+            "bk_biz_id": 1,
+            "app": "dba",
+            "domain": "aa.bb.cc",
+            "cluster_type": "es",
+            "dba": "aa:bb",
+            "created_at": "1111",
+            "msg": "aabb",
+            "state": "normal",
+            "major_version": "1.1.1",
+            "version_count": 1,
+        }
+    ],
+    "title": [
+        {"name": "bk_biz_id", "display_name": "业务", "format": "text"},
+        {"name": "app", "display_name": "业务名", "format": "text"},
+        {"name": "domain", "display_name": "集群域名", "format": "text"},
+        {"name": "cluster_type", "display_name": "集群类型", "format": "text"},
+        {"name": "dba", "display_name": "业务所属dba", "format": "text"},
+        {"name": "create_at", "display_name": "巡检时间", "format": "text"},
+        {"name": "msg", "display_name": "检查结果", "format": "text"},
+        {"name": "state", "display_name": "检查状态", "format": "text"},
+        {"name": "major_version", "display_name": "主版本", "format": "text"},
+        {"name": "version_count", "display_name": "实例版本数量", "format": "text"},
+    ],
+}
+
+# ES集群master巡检报告
+ES_MASTER_CHECK_DATA = {
+    "count": 1,
+    "next": None,
+    "previous": None,
+    "results": [
+        {
+            "bk_biz_id": 1,
+            "app": "dba",
+            "domain": "aa.bb.cc",
+            "cluster_type": "es",
+            "dba": "aa:bb",
+            "created_at": "1111",
+            "msg": "aabb",
+            "state": "normal",
+            "master_count": "3",
+            "idc_affinity": 1,
+            "rack_affinity": 1,
+        }
+    ],
+    "title": [
+        {"name": "bk_biz_id", "display_name": "业务", "format": "text"},
+        {"name": "app", "display_name": "业务名", "format": "text"},
+        {"name": "domain", "display_name": "集群域名", "format": "text"},
+        {"name": "cluster_type", "display_name": "集群类型", "format": "text"},
+        {"name": "dba", "display_name": "业务所属dba", "format": "text"},
+        {"name": "create_at", "display_name": "巡检时间", "format": "text"},
+        {"name": "msg", "display_name": "检查结果", "format": "text"},
+        {"name": "state", "display_name": "检查状态", "format": "text"},
+        {"name": "master_count", "display_name": "master节点数量", "format": "text"},
+        {"name": "idc_affinity", "display_name": "机房亲合度", "format": "text"},
+        {"name": "rack_affinity", "display_name": "机架亲合度", "format": "text"},
+    ],
+}
+
+# ES集群数据节点巡检报告
+ES_DATANODE_CHECK_DATA = {
+    "count": 1,
+    "next": None,
+    "previous": None,
+    "results": [
+        {
+            "bk_biz_id": 1,
+            "app": "dba",
+            "domain": "aa.bb.cc",
+            "cluster_type": "es",
+            "dba": "aa:bb",
+            "created_at": "1111",
+            "msg": "aabb",
+            "state": "normal",
+            "idc_affinity_hot": 1,
+            "rack_affinity_hot": 1,
+            "idc_affinity_cold": 1,
+            "rack_affinity_cold": 1,
+        }
+    ],
+    "title": [
+        {"name": "bk_biz_id", "display_name": "业务", "format": "text"},
+        {"name": "app", "display_name": "业务名", "format": "text"},
+        {"name": "domain", "display_name": "集群域名", "format": "text"},
+        {"name": "cluster_type", "display_name": "集群类型", "format": "text"},
+        {"name": "dba", "display_name": "业务所属dba", "format": "text"},
+        {"name": "create_at", "display_name": "巡检时间", "format": "text"},
+        {"name": "msg", "display_name": "检查结果", "format": "text"},
+        {"name": "state", "display_name": "检查状态", "format": "text"},
+        {"name": "idc_affinity_hot", "display_name": "热节点机房亲合度", "format": "text"},
+        {"name": "rack_affinity_hot", "display_name": "热节点机架亲合度", "format": "text"},
+        {"name": "idc_affinity_cold", "display_name": "冷节点机房亲合度", "format": "text"},
+        {"name": "rack_affinity_cold", "display_name": "冷节点机架亲合度", "format": "text"},
+    ],
+}
+
+# ES集群ADMIN账号巡检报告
+ES_ACCOUNT_CHECK_DATA = {
+    "count": 1,
+    "next": None,
+    "previous": None,
+    "results": [
+        {
+            "bk_biz_id": 1,
+            "app": "dba",
+            "domain": "aa.bb.cc",
+            "cluster_type": "es",
+            "dba": "aa:bb",
+            "created_at": "1111",
+            "msg": "aabb",
+            "state": "normal",
+            "have_admin": True,
+        }
+    ],
+    "title": [
+        {"name": "bk_biz_id", "display_name": "业务", "format": "text"},
+        {"name": "app", "display_name": "业务名", "format": "text"},
+        {"name": "domain", "display_name": "集群域名", "format": "text"},
+        {"name": "cluster_type", "display_name": "集群类型", "format": "text"},
+        {"name": "dba", "display_name": "业务所属dba", "format": "text"},
+        {"name": "create_at", "display_name": "巡检时间", "format": "text"},
+        {"name": "msg", "display_name": "检查结果", "format": "text"},
+        {"name": "state", "display_name": "检查状态", "format": "text"},
+        {"name": "have_admin", "display_name": "拥有ADMIN账号", "format": "text"},
+    ],
+}
+
+# ES集群域名巡检报告
+ES_DOMAIN_CHECK_DATA = {
+    "count": 3,
+    "next": None,
+    "previous": None,
+    "results": [
+        {
+            "bk_biz_id": 1,
+            "app": "dba",
+            "domain": "aa.bb.cc",
+            "cluster_type": "es",
+            "dba": "aa:bb",
+            "created_at": "1111",
+            "msg": "aabb",
+            "state": "normal",
+            "type": "DNS",
+        },
+        {
+            "bk_biz_id": 1,
+            "app": "dba",
+            "domain": "aa.bb.cc",
+            "cluster_type": "es",
+            "dba": "aa:bb",
+            "created_at": "1111",
+            "msg": "aabb",
+            "state": "normal",
+            "type": "CLB",
+        },
+        {
+            "bk_biz_id": 1,
+            "app": "dba",
+            "domain": "aa.bb.cc",
+            "cluster_type": "es",
+            "dba": "aa:bb",
+            "created_at": "1111",
+            "msg": "aabb",
+            "state": "normal",
+            "type": "POLARIS",
+        },
+    ],
+    "title": [
+        {"name": "bk_biz_id", "display_name": "业务", "format": "text"},
+        {"name": "app", "display_name": "业务名", "format": "text"},
+        {"name": "domain", "display_name": "集群域名", "format": "text"},
+        {"name": "cluster_type", "display_name": "集群类型", "format": "text"},
+        {"name": "dba", "display_name": "业务所属dba", "format": "text"},
+        {"name": "create_at", "display_name": "巡检时间", "format": "text"},
+        {"name": "msg", "display_name": "检查结果", "format": "text"},
+        {"name": "state", "display_name": "检查状态", "format": "text"},
+        {"name": "type", "display_name": "类型", "format": "text"},
+    ],
+}
+
+# redis exporter检查报告
+REDIS_EXPORTER_CHECK_DATA = {
+    "count": 1,
+    "next": None,
+    "previous": None,
+    "results": [
+        {
+            "bk_biz_id": 3,
+            "cluster": "aa.bb.cc",
+            "cluster_type": "TendisRedTisInstance",
+            "shard": "aa",
+            "instance": "-",
+            "subtype": "redis_exporter",
+            "state": "normal",
+            "msg": "ok",
+            "create_at": "2024-04-01T01:00:00Z",
+            "failed_days": 0,
+        }
+    ],
+    "name": "mongodb备份检查",
+    "title": [
+        {"name": "bk_biz_id", "display_name": "业务", "format": "text"},
+        {"name": "cluster", "display_name": "集群域名", "format": "text"},
+        {"name": "cluster_type", "display_name": "集群类型", "format": "text"},
+        {"name": "shard", "display_name": "节点类型", "format": "text"},
+        {"name": "instance", "display_name": "实例节点", "format": "text"},
+        {"name": "subtype", "display_name": "检查子类型", "format": "text"},
+        {"name": "state", "display_name": "检查状态", "format": "text"},
+        {"name": "msg", "display_name": "详情", "format": "text"},
+    ],
+}
+
+# Kafka Zookeeper 亲和性检查报告
+KAFKA_ZOOKEEPER_AFFINITY_CHECK_DATA = {
+    "count": 2,
+    "next": None,
+    "previous": None,
+    "results": [
+        {
+            "bk_biz_id": 1,
+            "app": "kafka_prod",
+            "domain": "aa1.bb.cc",
+            "dba": ["admin", "dba_user"],
+            "create_at": "2024-04-01T10:00:00Z",
+            "cluster_type": "kafka",
+            "msg": "Zookeeper节点分布正常，机房和机架亲和性检查通过",
+            "state": "normal",
+            "zk_node_count": 3,
+            "zk_idc_affinity": 3,
+            "zk_rack_affinity": 3,
+            "zk_idc_distribution": {"深圳": 1, "广州": 1, "上海": 1},
+            "zk_rack_distribution": {"rack-a": 1, "rack-b": 1, "rack-c": 1},
+        },
+        {
+            "bk_biz_id": 2,
+            "app": "kafka_test",
+            "domain": "aa2.bb.cc",
+            "dba": ["test_admin"],
+            "create_at": "2024-04-01T11:30:00Z",
+            "cluster_type": "kafka",
+            "msg": "Zookeeper节点集中部署在单一机房，存在单点故障风险",
+            "state": "warning",
+            "zk_node_count": 3,
+            "zk_idc_affinity": 1,
+            "zk_rack_affinity": 2,
+            "zk_idc_distribution": {"深圳": 3},
+            "zk_rack_distribution": {"rack-a": 2, "rack-b": 1},
+        },
+    ],
+    "name": "Kafka Zookeeper亲和性检查",
+    "title": [
+        {"name": "bk_biz_id", "display_name": "业务", "format": "text"},
+        {"name": "app", "display_name": "业务名", "format": "text"},
+        {"name": "domain", "display_name": "集群域名", "format": "text"},
+        {"name": "cluster_type", "display_name": "集群类型", "format": "text"},
+        {"name": "dba", "display_name": "业务所属dba", "format": "text"},
+        {"name": "create_at", "display_name": "巡检时间", "format": "text"},
+        {"name": "msg", "display_name": "检查结果", "format": "text"},
+        {"name": "state", "display_name": "检查状态", "format": "status"},
+        {"name": "zk_node_count", "display_name": "Zookeeper节点数量", "format": "text"},
+        {"name": "zk_idc_affinity", "display_name": "Zookeeper机房亲和度", "format": "text"},
+        {"name": "zk_rack_affinity", "display_name": "Zookeeper机架亲和度", "format": "text"},
+        {"name": "zk_idc_distribution", "display_name": "Zookeeper机房分布", "format": "text"},
+        {"name": "zk_rack_distribution", "display_name": "Zookeeper机架分布", "format": "text"},
+    ],
+}
+
+# Kafka Broker 亲和性检查报告
+KAFKA_BROKER_AFFINITY_CHECK_DATA = {
+    "count": 2,
+    "next": None,
+    "previous": None,
+    "results": [
+        {
+            "bk_biz_id": 1,
+            "app": "kafka_prod",
+            "domain": "aa1.bb.cc",
+            "dba": ["admin", "dba_user"],
+            "create_at": "2024-04-01T10:00:00Z",
+            "cluster_type": "kafka",
+            "msg": "Broker节点机架分布合理，满足高可用要求",
+            "state": "normal",
+            "broker_node_count": 6,
+            "broker_rack_affinity": 3,
+            "broker_rack_distribution": {"rack-a": 2, "rack-b": 2, "rack-c": 2},
+        },
+        {
+            "bk_biz_id": 2,
+            "app": "kafka_test",
+            "domain": "aa2.bb.cc",
+            "dba": ["test_admin"],
+            "create_at": "2024-04-01T11:30:00Z",
+            "cluster_type": "kafka",
+            "msg": "Broker节点集中在单一机架，存在机架级故障风险",
+            "state": "warning",
+            "broker_node_count": 4,
+            "broker_rack_affinity": 1,
+            "broker_rack_distribution": {"rack-a": 4},
+        },
+    ],
+    "name": "Kafka Broker亲和性检查",
+    "title": [
+        {"name": "bk_biz_id", "display_name": "业务", "format": "text"},
+        {"name": "app", "display_name": "业务名", "format": "text"},
+        {"name": "domain", "display_name": "集群域名", "format": "text"},
+        {"name": "cluster_type", "display_name": "集群类型", "format": "text"},
+        {"name": "dba", "display_name": "业务所属dba", "format": "text"},
+        {"name": "create_at", "display_name": "巡检时间", "format": "text"},
+        {"name": "msg", "display_name": "检查结果", "format": "text"},
+        {"name": "state", "display_name": "检查状态", "format": "status"},
+        {"name": "broker_node_count", "display_name": "Broker节点数量", "format": "text"},
+        {"name": "broker_rack_affinity", "display_name": "Broker机架亲和度", "format": "text"},
+        {"name": "broker_rack_distribution", "display_name": "Broker机架分布", "format": "text"},
     ],
 }

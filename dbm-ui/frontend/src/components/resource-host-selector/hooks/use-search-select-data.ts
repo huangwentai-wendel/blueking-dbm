@@ -1,24 +1,24 @@
-import type { ISearchValue } from 'bkui-vue/lib/search-select/utils';
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRequest } from 'vue-request';
 
-import { fetchDeviceClass, fetchDiskTypes, fetchMountPoints, getOsTypeList } from '@services/source/dbresourceResource';
-import { fetchDbTypeList, getInfrasCities, getInfrasSubzonesByCity } from '@services/source/infras';
-import { getCloudList } from '@services/source/ipchooser';
+import { fetchDeviceClass, fetchMountPoints, getOsTypeList } from '@services/source/dbresourceResource';
+import { fetchDbTypeList, getCommonCities, getInfrasSubzonesByCity } from '@services/source/infras';
+import { getCloudList, searchDeviceClass } from '@services/source/ipchooser';
 
 import { useGlobalBizs } from '@stores';
 
-import { getSearchSelectorParams } from '@utils';
+import { DeviceClass, deviceClassDisplayMap } from '@common/const';
+
+import MultipleSelect from '@components/db-table/components/MultipleSelect.vue';
 
 export default (props: any) => {
   const { t } = useI18n();
   const globalBizsStore = useGlobalBizs();
 
-  const value = ref<ISearchValue[]>([]);
-  const columnFilterValue = reactive<Record<string, string>>({});
+  const quickSearchValue = ref<Record<string, any>>({});
 
-  const searchSelectData = computed(() => {
+  const quickSearchData = computed(() => {
     const serachList = [
       {
         id: 'hosts',
@@ -39,7 +39,7 @@ export default (props: any) => {
       },
       {
         children: cloudList.value?.map((item) => ({
-          id: item.bk_cloud_id,
+          id: `${item.bk_cloud_id}`,
           name: item.bk_cloud_name,
         })),
         id: 'bk_cloud_ids',
@@ -76,10 +76,12 @@ export default (props: any) => {
         name: t('磁盘挂载点'),
       },
       {
-        children: diskTypeList.value?.map((item) => ({
-          id: item,
-          name: item,
-        })),
+        children: diskTypeList.value
+          ?.filter((item) => item !== 'ALL')
+          .map((item) => ({
+            id: item,
+            name: deviceClassDisplayMap[item as DeviceClass],
+          })),
         id: 'disk_type',
         name: t('磁盘类型'),
       },
@@ -93,7 +95,7 @@ export default (props: any) => {
       },
       {
         children: subzoneList.value?.map((item) => ({
-          id: item.bk_sub_zone_id,
+          id: `${item.bk_sub_zone_id}`,
           name: item.bk_sub_zone,
         })),
         id: 'sub_zone',
@@ -101,7 +103,7 @@ export default (props: any) => {
       },
       {
         children: deviceClassList.value?.map((item) => ({
-          id: item.id,
+          id: `${item.id}`,
           name: item.device_type,
         })),
         id: 'device_class',
@@ -112,13 +114,11 @@ export default (props: any) => {
     return serachList.filter((item) => props.params[item.id] === undefined);
   });
 
-  const formatSearchValue = computed(() => getSearchSelectorParams(value.value));
-
   const { data: cloudList } = useRequest(getCloudList, {
     initialData: [],
   });
 
-  const { data: diskTypeList } = useRequest(fetchDiskTypes, {
+  const { data: diskTypeList } = useRequest(searchDeviceClass, {
     initialData: [],
   });
 
@@ -140,10 +140,10 @@ export default (props: any) => {
     initialData: [],
   });
 
-  const cityList = shallowRef<ServiceReturnType<typeof getInfrasCities>>([]);
-  useRequest(getInfrasCities, {
+  const cityList = shallowRef<ServiceReturnType<typeof getCommonCities>['common']>([]);
+  useRequest(getCommonCities, {
     onSuccess(data) {
-      cityList.value = data.filter((item) => item.city_code !== 'default');
+      cityList.value = data.common.concat(data.internal).filter((item) => item.city_code !== 'default');
     },
   });
 
@@ -153,6 +153,12 @@ export default (props: any) => {
 
   const deviceClassList = shallowRef<ServiceReturnType<typeof fetchDeviceClass>['results']>([]);
   useRequest(fetchDeviceClass, {
+    defaultParams: [
+      {
+        limit: -1,
+        offset: 0,
+      },
+    ],
     onSuccess(data) {
       deviceClassList.value = data.results;
     },
@@ -160,44 +166,43 @@ export default (props: any) => {
 
   const filterOption = computed(() => ({
     city: {
-      checked: [],
-      list: (cityList.value || []).map((item) => ({
-        text: item.city_name,
-        value: item.city_code,
-      })),
+      component: markRaw(MultipleSelect),
+      name: t('地域'),
+      props: {
+        list: (cityList.value || []).map((item) => ({
+          label: item.city_name,
+          value: item.city_code,
+        })),
+      },
+      showConfirmAndReset: true,
     },
     device_class: {
-      checked: [],
-      list: (deviceClassList.value || []).map((item) => ({
-        text: item.device_type,
-        value: item.id,
-      })),
+      component: markRaw(MultipleSelect),
+      name: t('机型'),
+      props: {
+        list: (deviceClassList.value || []).map((item) => ({
+          label: item.device_type,
+          value: item.id,
+        })),
+      },
+      showConfirmAndReset: true,
     },
-    os_name: {
-      checked: [],
-      list: [],
-    },
-    sub_zone: {
-      checked: [],
-      list: (subzoneList.value || []).map((item) => ({
-        text: item.bk_sub_zone,
-        value: item.bk_sub_zone_id,
-      })),
+    subzone_ids: {
+      component: markRaw(MultipleSelect),
+      name: t('园区'),
+      props: {
+        list: (subzoneList.value || []).map((item) => ({
+          label: item.bk_sub_zone,
+          value: item.bk_sub_zone_id,
+        })),
+      },
+      showConfirmAndReset: true,
     },
   }));
 
-  const handleFilter = ({ checked, field }: { checked: string[]; field: string }) => {
-    Object.assign(columnFilterValue, {
-      [field]: checked.length ? checked.join(',') : undefined,
-    });
-  };
-
   return {
-    columnFilterValue,
     filterOption,
-    formatSearchValue,
-    handleFilter,
-    searchSelectData,
-    value,
+    quickSearchData,
+    quickSearchValue,
   };
 };

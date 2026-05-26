@@ -29,7 +29,7 @@ type InitSystemConfigService struct {
 	RollBackContext rollback.RollBackObjects
 }
 
-// InitSystemConfig TODO
+// InitSystemConfig 初始化系统配置
 func (i *InitSystemConfigService) InitSystemConfig() (err error) {
 	// 创建执行用户
 	err = i.CreateExecuteUser()
@@ -91,7 +91,7 @@ swapoff -a`
 	if _, err := osutil.ExecShellCommand(false, extraCmd); err != nil {
 		logger.Error("关闭swap分区执行失败", err.Error())
 	}
-	if i.Params.Role == Hot || i.Params.Role == Cold {
+	if i.Params.Role == Hot || i.Params.Role == Cold || i.Params.Role == Warm {
 		// BE节点 修改vma数量
 		addConfCmd := "echo 'vm.max_map_count=2000000'>> /etc/sysctl.conf; sysctl -p"
 		delConfCmd := "sed -i '/vm\\.max_map_count/d' /etc/sysctl.conf;"
@@ -109,7 +109,7 @@ func (i *InitSystemConfigService) WriteProfile() (err error) {
 	scripts := []byte(`cat << 'EOF' > /data/dorisenv/dorisprofile
 export JAVA_HOME=/data/dorisenv/java/jdk
 export JRE=$JAVA_HOME/jre
-export PATH=$JAVA_HOME/bin:$JRE_HOME/bin:$PATH
+export PATH=/usr/local/bin:$JAVA_HOME/bin:$JRE_HOME/bin:$PATH
 export CLASSPATH=".:$JAVA_HOME/lib:$JRE/lib:$CLASSPATH"
 export LC_ALL=en_US
 export DORIS_HOME=/data/dorisenv/` + i.Params.Role + `

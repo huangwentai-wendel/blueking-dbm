@@ -8,7 +8,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.configuration.constants import AffinityEnum
@@ -18,6 +18,11 @@ from backend.db_services.ipchooser.query.resource import ResourceQueryHelper
 from backend.flow.engine.controller.mongodb import MongoDBController
 from backend.iam_app.dataclass.actions import ActionEnum
 from backend.ticket import builders
+from backend.ticket.builders.common.base import (
+    TicketBaseValidateSerializerMixin,
+    get_mongodb_cluster_tolerance,
+    get_ticket_zone_list,
+)
 from backend.ticket.builders.mongodb.base import (
     BaseMongoDBOperateResourceParamBuilder,
     BaseMongoShardedTicketFlowBuilder,
@@ -25,7 +30,7 @@ from backend.ticket.builders.mongodb.base import (
 from backend.ticket.constants import TicketType
 
 
-class MongoShardedClusterApplyDetailSerializer(serializers.Serializer):
+class MongoShardedClusterApplyDetailSerializer(TicketBaseValidateSerializerMixin, serializers.Serializer):
     bk_cloud_id = serializers.IntegerField(help_text=_("云区域ID"))
     db_app_abbr = serializers.CharField(help_text=_("业务英文缩写"))
     city_code = serializers.CharField(
@@ -63,6 +68,7 @@ class MongoShardedClusterApplyDetailSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         """TODO: validate"""
+        attrs = super().validate(attrs)
         return attrs
 
 
@@ -73,10 +79,23 @@ class MongoShardedClusterApplyFlowParamBuilder(builders.FlowParamBuilder):
         self.ticket_data["bk_app_abbr"] = self.ticket_data["db_app_abbr"]
         self.ticket_data["proxy_port"] = self.ticket_data["start_port"]
 
+        # 补充zone_list数据 取分片集任意组件下园区即可
+        self.ticket_data["zone_list"] = get_ticket_zone_list(self.ticket_data, "mongo_config")
+
 
 class MongoShardedClusterResourceParamBuilder(BaseMongoDBOperateResourceParamBuilder):
     def format(self):
         """格式化mongodb申请的组数"""
+        self.ticket_data["resource_spec"]["mongodb"]["tolerance"] = get_mongodb_cluster_tolerance(
+            self.ticket_data["disaster_tolerance_level"], "mongodb"
+        )
+        self.ticket_data["resource_spec"]["mongo_config"]["tolerance"] = get_mongodb_cluster_tolerance(
+            self.ticket_data["disaster_tolerance_level"], "mongo_config"
+        )
+        self.ticket_data["resource_spec"]["mongos"]["tolerance"] = get_mongodb_cluster_tolerance(
+            self.ticket_data["disaster_tolerance_level"], "mongos"
+        )
+
         resource_spec = self.ticket_data["resource_spec"]
         self.format_mongo_resource_spec(resource_spec, self.ticket_data["shard_machine_group"])
 

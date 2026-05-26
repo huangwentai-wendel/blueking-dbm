@@ -17,6 +17,7 @@ import type { ClusterTypes, DBTypes, MachineTypes } from '@common/const';
 import { utcDisplayTime } from '@utils';
 
 export default class ResourceSpec {
+  biz_scope: number[];
   capacity: number;
   cpu: {
     max: number;
@@ -48,12 +49,21 @@ export default class ResourceSpec {
   spec_machine_type: MachineTypes;
   spec_name: string;
   storage_spec: {
+    max: number;
+    min: number;
     mount_point: string;
-    size: number;
+    size?: number;
     type: string;
   }[];
   update_at: string;
   updater: string;
+  tags: {
+    id: number;
+    key: string;
+    value: string;
+    is_builtin: boolean;
+    system: boolean;
+  }[];
 
   constructor(payload = {} as ResourceSpec) {
     this.capacity = payload.capacity;
@@ -70,6 +80,7 @@ export default class ResourceSpec {
     this.spec_machine_type = payload.spec_machine_type;
     this.spec_name = payload.spec_name;
     this.update_at = payload.update_at;
+    this.biz_scope = payload.biz_scope || [];
     this.updater = payload.updater;
     this.spec_id = payload.spec_id;
     this.is_refer = payload.is_refer;
@@ -77,6 +88,7 @@ export default class ResourceSpec {
     this.qps = payload.qps || {};
     this.permission = payload.permission || {};
     this.capacity = payload.capacity || 0;
+    this.tags = payload.tags || [];
   }
 
   get isRecentSeconds() {
@@ -99,5 +111,9 @@ export default class ResourceSpec {
 
   get updateAtDisplay() {
     return utcDisplayTime(this.update_at);
+  }
+
+  get needReplenish() {
+    return this.tags.some((tag) => tag.key === 'replenish' && tag.value === 'True');
   }
 }

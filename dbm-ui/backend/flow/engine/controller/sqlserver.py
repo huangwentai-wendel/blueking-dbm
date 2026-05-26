@@ -15,8 +15,10 @@ from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_clean_dbs import Sqlse
 from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_cluster_destroy import SqlserverDestroyFlow
 from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_cluster_disable import SqlserverDisableFlow
 from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_cluster_enable import SqlserverEnableFlow
+from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_cluster_migrate import SqlserverClusterMigrateFlow
 from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_cluster_reset import SqlserverResetFlow
 from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_cluster_standardization import SqlserverStandardizationFlow
+from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_data_export import SqlserverDataExportFlow
 from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_db_construct import SqlserverDataConstruct
 from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_dts import SqlserverDTSFlow
 from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_ha_deploy import SqlserverHAApplyFlow
@@ -27,7 +29,17 @@ from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_rename_dbs import Sqls
 from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_single_deploy import SqlserverSingleApplyFlow
 from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_slave_rebuild import SqlserverSlaveRebuildFlow
 from backend.flow.engine.bamboo.scene.sqlserver.sqlserver_sql_execute import SqlserverSQLExecuteFlow
+from backend.flow.engine.bamboo.scene.sqlserver.validate.sqlserver_cluster_migrate_for_ins_validator import (
+    SqlserverClusterMigrateForInsFlowValidator,
+)
+from backend.flow.engine.bamboo.scene.sqlserver.validate.sqlserver_cluster_migrate_validator import (
+    SqlserverClusterMigrateFlowForHostValidator,
+)
+from backend.flow.engine.bamboo.scene.sqlserver.validate.sqlserver_data_export_validator import (
+    SqlserverDataExportValidator,
+)
 from backend.flow.engine.controller.base import BaseController
+from backend.flow.engine.validate.base_validate import validates_with
 
 
 class SqlserverController(BaseController):
@@ -122,4 +134,22 @@ class SqlserverController(BaseController):
     def sqlserver_modify_inst_status_scene(self):
         # 实例告警自愈触发单据
         flow = SqlserverModifyStatusFlow(root_id=self.root_id, data=self.ticket_data)
+        flow.run_flow()
+
+    @validates_with(SqlserverClusterMigrateFlowForHostValidator)
+    def sqlserver_cluster_migrate_for_host_scene(self):
+        # 集群迁移流程单据(整机迁移)
+        flow = SqlserverClusterMigrateFlow(root_id=self.root_id, data=self.ticket_data)
+        flow.run_flow()
+
+    @validates_with(SqlserverClusterMigrateForInsFlowValidator)
+    def sqlserver_cluster_migrate_for_ins_scene(self):
+        # 集群迁移流程单据(集群迁移拆分)
+        flow = SqlserverClusterMigrateFlow(root_id=self.root_id, data=self.ticket_data)
+        flow.run_flow()
+
+    @validates_with(SqlserverDataExportValidator)
+    def sqlserver_data_export_scene(self):
+        # 数据导出单据flow
+        flow = SqlserverDataExportFlow(root_id=self.root_id, data=self.ticket_data)
         flow.run_flow()

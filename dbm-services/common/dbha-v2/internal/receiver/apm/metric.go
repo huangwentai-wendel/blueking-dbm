@@ -1,0 +1,114 @@
+/**
+ * MIT License
+ *
+ * Copyright (c) 2023 腾讯蓝鲸
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+package apm
+
+import (
+	"dbm-services/common/dbha-v2/pkg/haapm"
+)
+
+const (
+	MetricLabelKafka = "kafka"
+	MetricLabelMysql = "mysql"
+)
+
+var (
+	KafkaReadMessagesTotal *haapm.HaCounter
+	KafkaReadBytesTotal    *haapm.HaCounter
+	KafkaWriteErrorsTotal  *haapm.HaCounter
+
+	MySqlWriteDurationMs    *haapm.HaHistogram
+	MySqlWriteMessagesTotal *haapm.HaCounter
+	MySqlWriteBytesTotal    *haapm.HaCounter
+	MySqlReadErrorsTotal    *haapm.HaCounter
+	MySqlWriteErrorsTotal   *haapm.HaCounter
+)
+
+func init() {
+	// Kafka
+	KafkaReadBytesTotal = haapm.NewHaCounter(
+		"kafka_read_bytes_total",
+		"Total bytes read from Kafka",
+		MetricLabelKafka,
+	)
+	KafkaReadMessagesTotal = haapm.NewHaCounter(
+		"kafka_read_messages_total",
+		"Total messages read from Kafka",
+		MetricLabelKafka,
+	)
+	KafkaWriteErrorsTotal = haapm.NewHaCounter(
+		"kafka_write_errors_total",
+		"Total errors write to Kafka",
+		MetricLabelKafka,
+	)
+
+	// mysql
+	MySqlWriteDurationMs = haapm.NewHaHistogramWithBuckets(
+		"mysql_write_duration_ms",
+		"Duration of write to mysql (milliseconds)",
+		haapm.DefaultDurationBuckets,
+		MetricLabelMysql,
+	)
+	MySqlWriteMessagesTotal = haapm.NewHaCounter(
+		"mysql_write_messages_total",
+		"Total messages write to mysql",
+		MetricLabelMysql,
+	)
+	MySqlWriteBytesTotal = haapm.NewHaCounter(
+		"mysql_write_bytes_total",
+		"Total bytes write to mysql",
+		MetricLabelMysql,
+	)
+	MySqlReadErrorsTotal = haapm.NewHaCounter(
+		"mysql_read_errors_total",
+		"Total errors read from mysql",
+		MetricLabelMysql,
+	)
+	MySqlWriteErrorsTotal = haapm.NewHaCounter(
+		"mysql_write_errors_total",
+		"Total errors write to mysql",
+		MetricLabelMysql,
+	)
+}
+
+// InitAPM sets service labels for startup metric and registers all metrics to haapm (Option 2).
+// Must be called before haapm.Serve so metrics are collected automatically.
+func InitAPM(serviceID, serviceName string) {
+	haapm.AppStartupMetric.UpdateLabel(map[string]string{
+		haapm.MetricLabelServiceID:   serviceID,
+		haapm.MetricLabelServiceName: serviceName,
+	})
+
+	haapm.MustRegister(
+		haapm.AppStartupMetric,
+		KafkaReadMessagesTotal,
+		KafkaReadBytesTotal,
+		KafkaWriteErrorsTotal,
+		MySqlWriteDurationMs,
+		MySqlWriteMessagesTotal,
+		MySqlWriteBytesTotal,
+		MySqlReadErrorsTotal,
+		MySqlWriteErrorsTotal,
+	)
+}

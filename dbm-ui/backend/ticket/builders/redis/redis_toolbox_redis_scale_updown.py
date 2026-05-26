@@ -8,7 +8,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.configuration.constants import AffinityEnum
@@ -24,14 +24,16 @@ from backend.ticket.builders.common.base import (
     BaseOperateResourceParamBuilder,
     DisplayInfoSerializer,
     HostInfoSerializer,
-    HostRecycleSerializer,
-    SkipToRepresentationMixin,
 )
-from backend.ticket.builders.redis.base import BaseRedisTicketFlowBuilder, ClusterValidateMixin
+from backend.ticket.builders.redis.base import (
+    BaseRedisTicketFlowBuilder,
+    ClusterValidateMixin,
+    RedisBaseOperateDetailSerializer,
+)
 from backend.ticket.constants import SwitchConfirmType, TicketType
 
 
-class RedisScaleUpDownDetailSerializer(SkipToRepresentationMixin, serializers.Serializer):
+class RedisScaleUpDownDetailSerializer(RedisBaseOperateDetailSerializer):
     """redis集群容量变更"""
 
     class InfoSerializer(DisplayInfoSerializer, ClusterValidateMixin):
@@ -41,6 +43,12 @@ class RedisScaleUpDownDetailSerializer(SkipToRepresentationMixin, serializers.Se
                 count = serializers.IntegerField(help_text=_("数量"))
                 affinity = serializers.ChoiceField(
                     help_text=_("亲和性"), choices=AffinityEnum.get_choices(), default=AffinityEnum.NONE
+                )
+                labels = serializers.ListSerializer(
+                    help_text=_("标签id列表"), child=serializers.CharField(), required=False
+                )
+                label_names = serializers.ListSerializer(
+                    help_text=_("标签名称列表"), child=serializers.CharField(), required=False
                 )
 
             backend_group = BackendGroupSerializer()
@@ -72,7 +80,6 @@ class RedisScaleUpDownDetailSerializer(SkipToRepresentationMixin, serializers.Se
     ip_source = serializers.ChoiceField(
         help_text=_("主机来源"), choices=IpSource.get_choices(), default=IpSource.RESOURCE_POOL
     )
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.DEFAULT)
     infos = serializers.ListField(help_text=_("批量操作参数列表"), child=InfoSerializer())
 
 
@@ -89,7 +96,7 @@ class RedisScaleUpDownResourceParamBuilder(BaseOperateResourceParamBuilder):
     allow_resource_empty = True
 
     def format(self):
-        self.patch_info_affinity_location(roles=["backend_group"])
+        self.patch_info_common_affinity(role="backend_group", tolerance=0)
 
     def post_callback(self):
         super().post_callback()
@@ -108,7 +115,8 @@ class RedisScaleUpDownFlowBuilder(BaseRedisTicketFlowBuilder):
         id__cluster_type = {cluster.id: cluster.cluster_type for cluster in Cluster.objects.filter(id__in=cluster_ids)}
         for info in self.ticket.details["infos"]:
             if id__cluster_type[info["cluster_id"]] == ClusterType.TendisPredixyTendisplusCluster.value:
-
+                info["old_nodes"] = {}
+                info["old_nodes"]["backend_hosts"] = []
                 shutdown_master_hosts, shutdown_slave_hosts = get_tendisplus_shutdown_hosts(
                     info["cluster_id"], info["group_num"], info["update_mode"]
                 )

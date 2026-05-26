@@ -1,6 +1,7 @@
-import type { DetailBase, SpecInfo } from '../common';
+import type { ApplySpecInfo, DetailBase } from '../common';
 
 export interface ShardApply extends DetailBase {
+  bk_cloud_id: number;
   bk_cloud_name: string;
   cap_key: string;
   cap_spec: string;
@@ -17,9 +18,12 @@ export interface ShardApply extends DetailBase {
   oplog_percent: number;
   proxy_port: number;
   resource_spec: {
-    mongo_config: SpecInfo;
-    mongodb: SpecInfo;
-    mongos: SpecInfo;
+    mongo_config: ApplySpecInfo;
+    mongodb: ApplySpecInfo;
+    mongos: ApplySpecInfo;
   };
+  shard_machine_group: number;
+  shard_num: number;
   start_port: number;
+  sub_zone_ids: string[];
 }

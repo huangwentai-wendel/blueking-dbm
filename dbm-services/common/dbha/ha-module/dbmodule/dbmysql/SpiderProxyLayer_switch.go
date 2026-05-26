@@ -14,7 +14,6 @@ package dbmysql
 
 import (
 	"dbm-services/common/dbha/ha-module/constvar"
-	"dbm-services/common/dbha/ha-module/dbutil"
 	"dbm-services/common/dbha/ha-module/log"
 	"dbm-services/common/dbha/ha-module/util"
 	"encoding/json"
@@ -28,8 +27,6 @@ type SpiderProxyLayerSwitch struct {
 	SpiderCommonSwitch
 	//proxy layer instance used(spider, proxy)
 	AdminPort int
-	//storage layer instance used
-	Entry dbutil.BindEntry
 	//temporary secondary node, after elect new primary, need to CHANGE MASTER TO
 	SecondaryNodes []TdbctlNodes
 }
@@ -84,6 +81,11 @@ func (ins *SpiderProxyLayerSwitch) ElectPrimaryCandidate() (*TdbctlInfo, error) 
 				"skip this one", spider.IP, spider.Port, spider.Status, spider.SpiderRole))
 			continue
 		}
+		if ins.Ip == spider.IP && ins.Port == spider.Port {
+			ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("skip itself[%s:%d] in dbmeta",
+				spider.IP, spider.Port))
+			continue
+		}
 
 		//try to connect a tdbctl node
 		log.Logger.Debugf("try to connect tdbctl:%s#%d", spider.IP, spider.AdminPort)
@@ -116,6 +118,11 @@ func (ins *SpiderProxyLayerSwitch) ElectPrimaryCandidate() (*TdbctlInfo, error) 
 
 	ins.ReportLogs(constvar.InfoResult, "try to elect an appropriate node as primary")
 	for _, node := range nodes {
+		if node.Host == ins.Ip && ins.AdminPort == node.Port {
+			ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("skip itself[%s:%d] in route table",
+				node.Host, node.Port))
+			continue
+		}
 		//1. clusterRole must be Secondary
 		//should not happen
 		if strings.EqualFold(node.ClusterRole, PrimaryRole) {

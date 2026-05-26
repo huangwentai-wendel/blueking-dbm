@@ -95,7 +95,7 @@ func (c *MongoDChangeOplogSize) Init(runtime *jobruntime.JobGenericRuntime) erro
 	// 获取安装参数
 	c.runtime = runtime
 	c.runtime.Logger.Info("start to init")
-	c.BinDir = consts.UsrLocal
+	c.BinDir = consts.GetMongoBinDir()
 	c.Mongo = filepath.Join(c.BinDir, "mongodb", "bin", "mongo")
 	c.MongoD = filepath.Join(c.BinDir, "mongodb", "bin", "mongod")
 	c.OsUser = consts.GetProcessUser()
@@ -104,8 +104,7 @@ func (c *MongoDChangeOplogSize) Init(runtime *jobruntime.JobGenericRuntime) erro
 
 	// 获取MongoDB配置文件参数
 	if err := json.Unmarshal([]byte(c.runtime.PayloadDecoded), &c.ConfParams); err != nil {
-		c.runtime.Logger.Error(fmt.Sprintf(
-			"get parameters of mongoDChangeOplogSize fail by json.Unmarshal, error:%s", err))
+		c.runtime.Logger.Error("get parameters of mongoDChangeOplogSize fail by json.Unmarshal, error:%s", err)
 		return fmt.Errorf("get parameters of mongoDChangeOplogSize fail by json.Unmarshal, error:%s", err)
 	}
 	// 获取路径
@@ -122,14 +121,12 @@ func (c *MongoDChangeOplogSize) Init(runtime *jobruntime.JobGenericRuntime) erro
 	info, err := common.AuthGetPrimaryInfo(c.Mongo, c.ConfParams.AdminUsername, c.ConfParams.AdminPassword,
 		c.ConfParams.IP, c.ConfParams.Port)
 	if err != nil {
-		c.runtime.Logger.Error(fmt.Sprintf(
-			"get primary db info of mongoDChangeOplogSize fail, error:%s", err))
+		c.runtime.Logger.Error("get primary db info of mongoDChangeOplogSize fail, error:%s", err)
 		return fmt.Errorf("get primary db info of mongoDChangeOplogSize fail, error:%s", err)
 	}
 	// 判断info是否为null
 	if info == "" {
-		c.runtime.Logger.Error(fmt.Sprintf(
-			"get primary db info of mongoDChangeOplogSize fail, error:%s", err))
+		c.runtime.Logger.Error("get primary db info of mongoDChangeOplogSize fail, error:%s", err)
 		return fmt.Errorf("get primary db info of mongoDChangeOplogSize fail, error:%s", err)
 	}
 	getInfo := strings.Split(info, ":")
@@ -139,7 +136,7 @@ func (c *MongoDChangeOplogSize) Init(runtime *jobruntime.JobGenericRuntime) erro
 	// 获取mongo版本
 	version, err := common.CheckMongoVersion(c.BinDir, "mongod")
 	if err != nil {
-		c.runtime.Logger.Error(fmt.Sprintf("check mongo version fail, error:%s", err))
+		c.runtime.Logger.Error("check mongo version fail, error:%s", err)
 		return fmt.Errorf("check mongo version fail, error:%s", err)
 	}
 	c.MainVersion, _ = strconv.Atoi(strings.Split(version, ".")[0])
@@ -305,20 +302,17 @@ db.temp.drop();`
 	script, err := os.OpenFile(c.ScriptFilePath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, DefaultPerm)
 	defer script.Close()
 	if err != nil {
-		c.runtime.Logger.Error(
-			fmt.Sprintf("create script file fail, error:%s", err))
+		c.runtime.Logger.Error("create script file fail, error:%s", err)
 		return fmt.Errorf("create script file fail, error:%s", err)
 	}
 	if _, err = script.WriteString(scriptContent); err != nil {
-		c.runtime.Logger.Error(
-			fmt.Sprintf("script file write content fail, error:%s",
-				err))
+		c.runtime.Logger.Error("script file write content fail, error:%s", err)
 		return fmt.Errorf("script file write content fail, error:%s",
 			err)
 	}
 	// 修改配置文件属主
 	if _, err = util.RunBashCmd(
-		fmt.Sprintf("chown -R %s.%s %s", c.OsUser, c.OsGroup, c.ScriptDir),
+		fmt.Sprintf("chown -R %s:%s %s", c.OsUser, c.OsGroup, c.ScriptDir),
 		"", nil,
 		60*time.Second); err != nil {
 		c.runtime.Logger.Error("chown script file fail, error:%s", err)
@@ -329,8 +323,12 @@ db.temp.drop();`
 
 // standaloneStart 单机形式启动
 func (c *MongoDChangeOplogSize) standaloneStart() error {
-	if err := common.ShutdownMongoProcess(c.OsUser, "mongod", c.BinDir, c.DbpathDir,
-		c.ConfParams.Port); err != nil {
+	if err := common.ShutdownMongoProcess(
+		c.runtime.Logger,
+		c.ConfParams.Port,
+		30*time.Second,
+		false,
+	); err != nil {
 		c.runtime.Logger.Error("shutdown mongod fail, error:%s", err)
 		return fmt.Errorf("shutdown mongod fail, error:%s", err)
 	}
@@ -355,7 +353,7 @@ func (c *MongoDChangeOplogSize) standaloneStart() error {
 	}
 	// 检查是否启动成功
 	flag, _, err := common.CheckMongoService(c.NewPort)
-	if err != nil || flag == false {
+	if err != nil || !flag {
 		c.runtime.Logger.Error("check mongod fail by port:%d fail, error:%s", c.NewPort, err)
 		return fmt.Errorf("check mongod fail by port:%d fail, error:%s", c.NewPort, err)
 	}
@@ -364,8 +362,12 @@ func (c *MongoDChangeOplogSize) standaloneStart() error {
 
 // normalStart 正常启动
 func (c *MongoDChangeOplogSize) normalStart() error {
-	if err := common.ShutdownMongoProcess(c.OsUser, "mongod", c.BinDir, c.DbpathDir,
-		c.NewPort); err != nil {
+	if err := common.ShutdownMongoProcess(
+		c.runtime.Logger,
+		c.NewPort,
+		30*time.Second,
+		false,
+	); err != nil {
 		c.runtime.Logger.Error("shutdown mongod about port:%d fail, error:%s", c.NewPort, err)
 		return fmt.Errorf("shutdown mongod about port:%d fail, error:%s", c.NewPort, err)
 	}
@@ -375,7 +377,7 @@ func (c *MongoDChangeOplogSize) normalStart() error {
 	}
 	// 检查是否启动成功
 	flag, _, err := common.CheckMongoService(c.NewPort)
-	if err != nil || flag == false {
+	if err != nil || !flag {
 		c.runtime.Logger.Error("check mongod fail about port:%d fail, error:%s", c.ConfParams.Port, err)
 		return fmt.Errorf("check mongod fail about port:%d fail, error:%s", c.ConfParams.Port, err)
 	}

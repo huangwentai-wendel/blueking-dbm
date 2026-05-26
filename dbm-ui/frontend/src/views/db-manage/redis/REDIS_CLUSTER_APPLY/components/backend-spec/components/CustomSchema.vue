@@ -1,0 +1,211 @@
+<template>
+  <div class="redis-custom-schema">
+    <DbFormItem
+      :label="t('规格')"
+      property="details.resource_spec.backend_group.spec_id"
+      required>
+      <SpecSelector
+        ref="specSelectorRef"
+        v-model="modelValue.spec_id"
+        :biz-id="bizId"
+        :city="cityCode"
+        :cloud-id="cloudId"
+        cluster-type="redis"
+        :machine-type="machineType"
+        style="width: 314px"
+        :subzone-ids="subzoneIds" />
+    </DbFormItem>
+    <ResourcePreview
+      v-model:tag-list="modelValue.labels"
+      :biz-id="bizId"
+      :params="{
+        city: cityName,
+        subzones: subzoneNames.join('，'),
+        subzone_ids: subzoneIds.join(','),
+        for_bizs: bizId ? [bizId, 0] : [0],
+        resource_types: [DBTypes.REDIS, 'PUBLIC'],
+        spec_id: Number(modelValue.spec_id),
+        labels: modelValue.labels.map((item) => item.id).join(','),
+      }"
+      property="details.resource_spec.backend_group.labels" />
+    <DbFormItem
+      :label="t('数量')"
+      property="details.resource_spec.backend_group.count"
+      required>
+      <BkInput
+        v-model="modelValue.count"
+        clearable
+        :min="countMin"
+        show-clear-only-hover
+        style="width: 314px"
+        type="number" />
+      <span class="input-desc">{{ t('组') }}</span>
+    </DbFormItem>
+    <DbFormItem
+      :label="t('单机分片数')"
+      property="shardNum"
+      required
+      :rules="shardNumRules">
+      <BkInput
+        v-model="shardNum"
+        clearable
+        :disabled="shardNumDisabled"
+        :min="1"
+        show-clear-only-hover
+        style="width: 314px"
+        type="number" />
+    </DbFormItem>
+    <DbFormItem
+      :label="t('集群分片数')"
+      :required="false">
+      <BkInput
+        v-model="clusterShardNum"
+        disabled
+        :placeholder="t('自动生成')"
+        style="width: 314px"
+        type="number" />
+    </DbFormItem>
+    <DbFormItem
+      :label="t('总容量')"
+      :required="false">
+      <BkInput
+        v-model="totalCapcity"
+        disabled
+        :placeholder="t('自动生成')"
+        style="width: 314px"
+        type="number" />
+      <span class="input-desc">G</span>
+    </DbFormItem>
+  </div>
+</template>
+
+<script setup lang="ts">
+  import _ from 'lodash';
+  import type { ComponentExposed } from 'vue-component-type-helpers';
+  import { useI18n } from 'vue-i18n';
+
+  import { ClusterTypes, DBTypes } from '@common/const';
+
+  import ResourcePreview from '@views/db-manage/common/apply-items/ResourcePreview.vue';
+  import SpecSelector from '@views/db-manage/common/apply-items/SpecSelector.vue';
+
+  interface Props {
+    bizId: number | '';
+    cityCode: string;
+    cityName: string;
+    cloudId: number | string;
+    clusterType: string;
+    machineType: string;
+    shardNumDisabled?: boolean;
+    subzoneIds: number[];
+    subzoneNames: string[];
+  }
+
+  interface ModelValue {
+    count: number | string;
+    labels: {
+      id: number;
+      value: string;
+    }[];
+    spec_id: number | string;
+  }
+
+  interface Expose {
+    getInfo(): {
+      cluster_capacity: number;
+      cluster_shard_num: number;
+      machine_pair: number;
+    } & ReturnType<ComponentExposed<typeof SpecSelector>['getData']>;
+  }
+
+  const props = withDefaults(defineProps<Props>(), {
+    shardNumDisabled: false,
+  });
+  const modelValue = defineModel<ModelValue>({ required: true });
+
+  const { t } = useI18n();
+
+  const shardNumRules = [
+    {
+      message: t('单机分片数不能为空'),
+      required: true,
+      trigger: 'change',
+      validator: () => Boolean(shardNum.value),
+    },
+  ];
+
+  const specSelectorRef = ref<ComponentExposed<typeof SpecSelector>>();
+  const shardNum = ref<string | number>('');
+
+  const countMin = computed(() => {
+    if (
+      [ClusterTypes.PREDIXY_REDIS_CLUSTER, ClusterTypes.PREDIXY_TENDISPLUS_CLUSTER].includes(
+        props.clusterType as ClusterTypes,
+      )
+    ) {
+      return 3;
+    }
+    return 1;
+  });
+  const clusterShardNum = computed(() => Number(modelValue.value.count) * Number(shardNum.value) || '');
+
+  const totalCapcity = computed(() => {
+    const data = specSelectorRef.value?.getData();
+    const { count } = modelValue.value;
+
+    if (_.isEmpty(data)) {
+      return '';
+    }
+
+    return Number(count) * getSpecCapacity(data) || '';
+  });
+
+  const getSpecCapacity = (resourceSpec: ReturnType<ComponentExposed<typeof SpecSelector>['getData']>) => {
+    if (
+      [ClusterTypes.PREDIXY_TENDISPLUS_CLUSTER, ClusterTypes.TWEMPROXY_TENDIS_SSD_INSTANCE].includes(
+        props.clusterType as ClusterTypes,
+      )
+    ) {
+      const specItem = resourceSpec.storage_spec.find((storageSpecItem) => storageSpecItem.mount_point === '/data1');
+      return specItem?.min || 0;
+    }
+    return resourceSpec.mem.min;
+  };
+
+  defineExpose<Expose>({
+    getInfo() {
+      const specData = specSelectorRef.value!.getData();
+      return {
+        ...specData,
+        cluster_capacity: totalCapcity.value || 0,
+        cluster_shard_num: Number(clusterShardNum.value),
+        machine_pair: Number(modelValue.value.count),
+      };
+    },
+  });
+</script>
+
+<style lang="less">
+  .redis-custom-schema {
+    // max-width: 1200px;
+    // padding: 24px 24px 24px 10px;
+    // background-color: #f5f7fa;
+    // border-radius: 2px;
+
+    .bk-form-item {
+      .bk-form-content {
+        .bk-select,
+        .bk-input {
+          width: 314px !important;
+        }
+      }
+    }
+
+    .input-desc {
+      padding-left: 12px;
+      font-size: 12px;
+      line-height: 20px;
+      color: #63656e;
+    }
+  }
+</style>

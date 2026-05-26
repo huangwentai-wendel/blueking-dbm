@@ -60,11 +60,14 @@ const (
 	// WrapperRemoteSlave TODO
 	WrapperRemoteSlave = "mysql_slave"
 	// WrapperSpider TODO
-	WrapperSpider = "SPIDER"
+	WrapperSpider      = "SPIDER"
+	WrapperSpiderSlave = "SPIDER_SLAVE"
 	// WrapperTdbctl TODO
 	WrapperTdbctl = "TDBCTL"
 	// ServerNamePrefix TODO
 	ServerNamePrefix       = "SPT"
+	BackupRoleSpiderSlave  = cst.BackupRoleSpiderSlave
+	BackupRoleSpiderMnt    = cst.BackupRoleSpiderMnt
 	BackupRoleTdbctl       = cst.BackupRoleTdbctl
 	BackupRoleSpiderMaster = cst.BackupRoleSpiderMaster
 )
@@ -112,9 +115,15 @@ const (
 	// FilePriv TODO
 	FilePriv = "priv"
 	// FilePart tar part
-	FilePart  = "part"
-	FileTar   = "tar"
-	FileIndex = "index"
+	FilePart = "part"
+	FileTar  = "tar"
+	// FileDirectory 未打包的目录
+	FileDirectory = "dir"
+	FileIndex     = "index"
+
+	SuffixIndex = ".index"
+	SuffixPriv  = ".priv"
+	SuffixTar   = ".tar"
 )
 
 const DBAReportBase = "/home/mysql/dbareport"
@@ -136,3 +145,5 @@ const (
 
 // KillDelayMilliSec 中断信号延迟毫秒数
 const KillDelayMilliSec = 100
+
+const LocalRemoved = "local_removed"

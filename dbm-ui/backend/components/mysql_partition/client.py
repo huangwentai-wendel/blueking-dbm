@@ -8,7 +8,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from ..base import BaseApi
 from ..domains import PARTITION_APIGW_DOMAIN
@@ -83,6 +83,44 @@ class _PartitionApi(BaseApi):
             method="POST",
             url="partition/check_log",
             description=_("获取巡检日志"),
+            default_timeout=300,
+            max_retry_times=1,
+        )
+
+        self.partition_conf_query = self.generate_data_api(
+            method="Post", url="/partition/partition_conf_query", description=_("分区配置查询")
+        )
+
+        # v2 分区配置相关接口
+        self.query_conf_v2 = self.generate_data_api(
+            method="POST",
+            url="partition/v2/query_conf",
+            description=_("查询分区配置v2"),
+        )
+        self.create_conf_v2 = self.generate_data_api(
+            method="POST",
+            url="partition/v2/create_conf",
+            description=_("添加分区配置v2"),
+        )
+        self.update_conf_v2 = self.generate_data_api(
+            method="POST",
+            url="partition/v2/update_conf",
+            description=_("修改分区配置v2"),
+        )
+        self.del_conf_v2 = self.generate_data_api(
+            method="POST",
+            url="partition/v2/del_conf",
+            description=_("删除分区配置v2"),
+        )
+        self.enable_partition_v2 = self.generate_data_api(
+            method="POST",
+            url="partition/v2/enable_partition",
+            description=_("启用分区v2"),
+        )
+        self.disable_partition_v2 = self.generate_data_api(
+            method="POST",
+            url="partition/v2/disable_partition",
+            description=_("禁用分区v2"),
         )
 
 

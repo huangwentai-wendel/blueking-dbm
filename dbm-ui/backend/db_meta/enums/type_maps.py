@@ -56,6 +56,7 @@ ClusterTypeMachineTypeDefine = {
     ClusterType.TendisRedisInstance: [MachineType.TENDISCACHE],
     ClusterType.TendisPredixyRedisCluster: [MachineType.PREDIXY, MachineType.TENDISCACHE],
     ClusterType.TendisPredixyTendisplusCluster: [MachineType.PREDIXY, MachineType.TENDISPLUS],
+    ClusterType.TendisPredixyTendisplusInstance: [MachineType.PREDIXY, MachineType.TENDISPLUS],
     ClusterType.TendisTwemproxyRedisInstance: [MachineType.TWEMPROXY, MachineType.TENDISCACHE],
     ClusterType.TwemproxyTendisSSDInstance: [MachineType.TWEMPROXY, MachineType.TENDISSSD],
     ClusterType.TendisTwemproxyTendisplusIns: [MachineType.TWEMPROXY, MachineType.TENDISPLUS],
@@ -77,6 +78,7 @@ ClusterTypeMachineTypeDefine = {
     ClusterType.TBinlogDumper: [MachineType.TBinlogDumper],
     ClusterType.Vm: [MachineType.VM_STORAGE, MachineType.VM_SELECT, MachineType.VM_INSERT, MachineType.VM_AUTH],
     ClusterType.OraclePrimaryStandby: [MachineType.ORACLE],
+    ClusterType.OracleSingleNone: [MachineType.ORACLE],
 }
 
 ClusterMachineAccessTypeDefine = {
@@ -85,6 +87,10 @@ ClusterMachineAccessTypeDefine = {
         AccessLayer.STORAGE: MachineType.REDIS,
     },
     ClusterType.TendisPredixyTendisplusCluster: {
+        AccessLayer.PROXY: MachineType.PREDIXY,
+        AccessLayer.STORAGE: MachineType.TENDISPLUS,
+    },
+    ClusterType.TendisPredixyTendisplusInstance: {
         AccessLayer.PROXY: MachineType.PREDIXY,
         AccessLayer.STORAGE: MachineType.TENDISPLUS,
     },
@@ -216,7 +222,11 @@ MachineTypeInstanceRoleMap = {
         InstanceRole.BACKEND_REPEATER,
         InstanceRole.BACKEND_SLAVE,
     ],
-    MachineType.DORIS_BACKEND: [InstanceRole.DORIS_BACKEND_HOT, InstanceRole.DORIS_BACKEND_COLD],
+    MachineType.DORIS_BACKEND: [
+        InstanceRole.DORIS_BACKEND_HOT,
+        InstanceRole.DORIS_BACKEND_COLD,
+        InstanceRole.DORIS_BACKEND_WARM,
+    ],
     MachineType.DORIS_FOLLOWER: [InstanceRole.DORIS_FOLLOWER],
     MachineType.DORIS_OBSERVER: [InstanceRole.DORIS_OBSERVER],
     MachineType.VM_STORAGE: [InstanceRole.VM_STORAGE],
@@ -266,6 +276,7 @@ InstanceRoleInstanceInnerRoleMap = {
     InstanceRole.DORIS_OBSERVER: InstanceInnerRole.ORPHAN,
     InstanceRole.DORIS_BACKEND_COLD: InstanceInnerRole.ORPHAN,
     InstanceRole.DORIS_BACKEND_HOT: InstanceInnerRole.ORPHAN,
+    InstanceRole.DORIS_BACKEND_WARM: InstanceInnerRole.ORPHAN,
     InstanceRole.VM_STORAGE: InstanceInnerRole.ORPHAN,
     InstanceRole.VM_INSERT: InstanceInnerRole.ORPHAN,
     InstanceRole.VM_SELECT: InstanceInnerRole.ORPHAN,

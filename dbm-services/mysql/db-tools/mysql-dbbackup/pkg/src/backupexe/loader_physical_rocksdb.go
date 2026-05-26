@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dbm-services/common/go-pubpkg/cmutil"
+	"dbm-services/common/go-pubpkg/mysqlcomm"
 	"dbm-services/mysql/db-tools/dbactuator/pkg/util"
 	"dbm-services/mysql/db-tools/mysql-dbbackup/pkg/config"
 	"dbm-services/mysql/db-tools/mysql-dbbackup/pkg/cst"
@@ -100,7 +101,7 @@ func (p *PhysicalRocksdbLoader) load() error {
 	err = cmd.Run()
 	if err != nil {
 		logger.Log.Errorf("can not run the rocksdb physical loader command:%s, engine:%s, errmsg:%s",
-			loaderCmd, p.storageEngine, err)
+			mysqlcomm.RemoveMysqlCommandPassword(loaderCmd), p.storageEngine, err)
 		return err
 	}
 
@@ -239,10 +240,12 @@ func (p *PhysicalRocksdbLoader) cleanDirs() error {
 
 	logger.Log.Infof("delete the slow query log file:%s", p.slowQueryLogFile)
 	if p.slowQueryLogFile != "" && p.slowQueryLogFile != "/" {
-		// delete the old directory
-		os.Remove(p.slowQueryLogFile)
-		// create the new directory
-		os.MkdirAll(p.slowQueryLogFile, 0755)
+		if cmutil.IsNormalFile(p.slowQueryLogFile) {
+			// delete the old slow log file
+			os.Remove(p.slowQueryLogFile)
+			// create the new file
+			cmutil.CreateEmptyFile(p.slowQueryLogFile, 0755)
+		}
 	}
 
 	logger.Log.Infof("delete the tmp dir:%s", p.tmpDir)

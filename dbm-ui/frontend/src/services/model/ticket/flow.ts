@@ -25,6 +25,7 @@ const TYPE_RESOURCE_BATCH_APPLY = 'RESOURCE_BATCH_APPLY';
 const TYPE_RESOURCE_BATCH_DELIVERY = 'RESOURCE_BATCH_DELIVERY';
 const TYPE_HOST_RECYCLE = 'HOST_RECYCLE';
 const TYPE_HOST_IMPORT_RESOURCE = 'HOST_IMPORT_RESOURCE';
+const TYPE_RESOURCE_HCM_REPLENISH = 'RESOURCE_HCM_REPLENISH';
 
 const STATUS_PENDING = 'PENDING';
 const STATUS_RUNNING = 'RUNNING';
@@ -39,6 +40,7 @@ const TODO_TYPE_APPROVE = 'APPROVE';
 const TODO_TYPE_INNER_FAILED = 'INNER_FAILED';
 const TODO_TYPE_INNER_APPROVE = 'INNER_APPROVE';
 const TODO_TYPE_RESOURCE_REPLENISH = 'RESOURCE_REPLENISH';
+const TODO_TYPE_RESOURCE_HCM_REPLENISH = 'RESOURCE_HCM_REPLENISH';
 const TODO_TYPE_TIMER = 'TIMER';
 
 const TODO_STATUS_TODO = 'TODO';
@@ -50,6 +52,7 @@ export default class Flow<
   D = unknown,
   S = any,
   TD = {
+    action: any;
     flow_id: number;
     remark: string;
     ticket_id: number;
@@ -72,6 +75,7 @@ export default class Flow<
   static TODO_TYPE_INNER_APPROVE = TODO_TYPE_INNER_APPROVE;
   static TODO_TYPE_INNER_FAILED = TODO_TYPE_INNER_FAILED;
   static TODO_TYPE_ITSM = TODO_TYPE_ITSM;
+  static TODO_TYPE_RESOURCE_HCM_REPLENISH = TODO_TYPE_RESOURCE_HCM_REPLENISH;
   static TODO_TYPE_RESOURCE_REPLENISH = TODO_TYPE_RESOURCE_REPLENISH;
   static TODO_TYPE_TIMER = TODO_TYPE_TIMER;
 
@@ -86,6 +90,7 @@ export default class Flow<
   static TYPE_RESOURCE_BATCH_APPLY = TYPE_RESOURCE_BATCH_APPLY;
   static TYPE_RESOURCE_BATCH_DELIVERY = TYPE_RESOURCE_BATCH_DELIVERY;
   static TYPE_RESOURCE_DELIVERY = TYPE_RESOURCE_DELIVERY;
+  static TYPE_RESOURCE_HCM_REPLENISH = TYPE_RESOURCE_HCM_REPLENISH;
   static TYPE_TIMER = TYPE_TIMER;
 
   context: Record<string, any>;
@@ -103,6 +108,7 @@ export default class Flow<
   id: number;
   output_data: {
     hidden: boolean; // 为true则不展示，适用于excel下载的上下文
+    table_display_name?: string;
     table_name: string;
     titles: {
       display_name: string;

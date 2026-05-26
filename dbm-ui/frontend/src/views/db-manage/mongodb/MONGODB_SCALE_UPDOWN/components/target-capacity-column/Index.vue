@@ -15,7 +15,7 @@
   <EditableColumn
     ref="editableColumnRef"
     :append-rules="rules"
-    :disabled-method="columnDisabledMethod"
+    :disabled-method="() => (!cluster.id ? t('请先输入合法的集群域名') : false)"
     field="target_capacity.resource_spec.mongodb.spec_id"
     :label="t('目标容量')"
     :min-width="400"
@@ -101,7 +101,7 @@
   import MongodbModel from '@services/model/mongodb/mongodb';
   import ClusterSpecModel from '@services/model/resource-spec/cluster-sepc';
 
-  import RenderSpec from '@components/render-table/columns/spec-display/Index.vue';
+  import RenderSpec from '@components/spec-display/Index.vue';
 
   import SpecPlan from './components/SpecPlan.vue';
 
@@ -114,6 +114,8 @@
       id: number;
       master_domain: string;
       mongodb: MongodbModel['mongodb'];
+      mongodb_machine_num: number;
+      mongodb_machine_pair: number;
       shard_node_count: number;
       shard_num: number;
     };
@@ -152,9 +154,6 @@
       validator: (value: number) => value > 0,
     },
   ];
-
-  const columnDisabledMethod = ({ cluster }: { cluster: Props['cluster'] }) =>
-    cluster.master_domain ? false : t('请先选择或输入集群');
 
   // 点击目标容量
   const handleClickSelect = () => {

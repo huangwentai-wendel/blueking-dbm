@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS %s.global_backup (
   BackupId varchar(40) NOT NULL DEFAULT '',
   BackupStatus varchar(30) NOT NULL DEFAULT '',
   TaskPid int NOT NULL DEFAULT -1,
-  CreatedAt timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',
+  CreatedAt timestamp NOT NULL DEFAULT '1970-01-02 00:00:00',
   UpdatedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (BackupId,Host,Port,ShardValue)
 ) ENGINE=%s DEFAULT CHARSET=utf8mb4 COMMENT='shard_key "ShardValue"'
@@ -178,7 +178,7 @@ func migrateBackupSchema(mysqlErr cmutil.MySQLError, db *sqlx.DB) error {
 	}
 	if mysqlErr.Code == 1146 {
 		sqlList = append(sqlList, backupSchema)
-	} else if mysqlErr.Code == 1054 || mysqlErr.Code == 1049 {
+	} else if mysqlErr.Code == 1054 || mysqlErr.Code == 1049 || mysqlErr.Code == 1932 {
 		dropSchema := fmt.Sprintf(`DROP TABLE IF EXISTS %s.global_backup;`, cst.INFODBA_SCHEMA)
 		sqlList = append(sqlList, dropSchema)
 		sqlList = append(sqlList, backupSchema)

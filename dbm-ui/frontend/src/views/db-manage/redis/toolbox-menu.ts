@@ -23,6 +23,7 @@ export interface MenuItem {
 }
 
 export interface MenuChild {
+  bind?: string[];
   dbConsoleValue: string;
   id: string;
   name: string;
@@ -36,6 +37,7 @@ export default [
       {
         children: [
           {
+            bind: [TicketTypes.REDIS_KEYS_EXTRACT, TicketTypes.REDIS_KEYS_DELETE],
             dbConsoleValue: 'redis.toolbox.keyExtract',
             id: TicketTypes.REDIS_KEYS_EXTRACT,
             name: t('Key 操作'),
@@ -72,6 +74,7 @@ export default [
             parentId: 'common-manage',
           },
           {
+            bind: [TicketTypes.REDIS_CLUSTER_INS_MIGRATE, TicketTypes.REDIS_SINGLE_INS_MIGRATE],
             dbConsoleValue: 'redis.toolbox.migrate',
             id: TicketTypes.REDIS_CLUSTER_INS_MIGRATE,
             name: t('迁移'),
@@ -89,6 +92,12 @@ export default [
             name: t('安装 Module'),
             parentId: 'cluster-manage',
           },
+          {
+            dbConsoleValue: 'redis.toolbox.clusterReinstallDbmon',
+            id: TicketTypes.REDIS_CLUSTER_REINSTALL_DBMON,
+            name: t('集群标准化'),
+            parentId: 'cluster-manage',
+          },
         ],
         icon: 'db-icon-cluster',
         id: 'common-manage',
@@ -98,7 +107,7 @@ export default [
         children: [
           {
             dbConsoleValue: 'redis.toolbox.rollback',
-            id: 'RedisDBStructure',
+            id: TicketTypes.REDIS_DATA_STRUCTURE,
             name: t('定点构造'),
             parentId: 'common-struct',
           },
@@ -110,7 +119,7 @@ export default [
           },
           {
             dbConsoleValue: 'redis.toolbox.recoverFromInstance',
-            id: 'RedisRecoverFromInstance',
+            id: TicketTypes.REDIS_CLUSTER_ROLLBACK_DATA_COPY,
             name: t('以构造实例恢复'),
             parentId: 'common-struct',
           },
@@ -141,14 +150,26 @@ export default [
       {
         children: [
           {
-            dbConsoleValue: 'redis.toolbox.hotKey',
+            dbConsoleValue: 'redis.toolbox.memoryAnalysis',
+            id: TicketTypes.REDIS_KEYSTAT,
+            name: t('内存分析'),
+            parentId: 'redis_data_query',
+          },
+          {
+            dbConsoleValue: 'redis.toolbox.memoryAnalysisList',
+            id: 'RedisMemoryAnalysisList',
+            name: t('内存分析报告'),
+            parentId: 'redis_data_query',
+          },
+          {
+            dbConsoleValue: 'redis.toolbox.hotKeyAnalysis',
             id: TicketTypes.REDIS_HOT_KEY_ANALYSIS,
             name: t('热 Key 分析'),
             parentId: 'redis_data_query',
           },
           {
-            dbConsoleValue: 'redis.toolbox.hotKeyList',
-            id: 'RedisHotKeyList',
+            dbConsoleValue: 'redis.toolbox.hotKeyAnalysisList',
+            id: 'RedisHotKeyAnalysisList',
             name: t('热 Key 分析报告'),
             parentId: 'redis_data_query',
           },
@@ -207,6 +228,13 @@ export default [
             dbConsoleValue: 'redis.toolbox.clusterShardChange',
             id: TicketTypes.REDIS_CLUSTER_SHARD_NUM_UPDATE,
             name: t('集群分片变更'),
+            parentId: 'cluster-manage',
+          },
+          {
+            bind: [TicketTypes.REDIS_SHARD_ADD, TicketTypes.REDIS_SHARD_REDUCE],
+            dbConsoleValue: 'redis.toolbox.shardAdd',
+            id: TicketTypes.REDIS_SHARD_ADD,
+            name: t('集群分片变更（Slot迁移）'),
             parentId: 'cluster-manage',
           },
           {

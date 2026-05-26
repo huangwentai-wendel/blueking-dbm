@@ -1,0 +1,860 @@
+package atomsys
+
+import (
+	"dbm-services/common/go-pubpkg/mycmd"
+	"dbm-services/redis/db-tools/dbactuator/pkg/consts"
+	"dbm-services/redis/db-tools/dbactuator/pkg/jobruntime"
+	"dbm-services/redis/db-tools/dbactuator/pkg/keystat_report"
+	"dbm-services/redis/db-tools/dbactuator/pkg/redisinfo"
+	"dbm-services/redis/db-tools/dbactuator/pkg/util"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/go-playground/validator/v10"
+)
+
+const keySplitterReportName = "key-splitter.report"
+const keySplitterRankReportName = "rank-key-splitter.report"
+
+type KeyStatIns struct {
+	ShardName   string `json:"shard_name"`
+	Addr        string `json:"addr" validate:"required"`
+	SlaveAddr   string `json:"slave_addr"` // slave addr, if not set, use addr
+	StartBucket int    `json:"start_bucket" validate:"required"`
+	EndBucket   int    `json:"end_bucket" validate:"required"`
+}
+
+func (ins *KeyStatIns) IpPort() (string, int, error) {
+	ip, port, err := net.SplitHostPort(ins.Addr)
+	if err != nil {
+		return "", 0, err
+	}
+	portInt, err := strconv.Atoi(port)
+	if err != nil {
+		return "", 0, err
+	}
+	return ip, portInt, nil
+}
+func getRdbName(ins KeyStatIns) string {
+	ip, port, err := ins.IpPort()
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s.%d.rdb", ip, port)
+}
+
+// AnalysisHotkeyParams AnalysisHotkey参数
+type KeyStatParams struct {
+	RedisPassword   string       `json:"redis_password" validate:"required"`
+	InsList         []KeyStatIns `json:"ins_list"`
+	RecordId        int          `json:"record_id" validate:"required"`
+	ApiServer       string       `json:"api_server" validate:"required"`
+	BkCloudId       int          `json:"bk_cloud_id"`
+	DbCloudToken    string       `json:"db_cloud_token" validate:"required"`
+	ExecIp          string       `json:"exec_ip" validate:"required"`
+	CheckInterval   int          `json:"check_interval" validate:"required,min=1"` // 检查间隔时间，单位：秒
+	ClusterId       int64        `json:"cluster_id" validate:"required"`
+	ClusterShardNum int64        `json:"cluster_shard_num" validate:"required"`
+}
+
+// HotkeyAnalysis  结构体
+type KeyStat struct {
+	runtime       *jobruntime.JobGenericRuntime
+	params        *KeyStatParams
+	reportStatus  *keystat_report.KeyStatRecord
+	atimeRequired bool
+	startTime     time.Time
+}
+
+// NewKeyStat new a key stat job
+func NewKeyStat() jobruntime.JobRunner {
+	return &KeyStat{
+		startTime: time.Now(),
+	}
+}
+
+const KeyStatReportItemUrl = "/apis/proxypass/upsert_keystat_report_item/"
+const KeyStatRankReportUrl = "/apis/proxypass/upsert_keystat_rank_item/"
+const KeyStatReportStatusUrl = "/apis/proxypass/update_keystat_report_record/"
+const KeySplitter = "/data/dbbak/keystat/key-splitter"
+const RedisCli = "/data/dbbak/keystat/redis-cli"
+
+func (job *KeyStat) useLocalPlayLoadFile() (payload string, err error) {
+	fileName := job.Name() + ".payload"
+	_, err = os.Stat(fileName)
+	if err != nil {
+		return "", err
+	}
+	payloadStr, err := os.ReadFile(fileName)
+	if err != nil {
+		return "", err
+	}
+	payload = string(payloadStr)
+	job.runtime.Logger.Info("useLocalPlayLoadFile from local file %s, payload:%s", fileName, payload)
+	return payload, nil
+}
+
+// tryLockFile 尝试获取文件锁. 返回文件锁对象.
+// 如果获取失败，则尝试等待10秒后重试，最多重试360*8=2880次，即8小时.
+// 重试时，每60次重试打印一次日志.
+
+func (job *KeyStat) tryLockFile(workDir string, maxConcurrent int, retryTimes int) (lock *os.File, err error) {
+	for i := 0; i < retryTimes; i++ {
+		for j := 0; j < maxConcurrent; j++ {
+			lockFile := filepath.Join(workDir, fmt.Sprintf("keystat.lock.%d", i))
+			if _, err := os.Stat(lockFile); os.IsNotExist(err) {
+				lock, err = os.Create(lockFile)
+				if err != nil {
+					return nil, err
+				}
+				err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+				if err != nil {
+					return nil, err
+				}
+				return lock, nil
+			}
+		}
+		time.Sleep(1 * time.Second)
+		if i%60 == 1 {
+			job.runtime.Logger.Info("try lock file failed, try again, retryTimes:(%d of %d)", i, retryTimes)
+		}
+	}
+	return nil, fmt.Errorf("try lock file failed, retryTimes:(%d of %d)", retryTimes, retryTimes)
+}
+
+// Init 初始化
+func (job *KeyStat) Init(m *jobruntime.JobGenericRuntime) error {
+	job.runtime = m
+	var err error
+	if s, err := job.useLocalPlayLoadFile(); err == nil {
+		job.runtime.PayloadDecoded = s
+	}
+	err = json.Unmarshal([]byte(job.runtime.PayloadDecoded), &job.params)
+	if err != nil {
+		job.runtime.Logger.Error(fmt.Sprintf("json.Unmarshal failed,err:%+v", err))
+		return err
+	}
+
+	// 参数有效性检查
+	validate := validator.New()
+	err = validate.Struct(job.params)
+	if err != nil {
+		if _, ok := err.(*validator.InvalidValidationError); ok {
+			job.runtime.Logger.Error("RedisCapturer Init params validate failed,err:%v,params:%+v",
+				err, job.params)
+			return err
+		}
+		for _, err := range err.(validator.ValidationErrors) {
+			job.runtime.Logger.Error("RedisCapturer Init params validate failed,err:%v,params:%+v",
+				err, job.params)
+			return err
+		}
+	}
+
+	job.reportStatus = &keystat_report.KeyStatRecord{
+		RecordId: job.params.RecordId,
+		Status:   statusReady,
+		ExecIp:   job.params.ExecIp,
+	}
+
+	// check redis-cli and key-splitter is exist
+	if _, err := os.Stat(RedisCli); os.IsNotExist(err) {
+		job.runtime.Logger.Error("redis-cli %s not found, err:%s", RedisCli, err)
+		return err
+	}
+	if _, err := os.Stat(KeySplitter); os.IsNotExist(err) {
+		job.runtime.Logger.Error("key-splitter %s not found, err:%s", KeySplitter, err)
+		return err
+	}
+
+	return nil
+}
+
+const maxRetryTimes = 3600 * 8
+const maxConcurrent = 4
+
+// Run 运行监听请求任务
+func (job *KeyStat) Run() (err error) {
+	// 1. 尝试获取文件锁
+	keystatDir := filepath.Join(consts.GetRedisBackupDir(), "dbbak/keystat")
+	lock, err := job.tryLockFile(keystatDir, maxConcurrent, maxRetryTimes)
+	if err != nil {
+		job.runtime.Logger.Error("tryLockFile failed, err:%s", err)
+		err = job.updateReportStatus(statusFailed, map[string]any{
+			"error": err.Error(),
+		})
+		if err != nil {
+			job.runtime.Logger.Error("update report status to failed failed, err:%s", err)
+		}
+		return err
+	}
+	defer lock.Close()
+
+	err = job.updateReportStatus(statusRunning, nil)
+	if err != nil {
+		job.runtime.Logger.Error("update report status failed, err:%s", err)
+		// return err
+	}
+	job.runtime.Logger.Info("update report status success, status:%s", statusRunning)
+	// 1. 创建工作目录
+	workDir := filepath.Join(keystatDir, job.runtime.UID, job.runtime.NodeID)
+	util.MkDirsIfNotExists([]string{workDir})
+	util.LocalDirChownMysql(workDir)
+	job.runtime.Logger.Info("KeyStat Run, workDir:%s", workDir)
+	// 1.0 get version
+	versionInfo, err := job.getRedisVersion()
+	if err != nil {
+		job.runtime.Logger.Error("getRedisVersion failed, err:%s", err)
+		return err
+	}
+
+	// 支持到最新的rdb 12. 不检查版本了
+
+	if versionInfo.Major >= 6 {
+		job.runtime.Logger.Info("redis version >= 6, version:%s, will check atime", versionInfo.Str)
+		job.atimeRequired = true
+	} else {
+		job.runtime.Logger.Info("redis version < 6, version:%s, will not check atime", versionInfo.Str)
+		job.atimeRequired = false
+	}
+
+	// 确定是否使用Slave
+	// 如果使用Slave，则需要获取Slave的Addr
+	if !job.atimeRequired {
+		for i, ins := range job.params.InsList {
+			slaveAddr, err := job.getRedisSlaveAddr(ins.Addr)
+			if err != nil {
+				job.runtime.Logger.Error("getRedisSlaveAddr failed, err:%s", err)
+				return err
+			}
+			job.runtime.Logger.Info("getRedisSlaveAddr success, addr:%s, slaveAddr:%s", ins.Addr, slaveAddr)
+			ins.SlaveAddr = slaveAddr
+			job.params.InsList[i] = ins
+		}
+	}
+
+	// 1.1 check redis load
+	if err = job.checkRedisLoad(time.Duration(job.params.CheckInterval) * time.Second); err != nil {
+		job.runtime.Logger.Error("checkRedisLoad failed, err:%s", err)
+		return err
+	}
+
+	// 2. safe dump rdb to workDir if not exists
+	err = job.safeDumpRdb(workDir)
+	if err != nil {
+		job.runtime.Logger.Error("safeDumpRdb failed, err:%s", err)
+		return err
+	}
+
+	// 3. do key stat if report file not exists
+	err = job.doKeyStat(workDir)
+	if err != nil {
+		job.runtime.Logger.Error("doKeyStat failed, err:%s", err)
+		return err
+	}
+
+	// 4. upload report. report server 会处理重复的记录
+	err = job.uploadReport(workDir)
+	if err != nil {
+		job.runtime.Logger.Error("uploadReport failed, err:%s", err)
+		return err
+	}
+	return nil
+}
+
+func (job *KeyStat) getRedisSlaveAddr(addr string) (string, error) {
+	result, err := redisinfo.ExecRedisCommand(addr, job.params.RedisPassword, "info")
+	if err != nil {
+		job.runtime.Logger.Error("execRedisCommand failed, err:%s", err)
+		return "", err
+	}
+	info, err := redisinfo.Parse(result.(string))
+	if err != nil {
+		job.runtime.Logger.Error("parse info failed, err:%s", err)
+		return "", err
+	}
+
+	if info.Replication.Role == "slave" {
+		return addr, nil // 如果是slave，则直接返回addr
+	} else if info.Replication.Role == "master" && info.Replication.ConnectedSlaves > 0 {
+		for _, slave := range info.Replication.Slaves {
+			if slave.State == "online" {
+				return fmt.Sprintf("%s:%d", slave.IP, slave.Port), nil
+			}
+		}
+		return "", fmt.Errorf("addr %s is master, but has no online slave, info:%+v", addr, info)
+	}
+	return "", fmt.Errorf("addr %s is not a slave or master, info:%+v", addr, info)
+}
+
+func (job *KeyStat) getRedisVersion() (*redisinfo.RedisVersion, error) {
+	// 1. get redis info
+	infoMap, err := job.getRedisInfo(consts.RedisMasterRole)
+	if err != nil {
+		job.runtime.Logger.Error("getRedisInfo failed, err:%s", err)
+		return nil, err
+	}
+
+	var versionInfo *redisinfo.RedisVersion
+	for addr, info := range infoMap {
+		ver, err := redisinfo.ParseRedisVersion(info.Server.RedisVersion)
+		if err != nil {
+			job.runtime.Logger.Error("parse redis version failed, host %s, err:%s, version:%s", addr, err, info.Server.RedisVersion)
+			return nil, err
+		}
+		if versionInfo == nil || versionInfo.Compare(ver) > 0 {
+			versionInfo = ver
+		}
+	}
+	return versionInfo, nil
+}
+
+const maxInstUsedRatio = 0.95
+
+func (job *KeyStat) checkRedisLoad(timeout time.Duration) (err error) {
+	rdbRole := consts.RedisSlaveRole
+	if job.atimeRequired {
+		rdbRole = consts.RedisMasterRole
+	}
+
+	info1, err := job.getRedisInfo(rdbRole)
+	if err != nil {
+		job.runtime.Logger.Error("getRedisInfo failed, err:%s", err)
+		return err
+	}
+	time.Sleep(timeout)
+	info2, err := job.getRedisInfo(rdbRole)
+	if err != nil {
+		job.runtime.Logger.Error("getRedisInfo failed, err:%s", err)
+		return err
+	}
+	if len(info1) != len(info2) {
+		return errors.New("redis load is not stable")
+	}
+
+	for addr, v1 := range info1 {
+		v2, ok := info2[addr]
+		if !ok {
+			return errors.New("redis load is not stable")
+		}
+
+		// node 内存. 暂不检查
+		if v2.Memory.Maxmemory == 0 {
+			return fmt.Errorf("node %s redis memory maxmemory is 0", addr)
+		}
+
+		// redis memory 使用率 gt 95%
+		usedRatio := float64(v2.Memory.UsedMemory) / float64(v2.Memory.Maxmemory)
+		if usedRatio > maxInstUsedRatio {
+			return fmt.Errorf("node %s redis memory used ratio %0.2f%% gt %0.2f%%, please scale out first to avoid data loss",
+				addr, usedRatio*100, maxInstUsedRatio*100)
+		}
+
+		// repl offset
+		// 写入量不能大于50%的分片空闲内存
+		// 每秒写入量不能大于 4M
+		// 如果无法获得分片空闲内存，则每秒写入量不能大于 100k/s
+		instFreeMem := int64(v1.Memory.Maxmemory - v1.Memory.UsedMemory)
+		offSet := v2.Replication.MasterReplOffset - v1.Replication.MasterReplOffset
+		if instFreeMem > 0 {
+			if float64(offSet)/timeout.Seconds() > 1024*1024*2 {
+				return fmt.Errorf("addr %s ReplOffset is %0.2fMB/s, gt 2MB/s, please scale out or reduce repl offset to avoid data loss",
+					addr, float64(offSet)/timeout.Seconds()/1024/1024)
+			}
+		} else {
+			// 每秒写入量不能大于100k/s
+			if float64(offSet)/timeout.Seconds() > 1024*200 {
+				return fmt.Errorf("addr %s ReplOffset gt 200KB/s, %d, please try again later", addr, offSet)
+			}
+		}
+	}
+	return nil
+}
+
+// getRedisInfo 获取redis info. 并行执行，返回map[string]*redisinfo.Info
+func (job *KeyStat) getRedisInfo(role string) (redisInfo map[string]*redisinfo.Info, err error) {
+	redisInfo = make(map[string]*redisinfo.Info)
+	commandIn := make([]redisinfo.RedisCommandIn, 0)
+	for _, ins := range job.params.InsList {
+		switch role {
+		case consts.RedisMasterRole:
+			if ins.Addr == "" {
+				job.runtime.Logger.Error("getRedisInfo failed, addr is empty, role:%s", role)
+				return nil, errors.New("addr is empty")
+			}
+			commandIn = append(commandIn, redisinfo.RedisCommandIn{
+				Host: ins.Addr,
+				Pass: job.params.RedisPassword,
+				Cmd:  []string{"info"},
+			})
+		case consts.RedisSlaveRole:
+			if ins.SlaveAddr == "" {
+				job.runtime.Logger.Error("getRedisInfo failed, addr is empty, role:%s", role)
+				return nil, errors.New("addr is empty")
+			}
+			commandIn = append(commandIn, redisinfo.RedisCommandIn{
+				Host: ins.SlaveAddr,
+				Pass: job.params.RedisPassword,
+				Cmd:  []string{"info"},
+			})
+		default:
+			return nil, fmt.Errorf("invalid role: %s, must be master or slave", role)
+		}
+	}
+	outs, err := redisinfo.ExecRedisCommandConcurrency(commandIn, 10)
+	if err != nil {
+		job.runtime.Logger.Error("getRedisInfo failed, err:%s", err)
+		return nil, err
+	}
+	errs := make([]error, 0)
+	for _, out := range outs {
+		if out.Err != nil {
+			job.runtime.Logger.Error("getRedisInfo failed, err:%s", out.Err)
+			errs = append(errs, out.Err)
+			continue
+		}
+		info, err := redisinfo.Parse(out.Out.(string))
+		if err != nil {
+			job.runtime.Logger.Error("parse info failed, err:%s, out:%s", err, out.Out)
+			errs = append(errs, err)
+			continue
+		}
+		redisInfo[out.Host] = &info
+	}
+	return redisInfo, errors.Join(errs...)
+}
+
+func (job *KeyStat) safeDumpRdb(workDir string) (err error) {
+	// 1. 获取redis实例
+	groupByIp := make(map[string][]KeyStatIns)
+	ins := job.params.InsList
+	rdbTotalCount := 0
+	toDumpCount := 0
+	toSkipCount := 0
+	for i := range ins {
+		rdbTotalCount++
+		job.runtime.Logger.Info("safeDumpRdb, addr:%s, startBucket:%d, endBucket:%d",
+			ins[i].Addr, ins[i].StartBucket, ins[i].EndBucket)
+		ip, _, err := ins[i].IpPort()
+		if err != nil {
+			job.runtime.Logger.Error("safeDumpRdb, addr:%s, err:%s", ins[i].Addr, err)
+			return err
+		}
+
+		// 如果文件已经存在，则不进行dump
+		rdbName := getRdbName(ins[i])
+		rdbPath := filepath.Join(workDir, rdbName)
+		if _, err := os.Stat(rdbPath); err == nil {
+			job.runtime.Logger.Info("safeDumpRdb, rdbPath:%s already exists, continue", rdbPath)
+			toSkipCount++
+			continue
+		}
+
+		// 按IP分组，同一个IP的实例串行dump
+		if _, ok := groupByIp[ip]; !ok {
+			groupByIp[ip] = make([]KeyStatIns, 0)
+		}
+		groupByIp[ip] = append(groupByIp[ip], ins[i])
+		toDumpCount++
+	}
+
+	job.runtime.Logger.Info("safeDumpRdb, toDumpCount:%d, toSkipCount:%d, rdbTotalCount:%d",
+		toDumpCount, toSkipCount, rdbTotalCount)
+
+	if toDumpCount > 0 {
+		wg := sync.WaitGroup{}
+		errChan := make(chan error, len(groupByIp))
+		wg.Add(len(groupByIp))
+		for ip := range groupByIp {
+			// 按IP并发dump rdb.
+			go func(wg *sync.WaitGroup, ip string, insList []KeyStatIns) {
+				defer wg.Done()
+				job.runtime.Logger.Info("safeDumpRdb, ip:%s, insList:%+v", ip, insList)
+				for _, ins := range insList {
+					err := job.safeDumpRdbOne(workDir, ins, job.params.RedisPassword)
+					if err != nil {
+						job.runtime.Logger.Error("safeDumpRdbOne failed, err:%s", err)
+						errChan <- fmt.Errorf("ip %s dump rdb failed: %w", ip, err)
+						return
+					}
+				}
+			}(&wg, ip, groupByIp[ip])
+		}
+		wg.Wait()
+		close(errChan)
+
+		// 收集所有错误
+		var dumpErrors []error
+		for e := range errChan {
+			dumpErrors = append(dumpErrors, e)
+		}
+		if len(dumpErrors) > 0 {
+			job.runtime.Logger.Error("safeDumpRdb has %d errors", len(dumpErrors))
+			return errors.Join(dumpErrors...)
+		}
+	}
+	job.runtime.Logger.Info("safeDumpRdb success, %d rdb dumped, %d rdb skipped", toDumpCount, toSkipCount)
+	return nil
+}
+
+// getMaxmemoryPolicy 获取当前的 maxmemory-policy 配置值
+func (job *KeyStat) getMaxmemoryPolicy(ip string, port int, pwd string) (string, error) {
+	host := fmt.Sprintf("%s:%d", ip, port)
+	// using confxx get to replace config get
+	result, err := redisinfo.ExecRedisCommand(host, pwd, "confxx", "get", "maxmemory-policy")
+	if err != nil {
+		job.runtime.Logger.Error("getMaxmemoryPolicy failed, err:%s", err)
+		return "", err
+	}
+
+	// config get 返回格式: []interface{}，如 ["maxmemory-policy", "volatile-lru"]
+	confInfos, ok := result.([]any)
+	if !ok {
+		return "", fmt.Errorf("getMaxmemoryPolicy result is not []interface{}, result type: %T, value: %v",
+			result, result)
+	}
+
+	// 遍历结果，找到 maxmemory-policy 对应的值
+	// 格式是键值对交替出现: [key1, value1, key2, value2, ...]
+	for i := 0; i < len(confInfos); i += 2 {
+		if i+1 >= len(confInfos) {
+			break
+		}
+		key, ok := confInfos[i].(string)
+		if !ok {
+			continue
+		}
+		if key == "maxmemory-policy" {
+			value, ok := confInfos[i+1].(string)
+			if !ok {
+				return "", fmt.Errorf("getMaxmemoryPolicy value is not string, value type: %T, value: %v",
+					confInfos[i+1], confInfos[i+1])
+			}
+			job.runtime.Logger.Info("getMaxmemoryPolicy success, policy:%s", value)
+			return value, nil
+		}
+	}
+
+	return "", fmt.Errorf("maxmemory-policy not found in config get result: %v", confInfos)
+}
+
+// setMaxmemoryPolicy 设置 maxmemory-policy 配置值
+func (job *KeyStat) setMaxmemoryPolicy(ip string, port int, pwd string, policy string) error {
+	host := fmt.Sprintf("%s:%d", ip, port)
+	// using confxx set to replace config set
+	result, err := redisinfo.ExecRedisCommand(host, pwd, "confxx", "set", "maxmemory-policy", policy)
+	if err != nil {
+		job.runtime.Logger.Error("setMaxmemoryPolicy failed, err:%s", err)
+		return err
+	}
+	// confxx set 返回 "OK" 字符串表示成功
+	resultStr, ok := result.(string)
+	if ok && resultStr == "OK" {
+		job.runtime.Logger.Info("setMaxmemoryPolicy success, ip:%s, port:%d, policy:%s", ip, port, policy)
+		return nil
+	}
+	// 如果返回的不是 "OK"，也记录日志但不报错（某些 Redis 版本可能返回不同的格式）
+	job.runtime.Logger.Info("setMaxmemoryPolicy completed, ip:%s, port:%d, policy:%s, result:%v",
+		ip, port, policy, result)
+	return nil
+}
+
+// safeDumpRdbOne dump rdb to workDir
+func (job *KeyStat) safeDumpRdbOne(workDir string, ins KeyStatIns, pwd string) (err error) {
+	job.runtime.Logger.Info("safeDumpRdbOne, addr:%s, startBucket:%d, endBucket:%d",
+		ins.Addr, ins.StartBucket, ins.EndBucket)
+	rdbName := getRdbName(ins)
+	rdbPath := filepath.Join(workDir, rdbName)
+	ip, port, err := ins.IpPort()
+	if err != nil {
+		job.runtime.Logger.Error("safeDumpRdbOne failed, err:%s", err)
+		return err
+	}
+
+	var originalPolicy string
+	if job.atimeRequired {
+		// 获取当前的 maxmemory-policy 值
+		originalPolicy, err := job.getMaxmemoryPolicy(ip, port, pwd)
+		if err != nil {
+			job.runtime.Logger.Warn("getMaxmemoryPolicy failed, err:%s, will continue without restoring", err)
+			originalPolicy = "" // 如果获取失败，标记为空，不进行恢复
+		} else {
+			job.runtime.Logger.Info("getMaxmemoryPolicy success, original policy:%s", originalPolicy)
+		}
+		// 设置 maxmemory-policy 为 volatile-lru
+		// 设置为volatile-lru的原因是，volatile-lru模式下，导出来的rdb文件会带有每个key的atime信息，便于后续分析。
+		// 在设置之前，先获取当前的 maxmemory-policy 值，在设置之后，再恢复原来的值。
+		// 在checkRedisLoad中会检查redis是否负载较低，如果负载高，也是不行的.
+		err = job.setMaxmemoryPolicy(ip, port, pwd, "volatile-lru")
+		if err != nil {
+			job.runtime.Logger.Error("setMaxmemoryPolicy to volatile-lru failed, err:%s", err)
+			return err
+		}
+	} else {
+		// 如果不需要检查atime，则不进行maxmemory-policy的设置和恢复
+		originalPolicy = ""
+	}
+
+	// 确保在函数返回前恢复原值
+	defer func() {
+		if originalPolicy != "" {
+			restoreErr := job.setMaxmemoryPolicy(ip, port, pwd, originalPolicy)
+			if restoreErr != nil {
+				job.runtime.Logger.Error("restore maxmemory-policy failed, err:%s, original policy:%s", restoreErr, originalPolicy)
+				// 不返回错误，只记录日志，因为 dump 可能已经成功
+			} else {
+				job.runtime.Logger.Info("restore maxmemory-policy success, original policy:%s", originalPolicy)
+			}
+		}
+	}()
+
+	cmd := mycmd.New(RedisCli, "-h", ip, "-p", strconv.Itoa(port), "-a", mycmd.Password(pwd), "--rdb", rdbPath)
+	// rdb 导出时间
+	result, err := cmd.Run(1 * time.Hour)
+	if err != nil {
+		job.runtime.Logger.Error("safeDumpRdbOne failed, err:%s, out:%s, stderr:%s", err, result.GetStdout(), result.GetStderr())
+		return err
+	}
+	rdbSize, err := os.Stat(rdbPath)
+	if err != nil {
+		job.runtime.Logger.Error("safeDumpRdbOne failed, err:%s", err)
+		return err
+	}
+	job.runtime.Logger.Info("safeDumpRdbOne success, rdbPath:%s, rdbSize:%d", rdbPath, rdbSize.Size())
+	return nil
+}
+
+func (job *KeyStat) doKeyStat(workDir string) (err error) {
+	// 1. get rdb file nameList
+	rdbFileName := []string{}
+	for _, i := range job.params.InsList {
+		rdbFileName = append(rdbFileName, getRdbName(i))
+	}
+	err = os.Chdir(workDir)
+	if err != nil {
+		job.runtime.Logger.Error("s.Chdir failed, err:%s", err)
+		return err
+	}
+
+	reportSize, _ := util.GetFileSize(filepath.Join(workDir, keySplitterReportName))
+	rankReportSize, _ := util.GetFileSize(filepath.Join(workDir, keySplitterRankReportName))
+	if reportSize > 0 && rankReportSize > 0 {
+		job.runtime.Logger.Info("doKeyStat, reportFile:%s, rankReportFile:%s already exists, skip to Exec KeySplitter",
+			keySplitterReportName, keySplitterRankReportName)
+		return nil
+	}
+
+	keyStatCmd := mycmd.New(
+		KeySplitter,
+		"-rdb", strings.Join(rdbFileName, ","),
+		"-pidFile", filepath.Join(workDir, "key-splitter.pid"),
+		"-logFile", filepath.Join(workDir, "key-splitter.log"),
+		"-logLevel", "info",
+		"-reportFile", filepath.Join(workDir, keySplitterReportName),
+	)
+
+	cmdLine := keyStatCmd.GetCmdLine2(true)
+	job.runtime.Logger.Info("workDir:%s, keyStatCmd: %s", workDir, cmdLine)
+
+	result, err := keyStatCmd.Run(3600 * 24 * time.Hour)
+	if err != nil {
+		job.runtime.Logger.Error("keyStatCmd failed, err:%v, stderr:%q", err, result.GetStderr())
+		return err
+	}
+
+	job.runtime.Logger.Info("keyStatCmd success")
+
+	return nil
+}
+
+func (job *KeyStat) uploadReport(workDir string) (err error) {
+	// check report file
+	reportFile := filepath.Join(workDir, keySplitterReportName)
+	rankReportFile := filepath.Join(workDir, keySplitterRankReportName)
+	stat, err := os.Stat(reportFile)
+	if err != nil {
+		job.runtime.Logger.Error("uploadReport failed, err:%s", err)
+		return err
+	}
+	rankStat, err := os.Stat(rankReportFile)
+	if err != nil {
+		job.runtime.Logger.Error("uploadReport failed, err:%s", err)
+		return err
+	}
+	reportSize := stat.Size()
+	rankReportSize := rankStat.Size()
+	job.runtime.Logger.Info("reportFile:%s, fileSize:%d", reportFile, reportSize)
+	job.runtime.Logger.Info("rankReportFile:%s, fileSize:%d", rankReportFile, rankReportSize)
+
+	if reportSize == 0 {
+		return errors.New("reportFile is empty")
+	} else if rankReportSize == 0 {
+		return errors.New("rankReportFile is empty")
+	}
+
+	reportRows, err := keystat_report.LoadReport(reportFile)
+	if err != nil {
+		return err
+	}
+	rankRows, err := keystat_report.LoadRankReport(rankReportFile)
+	if err != nil {
+		return err
+	}
+	// 获取global rank.
+	globalRank, e := rankRows["global"]
+	if !e {
+		return errors.New("get global rank failed")
+	} else {
+		for i := range globalRank.KeyList {
+			globalRank.KeyList[i].RecordId = job.params.RecordId
+		}
+	}
+
+	// 计算内存占比
+	memTotal := int64(0)
+	for i := range reportRows {
+		memTotal += reportRows[i].MemUsedBytes
+	}
+	if memTotal == 0 {
+		return errors.New("memTotal is 0, no data to report")
+	}
+	for i := range reportRows {
+		reportRows[i].RecordId = job.params.RecordId
+		reportRows[i].MemUsedPct =
+			// 保留2位小数，乘以10000，再除以100，得到2位小数
+			math.Floor((float64(reportRows[i].MemUsedBytes)/float64(memTotal))*10000) / 100
+	}
+
+	// 发送报告到DB.
+	err = job.sendReportToDB(reportRows, globalRank.KeyList)
+	if err != nil {
+		job.runtime.Logger.Error("sendReportToDB failed, err:%s", err)
+		job.updateReportStatus(statusFailed, map[string]any{
+			"analysis_time": int(time.Since(job.startTime).Seconds()),
+		})
+		return err
+	} else {
+		job.updateReportStatus(statusSuccess, map[string]any{
+			"analysis_time": int(time.Since(job.startTime).Seconds()),
+		})
+	}
+
+	job.runtime.Logger.Info("upload report success")
+	return nil
+}
+
+/*
+class StateType(str, StructuredEnum):
+    CREATED = EnumField("CREATED", _("创建态"))
+    READY = EnumField("READY", _("准备态"))
+    RUNNING = EnumField("RUNNING", _("运行态"))
+    SUSPENDED = EnumField("SUSPENDED", _("暂停态"))
+    BLOCKED = EnumField("BLOCKED", _("闭塞态"))
+    FINISHED = EnumField("FINISHED", _("完成态"))
+    FAILED = EnumField("FAILED", _("失败态"))
+    REVOKED = EnumField("REVOKED", _("取消态"))
+    EXPIRED = EnumField("EXPIRED", _("已过期"))
+*/
+
+const statusReady = "READY"
+const statusInqueue = "INQUEUE"
+const statusRunning = "RUNNING"
+const statusSuccess = "FINISHED"
+const statusFailed = "FAILED"
+
+// updateReportStatus 更新报告状态. 可添加其他参数，如分析时间、分析进度等.
+func (job *KeyStat) updateReportStatus(status string, params map[string]any) error {
+	cli, err := util.NewClient(job.params.ApiServer, job.params.DbCloudToken, job.params.BkCloudId)
+	if err != nil {
+		return err
+	}
+	if params == nil {
+		params = make(map[string]any)
+	}
+	params["root_id"] = job.runtime.RootID
+	params["record_id"] = job.params.RecordId
+	params["status"] = status
+	params["update_at"] = time.Now()
+	ret, err := cli.Do(http.MethodPost, KeyStatReportStatusUrl, params)
+	if err != nil {
+		return err
+	}
+	job.runtime.Logger.Info("update report status success, message:%s, code:%d, data:%s",
+		ret.Message, ret.Code, string(ret.Data))
+	if ret.Code != 0 {
+		return errors.New(ret.Message)
+	}
+	return nil
+}
+
+// sendReportToDB 发送报告到SaasApi
+func (job *KeyStat) sendReportToDB(
+	reportRows []keystat_report.KeyStatReportItem,
+	rankRows []keystat_report.KeyStatRankItem) error {
+
+	cli, err := util.NewClient(job.params.ApiServer, job.params.DbCloudToken, job.params.BkCloudId)
+	if err != nil {
+		return err
+	}
+
+	// 2. upload key report.
+	// 这里改为分批上传，一次上传200条.
+	for i := 0; i < len(reportRows); i += 200 {
+		batchReportRows := reportRows[i:int(math.Min(float64(i+200), float64(len(reportRows))))]
+		_, err := cli.Do(http.MethodPost, KeyStatReportItemUrl, map[string]any{
+			"keystat_report_item": batchReportRows,
+			"record_id":           job.params.RecordId,
+			"truncate":            i == 0, // 第一次上传时，清空记录.
+		})
+		if err != nil {
+			return errors.New("upload key report failed, err:" + err.Error())
+		}
+		job.runtime.Logger.Info("upload %d key report items batch %d success", len(batchReportRows), i/200+1)
+	}
+
+	job.runtime.Logger.Info("upload %d key report items success", len(reportRows))
+
+	// 3. upload rank report.
+	// 这里改为分批上传，一次上传200条.
+	for i := 0; i < len(rankRows); i += 200 {
+		batchRankRows := rankRows[i:int(math.Min(float64(i+200), float64(len(rankRows))))]
+		_, err := cli.Do(http.MethodPost, KeyStatRankReportUrl, map[string]any{
+			"keystat_rank_item": batchRankRows,
+			"record_id":         job.params.RecordId,
+			"truncate":          i == 0, // 第一次上传时，清空记录.
+		})
+		if err != nil {
+			return errors.New("upload rank report failed, err:" + err.Error())
+		}
+		job.runtime.Logger.Info("upload %d rank report items batch %d success", len(batchRankRows), i/200+1)
+	}
+
+	job.runtime.Logger.Info("upload %d rank report success", len(rankRows))
+	return nil
+}
+
+// Name 原子任务名
+func (job *KeyStat) Name() string {
+	return "keystat"
+}
+
+// Retry times
+func (job *KeyStat) Retry() uint {
+	return 2
+}
+
+// Rollback rollback
+func (job *KeyStat) Rollback() error {
+	return nil
+}

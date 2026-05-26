@@ -22,17 +22,19 @@ package provider
 import (
 	"k8s-dbs/common/entity"
 	"k8s-dbs/metadata/dbaccess"
-	models "k8s-dbs/metadata/dbaccess/model"
-	entitys "k8s-dbs/metadata/provider/entity"
-	"log/slog"
+	metaentity "k8s-dbs/metadata/entity"
+	models "k8s-dbs/metadata/model"
+	"sync"
+
+	"github.com/pkg/errors"
 
 	"github.com/jinzhu/copier"
 )
 
 // ClusterOperationProvider 定义 cluster operation 业务逻辑层访问接口
 type ClusterOperationProvider interface {
-	CreateClusterOperation(entity *entitys.ClusterOperationEntity) (*entitys.ClusterOperationEntity, error)
-	ListClusterOperations(pagination entity.Pagination) ([]*entitys.ClusterOperationEntity, error)
+	CreateClusterOperation(entity *metaentity.ClusterOperationEntity) (*metaentity.ClusterOperationEntity, error)
+	ListClusterOperations(pagination entity.Pagination) ([]*metaentity.ClusterOperationEntity, error)
 }
 
 // ClusterOperationProviderImpl ClusterOperationProvider 具体实现
@@ -41,65 +43,69 @@ type ClusterOperationProviderImpl struct {
 	opDefDBAccess     dbaccess.OperationDefinitionDbAccess
 }
 
+var (
+	clusterOperationInstance ClusterOperationProvider
+	clusterOperationOnce     sync.Once
+)
+
+// GetClusterOperationProvider 获取 ClusterOperationProvider 单例实例
+func GetClusterOperationProvider(
+	clusterOpDBAccess dbaccess.ClusterOperationDbAccess,
+	opDefDBAccess dbaccess.OperationDefinitionDbAccess,
+) ClusterOperationProvider {
+	clusterOperationOnce.Do(func() {
+		clusterOperationInstance = &ClusterOperationProviderImpl{clusterOpDBAccess, opDefDBAccess}
+	})
+	if clusterOperationInstance == nil {
+		panic("ClusterOperationProvider instance is nil after initialization")
+	}
+	return clusterOperationInstance
+}
+
 // CreateClusterOperation 创建 cluster operation
-func (o *ClusterOperationProviderImpl) CreateClusterOperation(entity *entitys.ClusterOperationEntity) (
-	*entitys.ClusterOperationEntity, error,
+func (o *ClusterOperationProviderImpl) CreateClusterOperation(entity *metaentity.ClusterOperationEntity) (
+	*metaentity.ClusterOperationEntity, error,
 ) {
 	model := models.ClusterOperationModel{}
-	err := copier.Copy(&model, entity)
-	if err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return nil, err
+	if err := copier.Copy(&model, entity); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
 	}
 	addedModel, err := o.clusterOpDBAccess.Create(&model)
 	if err != nil {
-		slog.Error("Failed to create model", "error", err)
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to create cluster operation with entity: %+v", entity)
 	}
-	addedEntity := entitys.ClusterOperationEntity{}
-	if err := copier.Copy(&addedEntity, addedModel); err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return nil, err
+	addedEntity := metaentity.ClusterOperationEntity{}
+	if err = copier.Copy(&addedEntity, addedModel); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
 	}
 	return &addedEntity, nil
 }
 
 // ListClusterOperations 获取 cluster operation 列表
 func (o *ClusterOperationProviderImpl) ListClusterOperations(pagination entity.Pagination) (
-	[]*entitys.ClusterOperationEntity,
+	[]*metaentity.ClusterOperationEntity,
 	error,
 ) {
 	clusterOpModels, _, err := o.clusterOpDBAccess.ListByPage(pagination)
 	if err != nil {
-		slog.Error("Failed to find entity")
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to list cluster operations with pagination: %+v", pagination)
 	}
 
-	var clusterOpEntities []*entitys.ClusterOperationEntity
-	if err := copier.Copy(&clusterOpEntities, clusterOpModels); err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return nil, err
+	var clusterOpEntities []*metaentity.ClusterOperationEntity
+	if err = copier.Copy(&clusterOpEntities, clusterOpModels); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
 	}
 
 	for i, op := range clusterOpEntities {
 		opDefModel, err := o.opDefDBAccess.FindByID(op.OperationID)
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrapf(err, "failed to find operation with id %d", op.OperationID)
 		}
-		opDefEntity := entitys.OperationDefinitionEntity{}
+		opDefEntity := metaentity.OperationDefinitionEntity{}
 		if err := copier.Copy(&opDefEntity, opDefModel); err != nil {
-			slog.Error("Failed to copy entity to copied model", "error", err)
-			return nil, err
+			return nil, errors.Wrapf(err, "failed to copy")
 		}
 		clusterOpEntities[i].Operation = opDefEntity
 	}
 	return clusterOpEntities, nil
-}
-
-// NewClusterOperationProvider 创建 ClusterOperationProvider 接口实现实例
-func NewClusterOperationProvider(
-	clusterOpDBAccess dbaccess.ClusterOperationDbAccess,
-	opDefDBAccess dbaccess.OperationDefinitionDbAccess,
-) ClusterOperationProvider {
-	return &ClusterOperationProviderImpl{clusterOpDBAccess, opDefDBAccess}
 }

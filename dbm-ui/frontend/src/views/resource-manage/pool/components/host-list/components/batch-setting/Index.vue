@@ -4,10 +4,10 @@
     :width="800"
     @update:is-show="handleCancel">
     <template #header>
-      <span>{{ t('设置主机属性') }}</span>
+      <span>{{ t('主机属性') }}</span>
       <span style="margin-left: 12px; font-size: 12px; color: #63656e">
         <I18nT keypath="已选:n台主机">
-          <span class="number">{{ data.length }}</span>
+          <span class="number">{{ selected.length }}</span>
         </I18nT>
       </span>
     </template>
@@ -18,12 +18,14 @@
         <BkSelect
           v-model="selectedOptions"
           class="mb-16 setting-item-selector"
-          multiple>
+          multiple
+          @change="handleOptionChange">
           <template #trigger>
-            <BkButton
-              text
-              theme="primary">
-              <DbIcon type="plus-circle" /> {{ t('添加属性') }}
+            <BkButton class="trigger-button">
+              <DbIcon
+                class="mr-12"
+                type="add" />
+              {{ t('添加属性') }}
             </BkButton>
           </template>
           <BkOption
@@ -42,7 +44,7 @@
             class="mb-16 setting-item">
             <DbIcon
               class="close-icon"
-              type="close"
+              type="delete"
               @click.stop="() => handleDelete(item)" />
             <DbFormItem :label="settingMap[item].label">
               <Component
@@ -64,7 +66,7 @@
         {{ t('确定') }}
       </BkButton>
       <BkButton
-        class="ml8"
+        class="ml-8"
         :disabled="isSubmiting"
         @click="handleCancel">
         {{ t('取消') }}
@@ -78,20 +80,26 @@
   import { useI18n } from 'vue-i18n';
   import { useRequest } from 'vue-request';
 
+  import DbResourceModel from '@services/model/db-resource/DbResource';
   import { updateResource } from '@services/source/dbresourceResource';
   import { getMachineProperty } from '@services/source/systemSettings';
+
+  import { useSystemEnviron } from '@stores';
+
+  import { DeviceClass, deviceClassDisplayMap } from '@common/const';
+  import { MachineEvents } from '@common/const/machineEvents';
 
   import { leaveConfirm } from '@utils';
 
   import City from './components/City.vue';
-  import DeviceClass from './components/DeviceClass.vue';
+  import DeviceClassItem from './components/DeviceClass.vue';
   import Rack from './components/Rack.vue';
-  import StorageDevice, { type IStorageDeviceItem } from './components/StorageDevice.vue';
+  import StorageDevice, { createRowData } from './components/StorageDevice.vue';
   import SubZone from './components/SubZone.vue';
 
   interface Props {
-    data: number[];
     isShow: boolean;
+    selected: DbResourceModel[];
   }
 
   interface Emits {
@@ -104,12 +112,17 @@
   const emits = defineEmits<Emits>();
 
   const { t } = useI18n();
+  const route = useRoute();
+  const systemEnvironStore = useSystemEnviron();
+
+  const isBusiness = route.name === 'BizResourcePool';
+  const defaultBizId = systemEnvironStore.urls.RESOURCE_INDEPENDENT_BIZ;
 
   const genDefaultData = () => ({
     city_meta: '' as string | number,
     device_class: '',
     rack_id: '',
-    storage_device: [] as IStorageDeviceItem[],
+    storage_device: [createRowData()],
     sub_zone_meta: '' as string | number,
   });
 
@@ -127,7 +140,7 @@
       type: 'number',
     },
     device_class: {
-      content: DeviceClass,
+      content: DeviceClassItem,
       label: t('机型'),
       type: 'string',
     },
@@ -138,7 +151,7 @@
     },
     storage_device: {
       content: StorageDevice,
-      label: t('磁盘'),
+      label: t('数据盘'),
       type: 'array',
     },
     sub_zone_meta: {
@@ -149,12 +162,9 @@
   };
 
   const formRef = useTemplateRef('formRef');
-  const itemRef = useTemplateRef<
-    {
-      getValue: () => Record<string, any> | undefined;
-    }[] &
-      Component
-  >('itemRef');
+  const itemRef = ref<
+    InstanceType<typeof City | typeof DeviceClassItem | typeof Rack | typeof StorageDevice | typeof SubZone>[]
+  >([]);
 
   const isSubmiting = ref(false);
   const selectedOptions = ref<string[]>([]);
@@ -200,21 +210,74 @@
     },
   );
 
+  const handleOptionChange = () => {
+    window.changeConfirm = true;
+  };
+
   const handleSubmit = () => {
     isSubmiting.value = true;
-    formRef
-      .value!.validate()
-      .then(() => {
-        const params = itemRef.value!.reduce<Record<string, any>>((prev, item) => {
-          const value = item.getValue();
-          if (value) {
-            return Object.assign(prev, value);
-          }
-          return prev;
+    const valuePromiseList = itemRef.value!.map((item) => Promise.resolve(item.getValue()));
+    Promise.all(valuePromiseList)
+      .then((result) => {
+        const params: Pick<
+          ServiceParameters<typeof updateResource>,
+          'city_meta' | 'device_class' | 'rack_id' | 'storage_device' | 'sub_zone_meta'
+        > = result.reduce<Record<string, any>>((prev, resultItem) => {
+          return Object.assign(prev, resultItem);
         }, {});
 
+        const cityAfter = params.city_meta?.city || '';
+        const subZoneAfter = params.sub_zone_meta?.sub_zone || '';
+        const rackIdAfter = params.rack_id || '';
+        const deviceClassAfter = params.device_class || '';
+        const storageDeviceAfter = params.storage_device
+          ? `（${Object.entries(params.storage_device)
+              .map(([key, item]) => `${key}:${item.size}G:${deviceClassDisplayMap[item.disk_type as DeviceClass]}`)
+              .join(';')}）`
+          : '';
+
+        const remarkList = props.selected.map((item) => {
+          const cityBefore = item.city;
+          const subZoneBefore = item.sub_zone;
+          const rackIdBefore = item.rack_id;
+          const deviceClassBefore = item.device_class;
+          const storageDeviceBefore = _.isEmpty(item.storage_device)
+            ? ''
+            : `（${Object.entries(item.storage_device)
+                .map(([key, item]) => `${key}:${item.size}G:${deviceClassDisplayMap[item.disk_type as DeviceClass]}`)
+                .join(';')}）`;
+
+          const remarkItem = {} as NonNullable<ServiceParameters<typeof updateResource>['remark']>[number];
+          if (cityAfter) {
+            Object.assign(remarkItem, { city: { after_value: cityAfter, before_value: cityBefore } });
+          }
+          if (subZoneAfter) {
+            Object.assign(remarkItem, { sub_zone: { after_value: subZoneAfter, before_value: subZoneBefore } });
+          }
+          if (rackIdAfter) {
+            Object.assign(remarkItem, { rack_id: { after_value: rackIdAfter, before_value: rackIdBefore } });
+          }
+          if (deviceClassAfter) {
+            Object.assign(remarkItem, {
+              device_class: { after_value: deviceClassAfter, before_value: deviceClassBefore },
+            });
+          }
+          if (storageDeviceAfter) {
+            Object.assign(remarkItem, {
+              storage_device: { after_value: storageDeviceAfter, before_value: storageDeviceBefore },
+            });
+          }
+          return remarkItem;
+        });
+
         return updateResource({
-          bk_host_ids: props.data,
+          bk_biz_id: isBusiness ? window.PROJECT_CONFIG.BIZ_ID : defaultBizId,
+          bk_host_ids: props.selected.map((item) => item.bk_host_id),
+          host_id_ip_map: props.selected.reduce<Record<string, string>>((prev, item) => {
+            return Object.assign(prev, { [item.bk_host_id]: item.ip });
+          }, {}),
+          remark: remarkList,
+          update_type: MachineEvents.HOST_ATTRIBUTE,
           ...params,
         }).then(() => {
           window.changeConfirm = false;
@@ -251,7 +314,7 @@
 </script>
 <style lang="less">
   .resource-pool-batch-setting {
-    padding: 20px 40px 0;
+    padding: 16px 24px 0;
 
     .com-input {
       display: flex;
@@ -263,6 +326,10 @@
 
     .setting-item-selector {
       width: 352px;
+
+      .trigger-button {
+        font-size: 16px;
+      }
     }
 
     .setting-item {

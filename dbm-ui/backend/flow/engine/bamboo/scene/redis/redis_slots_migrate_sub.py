@@ -10,15 +10,17 @@ specific language governing permissions and limitations under the License.
 """
 
 import logging.config
+from collections import defaultdict
 from copy import deepcopy
 from dataclasses import asdict
 from typing import Dict
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.constants import IP_PORT_DIVIDER
 from backend.db_meta.enums import ClusterType, InstanceRole, MigrateStatus
+from backend.db_services.redis.util import is_redis_cluster_protocal, is_redis_instance_type
 from backend.flow.consts import DEFAULT_REDIS_START_PORT
 from backend.flow.engine.bamboo.scene.common.builder import SubBuilder
 from backend.flow.engine.bamboo.scene.common.get_file_list import GetFileList
@@ -35,6 +37,7 @@ from backend.flow.utils.redis.redis_act_playload import RedisActPayload
 from backend.flow.utils.redis.redis_context_dataclass import ActKwargs, CommonContext
 from backend.flow.utils.redis.redis_db_meta import RedisDBMeta
 from backend.flow.utils.redis.redis_proxy_util import get_cluster_info_by_cluster_id
+from backend.flow.utils.redis.redis_util import version_ge
 
 logger = logging.getLogger("flow")
 
@@ -143,6 +146,7 @@ def redis_migrate_slots_4_contraction(root_id: str, flow_data: dict, act_kwargs:
              "target_group_num": 1,
              "shutdown_master_hosts": [1.1.1.1,2.2.2.2],
              "shutdown_slave_hosts": [1.1.1.1,2.2.2.2],
+             "ins_num": 1, # 保留下来的机器每个机器上应该有多少个ins
              }
          ]
      }
@@ -163,14 +167,14 @@ def redis_migrate_slots_4_contraction(root_id: str, flow_data: dict, act_kwargs:
     )
 
     cluster_kwargs = deepcopy(act_kwargs)
-    if cluster_kwargs.cluster["cluster_type"] != ClusterType.TendisPredixyTendisplusCluster.value:
+    if not is_redis_cluster_protocal(act_kwargs.cluster["cluster_type"]):
         raise NotImplementedError("Not supported cluster type: %s" % cluster_kwargs.cluster["cluster_type"])
     if not info["is_delete_node"]:
         raise NotImplementedError("is_delete_node is not True")
     # 获取缩容组数，确保输入合法
     contraction_group = info["current_group_num"] - info["target_group_num"]
-    if contraction_group < 1:
-        raise Exception(_("缩容组数: {}小于1 ,pelase check!".format(contraction_group)))
+    # if contraction_group < 1:
+    #     raise Exception(_("缩容组数: {}小于1 ,pelase check!".format(contraction_group)))
     # 获取缩容实例（master)
     to_shutdown_master_inst = []
     to_shutdown_master_ips = set()
@@ -182,7 +186,9 @@ def redis_migrate_slots_4_contraction(root_id: str, flow_data: dict, act_kwargs:
                 raise Exception(_("shutdown master hosts:[{}] 不属于集群[{}]".format(ip, info["cluster_id"])))
             slave_ip = cluster_info["master_ip_to_slave_ip"][ip]
             if slave_ip not in info["shutdown_slave_hosts"]:
-                raise Exception(_("shutdown slave hosts:[{}] 不属于集群[{}]".format(slave_ip, info["cluster_id"])))
+                raise Exception(
+                    _("存在 slave[{}] 不在shutdown_slave_hosts中{}".format(slave_ip, info["shutdown_slave_hosts"]))
+                )
 
             to_shutdown_master_ips.add(ip)
             for port in cluster_info["master_ports"][ip]:
@@ -192,10 +198,33 @@ def redis_migrate_slots_4_contraction(root_id: str, flow_data: dict, act_kwargs:
             to_shutdown_master_ips.add(ip)
             for port in cluster_info["master_ports"][ip]:
                 to_shutdown_master_inst.append(f"{ip}:{port}")
-    logger.info(_("+===+++++===缩容节点 contraction_instance: {} +++++===++++ ".format(to_shutdown_master_inst)))
-    # 待下架的ip_ports
-    shutdown_ip_ports = {}
+
+    logger.info(_("+===+++++===下架机器的缩容节点 contraction_instance: {} +++++===++++ ".format(to_shutdown_master_inst)))
+    shutdown_ip_ports = defaultdict(list)
     shutdown_slave_ips = []
+    # 计算保留下来的机器是否也要减少实例，追加to_shutdown_master_inst
+    if info.get("ins_num", 0) != 0:
+        retain_inst_num = info["ins_num"]
+        logger.info(_("ins_num:{}".format(retain_inst_num)))
+        to_retain_master_ips = []
+        for st_m_ip, ports in cluster_info["master_ports"].items():
+            if st_m_ip in to_shutdown_master_ips:
+                continue
+            to_retain_master_ips.append(st_m_ip)
+            sorted_port = sorted(ports)
+            for st_m_port in sorted_port[retain_inst_num:]:
+                st_m_inst = f"{st_m_ip}:{st_m_port}"
+                to_shutdown_master_inst.append(st_m_inst)
+
+                # 保留机器上的部分实例
+                st_s_inst = cluster_info["master_ins_to_slave_ins"][st_m_inst]
+                st_s_ip, st_s_port = str.split(st_s_inst, IP_PORT_DIVIDER)
+                shutdown_ip_ports[st_m_ip].append(int(st_m_port))
+                shutdown_ip_ports[st_s_ip].append(int(st_s_port))
+    shutdown_ip_ports = dict(shutdown_ip_ports)
+    logger.info(_("+===+++++===所有缩容节点 contraction_instance: {} +++++===++++ ".format(to_shutdown_master_inst)))
+
+    # 回收机器上的所有实例
     for master_ip in to_shutdown_master_ips:
         shutdown_ip_ports[master_ip] = cluster_info["master_ports"][master_ip]
         slave_ip = cluster_info["master_ip_to_slave_ip"][master_ip]
@@ -223,9 +252,9 @@ def redis_migrate_slots_4_contraction(root_id: str, flow_data: dict, act_kwargs:
     # 下发actuator包
     trans_files = GetFileList(db_type=DBType.Redis)
     contraction_kwargs.file_list = trans_files.redis_dbmon()
-    contraction_kwargs.exec_ip = to_shutdown_first_master_ip
+    contraction_kwargs.exec_ip = src_first_machine
     sub_pipeline.add_act(
-        act_name=_("Redis-{}-下发工具包".format(to_shutdown_first_master_ip)),
+        act_name=_("Redis-{}-下发工具包".format(src_first_machine)),
         act_component_code=TransFileComponent.code,
         kwargs=asdict(contraction_kwargs),
     )
@@ -255,22 +284,23 @@ def redis_migrate_slots_4_contraction(root_id: str, flow_data: dict, act_kwargs:
     dbmeta_kwargs = deepcopy(act_kwargs)
     dbmeta_kwargs.cluster["meta_func_name"] = RedisDBMeta.tendisplus_remove_instance_pair.__name__
     dbmeta_kwargs.cluster["params"] = {"cluster_id": info["cluster_id"], "replication_pairs": []}
-    for master_ip in to_shutdown_master_ips:
-        slave_ip = cluster_info["master_ip_to_slave_ip"][master_ip]
-        master_ports = cluster_info["master_ports"][master_ip]
-        for port in master_ports:
-            dbmeta_kwargs.cluster["params"]["replication_pairs"].append(
-                {
-                    "master": {
-                        "ip": master_ip,
-                        "port": port,
-                    },
-                    "slave": {
-                        "ip": slave_ip,
-                        "port": port,
-                    },
-                }
-            )
+    # 改成从to_shutdown_master_inst里获取，保证保留机器上的实例下架也能获取到
+    for st_m_inst in to_shutdown_master_inst:
+        st_s_inst = cluster_info["master_ins_to_slave_ins"][st_m_inst]
+        st_m_ip, st_m_port = str.split(st_m_inst, IP_PORT_DIVIDER)
+        st_s_ip, st_s_port = str.split(st_s_inst, IP_PORT_DIVIDER)
+        dbmeta_kwargs.cluster["params"]["replication_pairs"].append(
+            {
+                "master": {
+                    "ip": st_m_ip,
+                    "port": st_m_port,
+                },
+                "slave": {
+                    "ip": st_s_ip,
+                    "port": st_m_port,
+                },
+            }
+        )
     sub_pipeline.add_act(
         act_name=_("集群关系清理"),
         act_component_code=RedisDBMetaComponent.code,
@@ -383,8 +413,19 @@ def redis_rebalance_slots_4_expansion(root_id: str, flow_data: dict, act_kwargs:
     )
 
     cluster_kwargs = deepcopy(act_kwargs)
-    if cluster_kwargs.cluster["cluster_type"] != ClusterType.TendisPredixyTendisplusCluster.value:
+    if not is_redis_cluster_protocal(cluster_kwargs.cluster["cluster_type"]):
         raise NotImplementedError("Not supported cluster type: %s" % cluster_kwargs.cluster["cluster_type"])
+    # rediscluster必须要大于6.2才支持slot搬迁
+    if is_redis_instance_type(cluster_kwargs.cluster["cluster_type"]) and not version_ge(
+        cluster_info["major_version"], "6"
+    ):
+        raise Exception(
+            _(
+                "cluster type: {} version is {}, not supported reshard cmd".format(
+                    cluster_kwargs.cluster["cluster_type"], cluster_info["major_version"]
+                )
+            )
+        )
 
     # 获取第一个master机器的地址,来获取单台集群部署的节点数，新机器部署一样的节点数，保持一致
     src_first_machine = cluster_info["master_ips"][0]
@@ -528,6 +569,17 @@ def redis_rebalance_slots_4_expansion(root_id: str, flow_data: dict, act_kwargs:
         act_name=_("写入slots 迁移扩容记录数据"),
         act_component_code=RedisDBMetaComponent.code,
         kwargs=asdict(record_kwargs),
+    )
+
+    from backend.flow.plugins.components.collections.redis.redis_update_version import RedisUpdateVersionComponent
+
+    act_kwargs.cluster["update_all"] = True
+    act_kwargs.cluster["cluster_id"] = cluster_info["cluster_id"]
+    act_kwargs.cluster["bk_biz_id"] = act_kwargs.cluster["bk_biz_id"]
+    sub_pipeline.add_act(
+        act_name=_("{}-更新版本").format(act_kwargs.cluster["immute_domain"]),
+        act_component_code=RedisUpdateVersionComponent.code,
+        kwargs=asdict(act_kwargs),
     )
 
     return sub_pipeline.build_sub_process(sub_name=_("迁移slots扩容{}".format(predixy_kwargs.cluster["immute_domain"])))

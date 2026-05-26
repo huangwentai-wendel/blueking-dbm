@@ -13,7 +13,7 @@ import copy
 import logging
 from typing import List
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from pipeline.component_framework.component import Component
 from pipeline.core.flow.activity import Service
 
@@ -46,7 +46,8 @@ class CloudTransFileService(BkJobService):
 
         # 拼接fast_trans_file 接口请求参数
         payload = copy.deepcopy(consts.BK_TRANSFER_REPO_PAYLOAD)
-        payload["bk_biz_id"] = env.JOB_BLUEKING_BIZ_ID
+        payload["bk_scope_type"] = "biz_set"
+        payload["bk_scope_id"] = env.JOB_BLUEKING_BIZ_ID
         payload["file_source_list"].append(
             {
                 "file_list": kwargs["file_list"],

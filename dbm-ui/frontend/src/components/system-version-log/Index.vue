@@ -40,7 +40,7 @@
             <div
               v-if="logContent"
               class="markdowm-container"
-              v-html="logContent" />
+              v-html="DOMPurify.sanitize(logContent)" />
           </BkLoading>
         </ScrollFaker>
       </div>
@@ -48,17 +48,18 @@
   </BkDialog>
 </template>
 <script setup lang="ts">
+  import DOMPurify from 'dompurify';
   import { ref } from 'vue';
   import { useI18n } from 'vue-i18n';
   import { useRequest } from 'vue-request';
 
   import { getVersionLogDetail, getVersionLogList } from '@services/source/versionLog';
 
-  const { t } = useI18n();
-
   const isShow = defineModel<boolean>('isShow', {
     default: false,
   });
+
+  const { t } = useI18n();
 
   const activeVersion = ref('');
 
@@ -373,7 +374,7 @@
         font-family: Consolas, monospace, tahoma, Arial;
         font-size: 13px;
         word-break: break-all;
-        word-wrap: break-word;
+        overflow-wrap: break-word;
         white-space: pre-wrap;
         background-color: #f6f6f6;
         border: 1px solid #ddd;

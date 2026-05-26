@@ -57,19 +57,16 @@
           @click="handleShowDataExportSlider">
           {{ t('导出数据') }}
         </AuthButton>
-        <MoreActionExtend
-          v-db-console="'mysql.singleClusterList.moreOperation'"
-          trigger="hover">
-          <template #handler>
+        <MoreActionExtend v-db-console="'mysql.singleClusterList.moreOperation'">
+          <template #trigger>
             <BkButton
-              v-bk-tooltips="t('更多操作')"
               class="ml-4"
               size="small"
               style="padding: 0 6px">
               <DbIcon type="more" />
             </BkButton>
           </template>
-          <BkDropdownItem
+          <div
             v-if="data.isOnline"
             v-db-console="'mysql.singleClusterList.disable'">
             <OperationBtnStatusTips :data="data">
@@ -83,8 +80,8 @@
                 {{ t('禁用') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem
+          </div>
+          <div
             v-if="data.isOffline"
             v-db-console="'mysql.singleClusterList.enable'">
             <OperationBtnStatusTips :data="data">
@@ -98,8 +95,8 @@
                 {{ t('启用') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem v-db-console="'mysql.singleClusterList.delete'">
+          </div>
+          <div v-db-console="'mysql.singleClusterList.delete'">
             <OperationBtnStatusTips :data="data">
               <AuthButton
                 v-bk-tooltips="{
@@ -115,10 +112,8 @@
                 {{ t('删除') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem>
-            <ClusterDomainDnsRelation :data="data" />
-          </BkDropdownItem>
+          </div>
+          <ClusterDomainDnsRelation :data="data" />
         </MoreActionExtend>
       </DisplayBox>
       <ActionPanel
@@ -127,8 +122,15 @@
         :cluster-type="ClusterTypes.TENDBSINGLE">
         <template #infoContent>
           <BaseInfo
+            :cluster-type="ClusterTypes.TENDBSINGLE"
             :data="data"
-            @refresh="fetchDetailData" />
+            @refresh="fetchDetailData">
+            <template #moduleName>
+              <ModuleNameInfo
+                :cluster-type="ClusterTypes.TENDBSINGLE"
+                :data="data" />
+            </template>
+          </BaseInfo>
         </template>
       </ActionPanel>
       <ClusterAuthorize
@@ -148,7 +150,7 @@
   import { useI18n } from 'vue-i18n';
   import { useRequest } from 'vue-request';
 
-  import TendbsingleModel from '@services/model/mysql/tendbsingle';
+  import TendbsingleDetailModel from '@services/model/mysql/tendbsingle-detail';
   import { getTendbsingleDetail } from '@services/source/tendbsingle';
 
   import { AccountTypes, ClusterTypes, TicketTypes } from '@common/const';
@@ -156,13 +158,11 @@
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
 
   import ClusterAuthorize from '@views/db-manage/common/cluster-authorize/Index.vue';
-  import { ActionPanel, DisplayBox } from '@views/db-manage/common/cluster-details';
+  import { ActionPanel, BaseInfo, BaseInfoField, DisplayBox } from '@views/db-manage/common/cluster-details';
   import ClusterDomainDnsRelation from '@views/db-manage/common/cluster-domain-dns-relation/Index.vue';
   import ClusterExportData from '@views/db-manage/common/cluster-export-data/Index.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
-
-  import BaseInfo from './components/BaseInfo.vue';
 
   interface Props {
     clusterId: number;
@@ -173,9 +173,11 @@
   const props = defineProps<Props>();
   const emits = defineEmits<Emits>();
 
+  const { ModuleNameInfo } = BaseInfoField;
+
   const { t } = useI18n();
 
-  const data = ref<TendbsingleModel>();
+  const data = ref<TendbsingleDetailModel>();
 
   /** 集群授权 */
   const isAuthorizeShow = ref(false);

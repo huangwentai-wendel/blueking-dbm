@@ -48,8 +48,8 @@
   </EditableColumn>
   <MachineResourceSelector
     v-model:is-show="showSelector"
-    v-model:selected="dataList"
-    :cluster-type="ClusterTypes.REDIS"
+    :cluster-types="[ClusterTypes.REDIS]"
+    :selected="dataList"
     @change="handleSelectorChange" />
 </template>
 <script lang="ts" setup>
@@ -58,24 +58,23 @@
 
   import { getGlobalMachine } from '@services/source/dbbase';
   import { queryMasterSlavePairs } from '@services/source/redisToolbox';
+  import type { InstanceInfos, MachineSpecConfig } from '@services/types';
 
   import { ClusterTypes, DBTypes } from '@common/const';
   import { ipv4 } from '@common/regex';
 
   import MachineResourceSelector, { type IMachine } from '@components/machine-resource-selector/Index.vue';
 
-  import type { SpecInfo } from '@views/db-manage/redis/common/spec-panel/Index.vue';
-
   export type IValue = IMachine;
 
   interface Props {
     selected: {
       bk_biz_id: number;
+      instance_role: string;
       ip: string;
       related_slave?: {
         ip: string;
       };
-      role: string;
     }[];
   }
 
@@ -90,16 +89,22 @@
     bk_cloud_id: number;
     bk_host_id: number;
     cluster_ids: number[];
+    cluster_type: string;
+    instance_role: string;
     ip: string;
     master_domain: string;
+    region: string;
     related_slave?: {
       bk_host_id: number;
       ip: string;
-      spec_config: SpecInfo;
+      spec_config: MachineSpecConfig;
     }; // 关联的从库ip，仅当role=redis_master时存在
-    role: string;
-    spec_config: SpecInfo;
+    spec_config: InstanceInfos['spec_config'];
   }>({
+    required: true,
+  });
+
+  const specId = defineModel<number>('specId', {
     required: true,
   });
 
@@ -113,13 +118,13 @@
 
   const rules = [
     {
-      message: t('IP 格式不符合IPv4标准'),
-      trigger: 'blur',
+      message: t('IP格式有误，请输入合法IP'),
+      trigger: 'change',
       validator: (value: string) => !value || ipv4.test(value),
     },
     {
       message: t('IP 重复'),
-      trigger: 'blur',
+      trigger: 'change',
       validator: (value: string) => !value || allIps.value.filter((ip) => ip === value).length < 2,
     },
     {
@@ -154,11 +159,14 @@
           bk_cloud_id: item.bk_cloud_id,
           bk_host_id: item.bk_host_id,
           cluster_ids: item.related_clusters.map((item) => item.id),
+          cluster_type: item.cluster_type,
+          instance_role: item.instance_role,
           ip: item.ip,
           master_domain: cluster?.immute_domain || '',
-          role: item.instance_role,
+          region: item.related_clusters[0].region,
           spec_config: item.spec_config,
         };
+        specId.value = item.spec_config.id;
         if (item.instance_role === 'redis_master') {
           queryRelatedSlave({
             bk_biz_id: item.bk_biz_id,
@@ -179,10 +187,12 @@
       bk_cloud_id: 0,
       bk_host_id: 0,
       cluster_ids: [] as number[],
+      cluster_type: '',
+      instance_role: '',
       ip: value,
       master_domain: '',
-      role: '',
-      spec_config: {} as SpecInfo,
+      region: '',
+      spec_config: {} as InstanceInfos['spec_config'],
     };
   };
 
@@ -212,7 +222,7 @@
         (item) =>
           ({
             bk_biz_id: item.bk_biz_id,
-            instance_role: item.role,
+            instance_role: item.instance_role,
             ip: item.ip,
           }) as IValue,
       );

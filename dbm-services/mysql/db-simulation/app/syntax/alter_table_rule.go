@@ -11,6 +11,8 @@
 package syntax
 
 import (
+	"fmt"
+
 	"github.com/samber/lo"
 )
 
@@ -19,18 +21,19 @@ func (c AlterTableResult) Checker(mysqlVersion string) (r *CheckerResult) {
 	r = &CheckerResult{
 		ObjName: c.TableName,
 	}
-	for _, altercmd := range c.AlterCommands {
-		r.Parse(R.AlterTableRule.HighRiskType, altercmd.Type, "")
-		r.Parse(R.AlterTableRule.HighRiskPkAlterType, altercmd.GetPkAlterType(), "")
-		r.Parse(R.AlterTableRule.AlterUseAfter, altercmd.After, "")
+	for _, alterCmd := range c.AlterCommands {
+		r.Parse(R.AlterTableRule.HighRiskType, alterCmd.Type, "")
+		r.Parse(R.AlterTableRule.HighRiskPkAlterType, alterCmd.GetPkAlterType(), "")
+		r.Parse(R.AlterTableRule.AlterUseAfter, alterCmd.After, "")
 		// 如果是增加字段，需要判断增加的字段名称是否是关键字
-		if altercmd.Type == AlterTypeAddColumn {
-			r.ParseBultinRisk(func() (bool, string) {
-				return KeyWordValidator(mysqlVersion, altercmd.ColDef.ColName)
+		if alterCmd.Type == AlterTypeAddColumn {
+			r.ParseBuiltinRisk(func() (bool, string) {
+				return KeyWordValidator(mysqlVersion, alterCmd.ColDef.ColName)
 			})
 		}
 	}
 	r.Parse(R.AlterTableRule.AddColumnMixed, c.GetAllAlterType(), "")
+	r.ParseBuiltinBan(c.JsonColumInvalidDefaultCheck)
 	return
 }
 
@@ -63,4 +66,16 @@ func (a AlterCommand) GetPkAlterType() string {
 //	@receiver a
 func (a AlterCommand) GetAlterAlgorithm() string {
 	return a.Algorithm
+}
+
+// JsonColumInvalidDefaultCheck 检查json列的默认值是否无效
+func (c AlterTableResult) JsonColumInvalidDefaultCheck() (bool, string) {
+	for _, alterCmd := range c.AlterCommands {
+		if alterCmd.ColDef.DataType == JsonDataType {
+			if alterCmd.ColDef.HasInvalidJsonDefault() {
+				return true, fmt.Sprintf("json 列 %s 的默认值无效，不允许为 '' 或 'null'", alterCmd.ColDef.ColName)
+			}
+		}
+	}
+	return false, ""
 }

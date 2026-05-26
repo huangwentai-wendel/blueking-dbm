@@ -10,7 +10,7 @@ specific language governing permissions and limitations under the License.
 """
 import logging
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.db_services.dbbase.constants import IpSource
@@ -28,6 +28,8 @@ logger = logging.getLogger("root")
 
 
 class DorisScaleUpDetailSerializer(BigDataScaleDetailSerializer):
+    enable_cold_storage = serializers.BooleanField(help_text=_("是否建立低频存储"), default=False)
+
     def validate(self, attrs):
         attrs = super().validate(attrs)
 
@@ -75,7 +77,7 @@ class DorisScaleUpFlowParamBuilder(builders.FlowParamBuilder):
                         "ip": "127.0.0.7"
                     }
                 ],
-                "cold": [
+                "warm": [
                     {
                         "bk_cloud_id": 0,
                         "bk_host_id": 0,

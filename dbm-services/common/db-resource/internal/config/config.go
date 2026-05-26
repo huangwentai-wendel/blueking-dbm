@@ -41,14 +41,73 @@ type Config struct {
 	Redis            Redis             `yaml:"redis"`
 	CloudCertificate *CloudCertificate `yaml:"cloudCertificate"`
 	Yunti            yunti.YuntiConfig `yaml:"yunti"`
+	LLM              LLMConfig         `yaml:"llm" mapstructure:"llm"`
+	// 中转业务ID
+	TransBizId int `yaml:"transBizId"`
+}
+
+// LLMConfig LLM 大模型配置
+type LLMConfig struct {
+	Enabled  bool         `yaml:"enabled" mapstructure:"enabled"`
+	Provider string       `yaml:"provider" mapstructure:"provider"` // openai / azure
+	OpenAI   OpenAIConfig `yaml:"openai" mapstructure:"openai"`
+	Agent    AgentConfig  `yaml:"agent" mapstructure:"agent"`
+	BkAi     BkAiConfig   `yaml:"bk_ai" mapstructure:"bk_ai"`
+}
+
+// BkAiConfig Bk AI 配置
+type BkAiConfig struct {
+	AppCode   string `yaml:"app_code" mapstructure:"app_code"`
+	AppSecret string `yaml:"app_secret" mapstructure:"app_secret"`
+	BaseURL   string `yaml:"base_url" mapstructure:"base_url"`
+	Model     string `yaml:"model" mapstructure:"model"`
+	MaxTokens int    `yaml:"max_tokens" mapstructure:"max_tokens"`
+}
+
+// OpenAIConfig OpenAI 配置
+type OpenAIConfig struct {
+	APIKey      string  `yaml:"api_key" mapstructure:"api_key"`
+	BaseURL     string  `yaml:"base_url" mapstructure:"base_url"`
+	Model       string  `yaml:"model" mapstructure:"model"`
+	MaxTokens   int     `yaml:"max_tokens" mapstructure:"max_tokens"`
+	Temperature float32 `yaml:"temperature" mapstructure:"temperature"`
+}
+
+// AgentConfig Agent 配置
+type AgentConfig struct {
+	MaxIterations  int `yaml:"max_iterations" mapstructure:"max_iterations"`
+	TimeoutSeconds int `yaml:"timeout_seconds" mapstructure:"timeout_seconds"`
 }
 
 // Db config
 type Db struct {
-	Name     string `yaml:"name"`
-	Addr     string `yaml:"addr"`
-	UserName string `yaml:"username"`
-	PassWord string `yaml:"password"`
+	Name         string `yaml:"name"`
+	Addr         string `yaml:"addr"`
+	UserName     string `yaml:"username"`
+	PassWord     string `yaml:"password"`
+	MaxOpenConns int    `yaml:"maxOpenConns"`
+	MaxIdleConns int    `yaml:"maxIdleConns"`
+	MaxLifetime  int    `yaml:"maxLifetime"` // 单位：小时
+}
+
+// 数据库连接池默认值
+const (
+	defaultMaxOpenConns = 200
+	defaultMaxIdleConns = 20
+	defaultMaxLifetime  = 1 // 小时
+)
+
+// SetDefaults 为零值字段填充默认值
+func (c *Db) SetDefaults() {
+	if c.MaxOpenConns <= 0 {
+		c.MaxOpenConns = defaultMaxOpenConns
+	}
+	if c.MaxIdleConns <= 0 {
+		c.MaxIdleConns = defaultMaxIdleConns
+	}
+	if c.MaxLifetime <= 0 {
+		c.MaxLifetime = defaultMaxLifetime
+	}
 }
 
 // LoggerConfig 日志配置
@@ -81,7 +140,8 @@ type CloudCertificate struct {
 	SecretKey   string `yaml:"secret_key" mapstructure:"secret_key"`
 } // load configuration file
 
-func init() {
+// InitConfig 初始化配置
+func InitConfig() {
 	log.Println("init config")
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
@@ -94,4 +154,6 @@ func init() {
 	if err := viper.Unmarshal(&AppConfig); err != nil {
 		logger.Fatal("unmarshal configuration failed: %v", err)
 	}
+	AppConfig.Db.SetDefaults()
+	AppConfig.CmdbDb.SetDefaults()
 }

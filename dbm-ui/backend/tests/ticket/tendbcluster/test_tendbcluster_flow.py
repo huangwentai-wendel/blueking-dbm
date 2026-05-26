@@ -19,6 +19,8 @@ from backend.db_meta.models import Cluster, Machine, ProxyInstance, Spec, Storag
 from backend.tests.mock_data.components.dbconfig import DBConfigApiMock
 from backend.tests.mock_data.components.drs import DRSApiMock
 from backend.tests.mock_data.ticket.tendbcluster_flow import (
+    TBINLOGDUMPER_APPLY_DATA,
+    TENDB_SPIDER_REDUCE_NODES_DATA,
     TENDBCLUSTER_APPLY_DATA,
     TENDBCLUSTER_CHECKSUM_DATA,
     TENDBCLUSTER_CLUSTER_DATA,
@@ -32,7 +34,9 @@ from backend.tests.mock_data.ticket.tendbcluster_flow import (
     TENDBCLUSTER_SPIDER_SWITCH_NODES_DATA,
     TENDBCLUSTER_SPIDEREXT_DATA,
     TENDBCLUSTER_STORAGE_INSTANCE,
+    MySQLFixPointRollbackDetailSerializerMock,
 )
+from backend.tests.ticket.decorator import use_pipeline_mock
 from backend.tests.ticket.server_base import BaseTicketTest
 
 logger = logging.getLogger("test")
@@ -52,10 +56,9 @@ def setup_tendbcluster_database(django_db_setup, django_db_blocker):
             [ProxyInstance(**data) for data in TENDBCLUSTER_PROXYINSTANCE_DATA]
         )
         storage_instances[0].cluster.add(cluster)
-        proxy_instances[0].cluster.add(cluster)
-        proxy_instances[1].cluster.add(cluster)
-        proxy_instances[0].storageinstance.add(storage_instances[0])
-        proxy_instances[1].storageinstance.add(storage_instances[0])
+        for proxy in proxy_instances:
+            proxy.cluster.add(cluster)
+            proxy.storageinstance.add(storage_instances[0])
         Spec.objects.bulk_create([Spec(**data) for data in TENDBCLUSTER_SPEC_DATA])
         TenDBClusterSpiderExt.objects.bulk_create(
             [TenDBClusterSpiderExt(**data) for data in TENDBCLUSTER_SPIDEREXT_DATA]
@@ -81,28 +84,54 @@ class TestTenDBClusterFlow(BaseTicketTest):
             [
                 patch("backend.db_services.mysql.remote_service.handlers.DRSApi", DRSApiMock),
                 patch("backend.flow.utils.spider.spider_bk_config.DBConfigApi", DBConfigApiMock),
+                patch("backend.ticket.builders.tendbcluster.tendb_apply.DBConfigApi", DBConfigApiMock),
+                patch(
+                    "backend.ticket.builders.tendbcluster.tendb_fixpoint_rollback.MySQLFixPointRollbackDetailSerializer",
+                    MySQLFixPointRollbackDetailSerializerMock,
+                ),
+                patch(
+                    "backend.ticket.builders.tendbcluster.tendb_spider_reduce_nodes.TendbSpiderReduceNodesDetailSerializer.validate_min_spider_count",  # noqa
+                    return_value=None,
+                ),
             ]
         )
         super().apply_patches()
 
+    @use_pipeline_mock
     def test_tendbcluster_apply_flow(self):
         self.flow_test(TENDBCLUSTER_APPLY_DATA)
 
+    @use_pipeline_mock
     def test_tendbcluster_full_backup_flow(self):
         # tendbcluster全库备份
         self.flow_test(TENDBCLUSTER_FULL_BACKUP_DATA)
 
+    @use_pipeline_mock
     def test_tendbcluster_back_up_flow(self):
         self.flow_test(TENDBCLUSTER_DB_TABLE_BACKUP_DATA)
 
+    @use_pipeline_mock
     def test_tendbcluster_checksum_flow(self):
         self.flow_test(TENDBCLUSTER_CHECKSUM_DATA)
 
+    @use_pipeline_mock
     def test_tendbcluster_rollback_cluster_flow(self):
         self.flow_test(TENDBCLUSTER_ROLLBACK_CLUSTER_DATA)
 
+    @use_pipeline_mock
     def test_tendbcluster_spider_slave_apply_flow(self):
         self.flow_test(TENDBCLUSTER_SPIDER_SLAVE_APPLY_DATA)
 
+    @use_pipeline_mock
     def test_tendbcluster_spider_switch_nodes_flow(self):
         self.flow_test(TENDBCLUSTER_SPIDER_SWITCH_NODES_DATA)
+
+    @use_pipeline_mock
+    def test_tbinlogdumper_apply_flow(self):
+        # Tbinlogdumper 部署: start --> itsm --> PAUSE --> INNER_FLOW --> end
+        self.flow_test(TBINLOGDUMPER_APPLY_DATA)
+
+    @use_pipeline_mock
+    def test_spider_reduce_nodes_flow(self):
+        # TenDB Spider 接入层缩容: start --> itsm --> PAUSE --> INNER_FLOW --> end
+        self.flow_test(TENDB_SPIDER_REDUCE_NODES_DATA)

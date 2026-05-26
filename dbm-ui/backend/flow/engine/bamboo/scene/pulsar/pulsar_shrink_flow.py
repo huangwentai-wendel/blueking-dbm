@@ -2,7 +2,7 @@ import logging.config
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.flow.consts import DnsOpType, PulsarRoleEnum
@@ -108,4 +108,4 @@ class PulsarShrinkFlow(PulsarOperationFlow):
             act_name=_("DBMeta删除下架IP"), act_component_code=PulsarDBMetaComponent.code, kwargs=asdict(act_kwargs)
         )
 
-        pulsar_pipeline.run_pipeline()
+        pulsar_pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=[self.data["cluster_id"]])

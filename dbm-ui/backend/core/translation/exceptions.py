@@ -10,7 +10,7 @@ specific language governing permissions and limitations under the License.
 """
 
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from ..exceptions import CoreBaseException
 
@@ -25,3 +25,7 @@ class UnTranslatedFileExistException(CoreBaseException):
 
 class LanguageSpecificFStringException(CoreBaseException):
     MESSAGE = _("存在包含特定翻译语言的f-string")
+
+
+class IllegalImportException(CoreBaseException):
+    MESSAGE = _("存在非法导入")

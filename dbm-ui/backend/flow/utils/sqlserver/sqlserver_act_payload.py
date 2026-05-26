@@ -11,14 +11,26 @@ import copy
 import logging
 from dataclasses import dataclass, field
 from functools import wraps
+from typing import List
 
-from django.utils.translation import ugettext as _
+from django.conf import settings
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
+from backend.core.encrypt.constants import AsymmetricCipherConfigType
+from backend.core.encrypt.handlers import AsymmetricHandler
 from backend.db_package.models import Package
+from backend.db_services.mysql.sql_import.constants import BKREPO_SQLSERVER_DATA_EXPORT_PATH
 from backend.env import WINDOW_SSH_PORT
-from backend.flow.consts import SQLSERVER_CUSTOM_SYS_USER, DBActuatorTypeEnum, MediumEnum, SqlserverActuatorActionEnum
+from backend.flow.consts import (
+    MSSQL_DATA_READ_DRS_USER,
+    SQLSERVER_CUSTOM_SYS_USER,
+    DBActuatorTypeEnum,
+    MediumEnum,
+    SqlserverActuatorActionEnum,
+)
 from backend.flow.engine.bamboo.scene.sqlserver.common.exceptions import ActPayloadFlowException
+from backend.flow.utils.base.bkrepo import get_bk_repo_url
 from backend.flow.utils.sqlserver.payload_handler import PayloadHandler
 from backend.flow.utils.sqlserver.sqlserver_bk_config import (
     get_module_infos,
@@ -301,7 +313,7 @@ class SqlserverActPayload(PayloadHandler):
         }
 
     @wrap_sqlserver_act_return
-    def get_switch_payload(self, **kwargs) -> dict:
+    def get_switch_payload_old(self, **kwargs) -> dict:
         """
         执行互切或者故障转移的payload
         """
@@ -318,6 +330,39 @@ class SqlserverActPayload(PayloadHandler):
                     "force": self.global_data["force"],
                     "sync_mode": self.global_data["sync_mode"],
                     "other_slaves": self.global_data["other_slaves"],
+                },
+            },
+        }
+
+    @wrap_sqlserver_act_return
+    def get_switch_payload(
+        self,
+        target_port: int,
+        master_host: str,
+        master_port: int,
+        sync_mode: str,
+        other_slaves: list,
+        force: bool,
+        backup_space: str,
+        **kwargs,
+    ) -> dict:
+        """
+        执行互切或者故障转移的payload
+        """
+        return {
+            "db_type": DBActuatorTypeEnum.Sqlserver.value,
+            "action": SqlserverActuatorActionEnum.RoleSwitch.value,
+            "payload": {
+                "general": {"runtime_account": self.get_sqlserver_account()},
+                "extend": {
+                    "host": kwargs["ips"][0]["ip"],
+                    "port": target_port,
+                    "master_host": master_host,
+                    "master_port": master_port,
+                    "force": force,
+                    "sync_mode": sync_mode,
+                    "other_slaves": other_slaves,
+                    "backup_space": backup_space,
                 },
             },
         }
@@ -680,6 +725,56 @@ class SqlserverActPayload(PayloadHandler):
                     "host": kwargs["ips"][0]["ip"],
                     "port": kwargs["custom_params"]["port"],
                     "remotes_slaves": kwargs["custom_params"]["remotes_slaves"],
+                },
+            },
+        }
+
+    @wrap_sqlserver_act_return
+    def get_data_export_payload(
+        self,
+        bk_biz_id: int,
+        bk_cloud_id: int,
+        cluster_domain: str,
+        instance_role: str,
+        exec_ports: List[int],
+        sql_file_path: str,
+        execute_objects: dict,
+        zip_file_name: str,
+        **kwargs,
+    ) -> dict:
+        """
+        执行数据导出的payload
+        """
+        # 获取db_cloud_token
+        db_cloud_token = AsymmetricHandler.encrypt(
+            name=AsymmetricCipherConfigType.PROXYPASS.value, content=f"{bk_cloud_id}_dbactuator_token"
+        )
+
+        return {
+            "db_type": DBActuatorTypeEnum.Sqlserver.value,
+            "action": SqlserverActuatorActionEnum.DataExport.value,
+            "payload": {
+                "general": {"runtime_account": self.get_sqlserver_drs_account(bk_cloud_id, MSSQL_DATA_READ_DRS_USER)},
+                "extend": {
+                    "host": kwargs["ips"][0]["ip"],
+                    "ports": exec_ports,
+                    "cluster_domain": cluster_domain,
+                    "instance_role": instance_role,
+                    "file_path": sql_file_path,
+                    "execute_objects": execute_objects,
+                    "zip_file_name": zip_file_name,
+                    "upload_detail": {
+                        "bk_cloud_id": bk_cloud_id,
+                        "db_cloud_token": db_cloud_token,
+                        "fileserver": {
+                            "url": get_bk_repo_url(bk_cloud_id),
+                            "bucket": settings.BKREPO_BUCKET,
+                            "username": settings.BKREPO_USERNAME,
+                            "password": settings.BKREPO_PASSWORD,
+                            "project": settings.BKREPO_PROJECT,
+                            "upload_path": BKREPO_SQLSERVER_DATA_EXPORT_PATH.format(biz=bk_biz_id),
+                        },
+                    },
                 },
             },
         }

@@ -14,7 +14,7 @@ from collections import defaultdict
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.components import DBConfigApi
 from backend.components.dbconfig.constants import ConfType, FormatType, LevelName
@@ -227,7 +227,7 @@ class RedisClusterMigrateLoadFlow(object):
                         DownloadBackupClientKwargs(
                             bk_cloud_id=self.data["bk_cloud_id"],
                             bk_biz_id=int(self.data["bk_biz_id"]),
-                            download_host_list=all_ips,
+                            ip_list=all_ips,
                         ),
                     ),
                 }
@@ -321,6 +321,7 @@ class RedisClusterMigrateLoadFlow(object):
                 "created_by": self.data["created_by"],
                 "region": params["clusterinfo"]["region"],
                 "disaster_tolerance_level": self.data.get("disaster_tolerance_level", AffinityEnum.CROS_SUBZONE),
+                "zone_list": self.data.get("zone_list", []),
             }
 
             # 建立集群关系，不同类型走不通方式
@@ -675,7 +676,7 @@ class RedisInsMigrateLoadFlow(object):
                             DownloadBackupClientKwargs(
                                 bk_cloud_id=self.data["bk_cloud_id"],
                                 bk_biz_id=int(self.data["bk_biz_id"]),
-                                download_host_list=all_ip,
+                                ip_list=all_ip,
                             ),
                         ),
                     }
@@ -746,6 +747,7 @@ class RedisInsMigrateLoadFlow(object):
                     "region": ins["clusterinfo"]["region"],
                     "meta_func_name": RedisDBMeta.redis_instance.__name__,
                     "disaster_tolerance_level": self.data.get("disaster_tolerance_level", AffinityEnum.CROS_SUBZONE),
+                    "zone_list": self.data.get("zone_list", []),
                 }
                 acts_list.append(
                     {

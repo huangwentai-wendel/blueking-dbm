@@ -86,7 +86,7 @@ func (s *pitrRecoverJob) Run() error {
 	return nil
 }
 
-// restartAsStandAlone
+// restartAsStandAlone TODO
 func (s *pitrRecoverJob) restartAsStandAlone() error {
 	op := common.NewInstanceOp(s.param.IP,
 		s.param.Port,
@@ -189,9 +189,9 @@ func (s *pitrRecoverJob) receiveLogBg() (*sync.WaitGroup, chan *pitr.ProcessLog)
 					return
 				}
 				if log.IsErr {
-					s.runtime.Logger.Error(log.Msg)
+					s.runtime.Logger.Error("%s", log.Msg)
 				} else {
-					s.runtime.Logger.Info(log.Msg)
+					s.runtime.Logger.Info("%s", log.Msg)
 				}
 			}
 		}
@@ -299,7 +299,7 @@ func (s *pitrRecoverJob) checkVersion() error {
 func (s *pitrRecoverJob) checkParams() error {
 	if err := json.Unmarshal([]byte(s.runtime.PayloadDecoded), &s.param); err != nil {
 		tmpErr := errors.Wrap(err, "payload json.Unmarshal failed")
-		s.runtime.Logger.Error(tmpErr.Error())
+		s.runtime.Logger.Error("%s", tmpErr.Error())
 		return tmpErr
 	}
 

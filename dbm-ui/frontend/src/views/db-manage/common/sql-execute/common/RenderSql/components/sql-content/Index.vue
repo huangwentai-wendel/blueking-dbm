@@ -50,6 +50,7 @@
           disabled: !submitButtonTips,
         }">
         <BkButton
+          v-test="{ type: 'button', value: 'submitSql' }"
           class="w-88"
           :disabled="Boolean(submitButtonTips)"
           theme="primary"

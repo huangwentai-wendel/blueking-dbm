@@ -12,7 +12,7 @@ import json
 import logging
 from typing import List
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from jinja2.sandbox import SandboxedEnvironment as Environment
 from pipeline.component_framework.component import Component
 from pipeline.core.flow.activity import Service
@@ -72,6 +72,9 @@ class ExecuteEsActuatorScriptService(BkJobService):
             role=kwargs["es_role"],
             instance_num=kwargs["instance_num"],
             instance_name=kwargs["instance_name"],
+            rack_id=kwargs["rack_id"],
+            idc_id=kwargs["idc_id"],
+            sub_zone_id=kwargs["sub_zone_id"],
         )
         db_act_template["root_id"] = root_id
         db_act_template["node_id"] = node_id
@@ -87,7 +90,8 @@ class ExecuteEsActuatorScriptService(BkJobService):
         template = jinja_env.from_string(actuator_template)
 
         body = {
-            "bk_biz_id": env.JOB_BLUEKING_BIZ_ID,
+            "bk_scope_type": "biz_set",
+            "bk_scope_id": env.JOB_BLUEKING_BIZ_ID,
             "task_name": f"DBM_{node_name}_{node_id}",
             "script_content": base64_encode(template.render(db_act_template)),
             "script_language": 1,

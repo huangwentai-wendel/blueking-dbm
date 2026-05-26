@@ -18,6 +18,9 @@ export function useBatchCreateTicket<T>(ticketType: TicketTypes) {
     try {
       loading.value = true;
       const res = await createTicketBatch({ tickets });
+
+      window.changeConfirm = false;
+
       const toolboxResultMap = {
         MONGODB: 'DbaManageMongodbToolboxResult',
         MYSQL: 'DbaManageMysqlToolboxResult',
@@ -25,7 +28,7 @@ export function useBatchCreateTicket<T>(ticketType: TicketTypes) {
         SQLSERVER: 'DbaManageSqlserverToolboxResult',
         TENDBCLUSTER: 'DbaManageTendbClusterToolboxResult',
       };
-      const targetTicketType = route.meta.routeName as string;
+      const targetTicketType = route.meta.ticketType as string;
       const [targetDb] = targetTicketType.split('_');
       const resultRouteName = toolboxResultMap[targetDb as keyof typeof toolboxResultMap];
       if (resultRouteName) {
@@ -57,7 +60,7 @@ export function useBatchCreateTicket<T>(ticketType: TicketTypes) {
             if (locale.value === 'en') {
               return (
                 <span>
-                  You have already submitted a
+                  The system has detected that a similar ticket has already been submitted
                   <a
                     href={route.href}
                     target='_blank'>
@@ -71,7 +74,7 @@ export function useBatchCreateTicket<T>(ticketType: TicketTypes) {
 
             return (
               <span>
-                你已提交过包含相同目标集群的
+                系统检测到已提交过包含相同集群的同类
                 <a
                   href={route.href}
                   target='_blank'>

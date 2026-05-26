@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"dbm-services/common/go-pubpkg/logger"
+	"dbm-services/common/go-pubpkg/mysqlcomm"
 	"dbm-services/mysql/db-tools/dbactuator/pkg/components"
 	"dbm-services/mysql/db-tools/dbactuator/pkg/components/mysql/common"
 	"dbm-services/mysql/db-tools/dbactuator/pkg/native"
@@ -27,6 +28,7 @@ import (
 	"dbm-services/mysql/db-tools/dbactuator/pkg/util/mysqlutil"
 )
 
+// BuildMSRelationComp 构建主从关系组件
 type BuildMSRelationComp struct {
 	// 本地使用 ADMIN, change master 使用 repl
 	GeneralParam *components.GeneralParam `json:"general"`
@@ -36,6 +38,7 @@ type BuildMSRelationComp struct {
 	checkVars    []string                 // 同步前需要检查的参数
 }
 
+// BuildMSRelationParam 构建主从关系参数
 type BuildMSRelationParam struct {
 	// 具体操作内容需要操作的参数
 	Host        string `json:"host"  validate:"required,ip"`                        // 当前实例的主机地址
@@ -53,8 +56,11 @@ type BuildMSRelationParam struct {
 	NotStartIOThread bool `json:"not_start_io_thread" example:"false"`
 	// 不启动 sql_thread。默认false 表示启动 sql_thread
 	NotStartSQLThread bool `json:"not_start_sql_thread" example:"false"`
+	// 只change master,不检查主从状态
+	NotCheckReplStatus bool `json:"not_check_repl_status" example:"false"`
 }
 
+// Example 示例
 func (b *BuildMSRelationComp) Example() interface{} {
 	comp := BuildMSRelationComp{
 		GeneralParam: &components.GeneralParam{
@@ -77,6 +83,7 @@ func (b *BuildMSRelationComp) Example() interface{} {
 	return comp
 }
 
+// Init 初始化数据库连接
 func (b *BuildMSRelationComp) Init() (err error) {
 	b.db, err = native.InsObject{
 		Host: b.Params.Host,
@@ -169,7 +176,7 @@ func (b *BuildMSRelationComp) CheckCurrentSlaveStatus() (err error) {
 func (b *BuildMSRelationComp) BuildMSRelation() (err error) {
 	logger.Info("begin change Master to %s:%d", b.Params.MasterHost, b.Params.Port)
 	changeMasterSql := b.getChangeMasterSql()
-	logger.Info("change master sql: %s", changeMasterSql)
+	logger.Info("change master sql: %s", mysqlcomm.ClearMasterPasswordInSQL(changeMasterSql))
 	if _, err = b.db.Exec(changeMasterSql); err != nil {
 		logger.Error("change master to %s:%d failed,err:%s", b.Params.MasterHost, b.Params.MasterPort, err.Error())
 		return err
@@ -192,6 +199,7 @@ func (b *BuildMSRelationComp) CheckBuildOk() (err error) {
 	)
 }
 
+// CloseAllDbConn 关闭所有数据库连接
 func (b *BuildMSRelationComp) CloseAllDbConn() {
 	b.db.Close()
 	b.mdb.Close()
@@ -263,10 +271,10 @@ func (b *BuildMSRelationComp) resetSlaveAll() (err error) {
  * @description: 拼接 change master sql
  * @return {*}
  */
-func (b *BuildMSRelationComp) getChangeMasterSql() (changeMastersql string) {
+func (b *BuildMSRelationComp) getChangeMasterSql() (changeMasterSQL string) {
 	replUser := b.GeneralParam.RuntimeAccountParam.ReplUser
 	replPwd := b.GeneralParam.RuntimeAccountParam.ReplPwd
-	changeMastersql = fmt.Sprintf(
+	changeMasterSQL = fmt.Sprintf(
 		`CHANGE MASTER TO MASTER_HOST='%s', 
 	MASTER_USER ='%s', 
 	MASTER_PASSWORD='%s',
@@ -276,8 +284,8 @@ func (b *BuildMSRelationComp) getChangeMasterSql() (changeMastersql string) {
 	)
 
 	if b.Params.IsGtid {
-		// 如果是gitd，则使用gitd方式构建主从复制命令
-		changeMastersql = fmt.Sprintf(
+		// 如果是gtid，则使用gtid方式构建主从复制命令
+		changeMasterSQL = fmt.Sprintf(
 			`CHANGE MASTER TO MASTER_HOST='%s', 
 		MASTER_USER ='%s', MASTER_PASSWORD='%s',MASTER_PORT=%d, MASTER_AUTO_POSITION = 1;`,
 			b.Params.MasterHost, replUser, replPwd, b.Params.MasterPort,

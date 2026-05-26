@@ -33,7 +33,7 @@ type OpsRequestParams struct {
 
 // Request Receive request structure
 type Request struct {
-	K8sClusterName    string   `json:"k8sClusterName,omitempty" required:"true"`
+	K8sClusterName    string   `json:"k8sClusterName,omitempty" binding:"required" msg:"k8sClusterName 字段不能为空"`
 	BkBizID           uint64   `json:"bkBizId,omitempty"`
 	BkBizName         string   `json:"bkBizName,omitempty"`
 	BkAppAbbr         string   `json:"bkAppAbbr,omitempty"`
@@ -41,12 +41,13 @@ type Request struct {
 	Metadata          `json:",inline"`
 	Spec              `json:",inline"`
 	coreentity.BKAuth `json:",inline"`
+	Description       string `json:"description,omitempty"`
 }
 
 // OpsService 定义 OpsService 结构体
 type OpsService struct {
 	ComponentName string         `json:"componentName,omitempty"`
-	Enable        bool           `json:"enable,omitempty"`
+	Enable        bool           `json:"enable"`
 	Service       ClusterService `json:"service,omitempty"`
 }
 
@@ -54,6 +55,7 @@ type OpsService struct {
 type ClusterService struct {
 	Name         string             `json:"name,omitempty"`
 	ServiceType  corev1.ServiceType `json:"serviceType,omitempty"`
+	VIP          string             `json:"vip,omitempty"`
 	Annotations  map[string]string  `json:"annotations,omitempty"`
 	Ports        []int32            `json:"ports,omitempty"`
 	RoleSelector string             `json:"roleSelector,omitempty"`

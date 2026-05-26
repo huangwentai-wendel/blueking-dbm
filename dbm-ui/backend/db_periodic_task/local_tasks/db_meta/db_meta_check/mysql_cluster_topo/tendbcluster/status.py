@@ -16,6 +16,9 @@ from backend.db_meta.enums import InstanceInnerRole, InstancePhase, InstanceStat
 from backend.db_meta.models import Cluster
 from backend.db_periodic_task.local_tasks.db_meta.db_meta_check.mysql_cluster_topo.check_response import CheckResponse
 from backend.db_periodic_task.local_tasks.db_meta.db_meta_check.mysql_cluster_topo.decorator import checker_wrapper
+from backend.db_periodic_task.local_tasks.db_meta.db_meta_check.mysql_cluster_topo.tendbha.status import (
+    cluster_master_standby,
+)
 from backend.db_report.enums import MetaCheckSubType
 
 
@@ -35,7 +38,9 @@ def _cluster_master_spider_count(c: Cluster) -> List[CheckResponse]:
 
     bad = []
     if cnt < 2:
-        bad.append(CheckResponse(msg=_("正常 spider master 不足 2 个"), check_subtype=MetaCheckSubType.ClusterTopo))
+        bad.append(
+            CheckResponse(msg=_("正常 spider master 不足 2 个"), check_subtype=MetaCheckSubType.TenDBClusterShortSpider)
+        )
 
     return bad
 
@@ -57,7 +62,7 @@ def _cluster_master_remote_count(c: Cluster) -> List[CheckResponse]:
         bad.append(
             CheckResponse(
                 msg=_("分片数 {} != remote master 数 {}".format(shard_count, remote_master_count)),
-                check_subtype=MetaCheckSubType.ClusterTopo,
+                check_subtype=MetaCheckSubType.TenDBClusterShardCountNotMatch,
             )
         )
 
@@ -82,7 +87,7 @@ def _cluster_one_standby_slave_each_shard(c: Cluster) -> List[CheckResponse]:
                 bad.append(
                     CheckResponse(
                         msg=_("无 standby slave"),
-                        check_subtype=MetaCheckSubType.ClusterTopo,
+                        check_subtype=MetaCheckSubType.TenDBClusterNoStandbySlave,
                         instance=si,
                     )
                 )
@@ -91,9 +96,17 @@ def _cluster_one_standby_slave_each_shard(c: Cluster) -> List[CheckResponse]:
                 bad.append(
                     CheckResponse(
                         msg=_("standby slave 多余 1 个: {}".format(",".join([ele.ip_port for ele in m]))),
-                        check_subtype=MetaCheckSubType.ClusterTopo,
+                        check_subtype=MetaCheckSubType.TenDBClusterTooManyStandbySlave,
                         instance=si,
                     )
                 )
 
     return bad
+
+
+@checker_wrapper
+def _cluster_master_standby_each_shard(c: Cluster) -> List[CheckResponse]:
+    """
+    每个 shard 的 master 都是 standby
+    """
+    return cluster_master_standby(c)

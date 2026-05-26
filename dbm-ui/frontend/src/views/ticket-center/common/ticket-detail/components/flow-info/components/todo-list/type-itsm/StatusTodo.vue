@@ -32,7 +32,9 @@
       style="color: #979ba5">
       {{ utcDisplayTime(data.done_at) }}
     </div>
-    <template v-if="data.operators.includes(username) || ticketData.todo_helpers.includes(username)">
+    <div
+      v-if="isCanOperation"
+      class="mt-12">
       <ProcessPass :todo-data="data">
         <BkButton
           class="w-88"
@@ -47,7 +49,7 @@
           {{ t('拒绝') }}
         </BkButton>
       </ProcessRefuse>
-    </template>
+    </div>
   </div>
 </template>
 <script setup lang="ts">
@@ -71,8 +73,15 @@
     ticketData: TicketModel;
   }
 
-  defineProps<Props>();
+  const props = defineProps<Props>();
 
   const { t } = useI18n();
-  const { username } = useUserProfile();
+  const { isSuperuser, username } = useUserProfile();
+
+  const isCanOperation = computed(
+    () =>
+      props.data.operators.includes(username) ||
+      props.ticketData.todo_helpers.includes(username) ||
+      (isSuperuser && props.ticketData.todo_helpers.includes('admin')),
+  );
 </script>

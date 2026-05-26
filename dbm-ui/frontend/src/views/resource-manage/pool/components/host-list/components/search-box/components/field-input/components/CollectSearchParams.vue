@@ -101,13 +101,13 @@
 
   import { getProfile, upsertProfile } from '@services/source/profile';
 
+  import { isValueEmpty } from '../../utils';
+
   interface Props {
     searchParams: Record<string, any>;
   }
 
-  interface Emits {
-    (e: 'change', value: Props['searchParams']): void;
-  }
+  type Emits = (e: 'change', value: Props['searchParams']) => void;
 
   const props = defineProps<Props>();
   const emits = defineEmits<Emits>();
@@ -127,7 +127,7 @@
     name: '',
   });
 
-  const isDisabled = computed(() => Object.keys(props.searchParams).length < 1);
+  const isDisabled = computed(() => Object.values(props.searchParams).every((item) => isValueEmpty(item)));
   let changeBySelect = false;
 
   watch(
@@ -146,9 +146,9 @@
   const rules = {
     name: [
       {
-        validator: (value: string) => _.every(list.value, (item) => item.name !== value),
         message: t('条件名称已存在'),
         trigger: 'blue',
+        validator: (value: string) => _.every(list.value, (item) => item.name !== value),
       },
     ],
   };

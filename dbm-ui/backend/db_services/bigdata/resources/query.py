@@ -12,20 +12,42 @@ from operator import itemgetter
 from typing import Any, Dict, List
 
 from django.db.models import Count, F, Q
-from django.forms import model_to_dict
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.db_meta.models import AppCache
 from backend.db_meta.models.cluster import Cluster
 from backend.db_meta.models.instance import StorageInstance
 from backend.db_proxy.models import ClusterExtension
 from backend.db_services.dbbase.resources import query
+from backend.db_services.dbbase.resources.query import CommonExportQueryResourceMixin
 from backend.db_services.ipchooser.query.resource import ResourceQueryHelper
 from backend.ticket.models import InstanceOperateRecord
 from backend.utils.time import datetime2str
 
 
-class BigDataBaseListRetrieveResource(query.ListRetrieveResource):
+class BigDataBaseExportQueryResourceMixin(CommonExportQueryResourceMixin):
+    """补充大数据集群列表导出所需的header及数据父类"""
+
+    @classmethod
+    def update_headers(cls, headers, **kwargs):
+        """
+        更新的headers列表数据
+        """
+        # 大数据不需要从域名/模块字段值
+        filtered_headers = list(filter(lambda header: header["id"] not in ["slave_domain", "db_module_name"], headers))
+        return filtered_headers, kwargs["extra_headers"]
+
+    @classmethod
+    def update_cluster_info(cls, cluster, cluster_info, **kwargs):
+        """
+        更新的集群列表数据
+        """
+        # 删除cluster_info中的从域名/模块字段值
+        del cluster_info["slave_domain"], cluster_info["db_module_name"]
+        return cluster_info
+
+
+class BigDataBaseListRetrieveResource(query.ListRetrieveResource, BigDataBaseExportQueryResourceMixin):
     """
     大数据相关组件资详情基类
     es/kafka/hdfs 分别继承实现各自的资源详情类
@@ -102,6 +124,8 @@ class BigDataBaseListRetrieveResource(query.ListRetrieveResource):
         cloud_info: Dict[str, Any],
         biz_info: AppCache,
         cluster_stats_map: Dict[str, Dict[str, int]],
+        cluster_zone_map: Dict[str, str],
+        dns_to_clb: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
         """集群序列化"""
@@ -115,6 +139,8 @@ class BigDataBaseListRetrieveResource(query.ListRetrieveResource):
             cloud_info,
             biz_info,
             cluster_stats_map,
+            cluster_zone_map,
+            dns_to_clb,
             **kwargs,
         )
         cluster_info["domain"] = cluster_info["master_domain"]
@@ -138,7 +164,7 @@ class BigDataBaseListRetrieveResource(query.ListRetrieveResource):
                 spec = None
 
             if spec:
-                cluster_spec = model_to_dict(spec)
+                cluster_spec = spec.to_dict()
                 spec_name_parts.append(f"{cluster_spec['spec_name']}({instance_role})")
 
         # 合并所有的规格信息
@@ -173,7 +199,6 @@ class BigDataBaseListRetrieveResource(query.ListRetrieveResource):
     def list_nodes(cls, bk_biz_id: int, query_params: Dict, limit: int, offset: int) -> query.ResourceList:
         cluster_id = query_params["cluster_id"]
         fields = [
-            "id",
             "machine__ip",
             "machine__bk_host_id",
             "machine__bk_cloud_id",
@@ -198,7 +223,7 @@ class BigDataBaseListRetrieveResource(query.ListRetrieveResource):
         storage_queryset = (
             StorageInstance.objects.filter(query_filters)
             .values("instance_role", "machine__ip")
-            .annotate(node_count=Count("id"), role=F("instance_role"))
+            .annotate(node_count=Count("id"), role=F("instance_role"), create_at=F("machine__create_at"))
             .values(*fields)
             .order_by("node_count")
         )

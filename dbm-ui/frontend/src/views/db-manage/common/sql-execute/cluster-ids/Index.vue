@@ -19,11 +19,13 @@
       property="cluster_ids"
       required
       :rules="rules">
-      <BkButton @click="handleShowClusterSelector">
+      <BkButton
+        v-test="{ type: 'button', value: 'addTargetClusters' }"
+        @click="handleShowClusterSelector">
         <DbIcon
           style="margin-right: 3px"
           type="add" />
-        <span>{{ t('添加目标集群') }}</span>
+        <span>{{ t('添加') }}</span>
       </BkButton>
       <div :class="{ 'cluster-checking': isLoading }">
         <BkLoading :loading="isLoading">
@@ -80,15 +82,16 @@
 
   defineProps<Props>();
 
-  const { t } = useI18n();
-
   const modelValue = defineModel<number[]>({
     default: () => [],
     required: true,
   });
+
   const clusterVersionList = defineModel<string[]>('clusterVersionList', {
     default: () => [],
   });
+
+  const { t } = useI18n();
 
   const colums = [
     {
@@ -103,20 +106,23 @@
         const clusterNameMap = {
           [ClusterTypes.SQLSERVER_HA]: t('主从集群'),
           [ClusterTypes.SQLSERVER_SINGLE]: t('单节点集群'),
-          [ClusterTypes.TENDBCLUSTER]: t('Tendb Cluster'),
+          [ClusterTypes.TENDBCLUSTER]: 'Tendb Cluster',
           [ClusterTypes.TENDBHA]: t('高可用'),
           [ClusterTypes.TENDBSINGLE]: t('单节点'),
         };
         return clusterNameMap[data.cluster_type as keyof typeof clusterNameMap];
       },
+      width: 100,
     },
     {
       label: t('版本'),
       render: ({ data }: { data: IClusterData }) => data.major_version || '--',
+      width: 200,
     },
     {
       label: t('状态'),
       render: ({ data }: { data: IClusterData }) => <RenderClusterStatus data={data.status} />,
+      width: 200,
     },
     {
       field: 'action',
@@ -129,7 +135,7 @@
           {t('删除')}
         </bk-button>
       ),
-      width: '100',
+      width: 200,
     },
   ];
 

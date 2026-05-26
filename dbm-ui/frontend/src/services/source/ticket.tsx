@@ -13,13 +13,14 @@
 import InfoBox from 'bkui-vue/lib/info-box';
 
 import TicketModel from '@services/model/ticket/ticket';
+import TicketClusterDisableTodoModel from '@services/model/ticket-cluster-disable-todo/TicketClusterDisableTodo';
 import TicketFlowDescribeModel from '@services/model/ticket-flow-describe/TicketFlowDescribe';
 import type { HostNode, ListBase } from '@services/types';
 import type { FlowItem, FlowItemTodo } from '@services/types/ticket';
 
-import { getRouter } from '@router/index';
+import { getRouter } from '@router';
 
-import type { TicketTypes } from '@common/const';
+import { DBTypes, TicketTypes } from '@common/const';
 
 import { messageError } from '@utils';
 
@@ -40,11 +41,13 @@ export function getTickets(params: {
   create_at__lte?: string;
   creator?: string;
   id?: number;
+  ids?: string;
   is_assist?: boolean;
   limit?: number;
   offset?: number;
   ordering?: string;
   remark?: string;
+  replenish_db_type?: string;
   self_manage?: number;
   status?: string;
   ticket_type?: string;
@@ -66,7 +69,10 @@ export function createTicketNew<T>(params: {
   remark: string;
   ticket_type: TicketTypes;
 }) {
-  return http.post<{ id: number }>(`${path}/`, params, { catchError: true });
+  return http.post<{ id: number }>(`${path}/`, params, {
+    catchError: true,
+    timeout: 300000,
+  });
 }
 
 /**
@@ -86,6 +92,7 @@ export function createTicketBatch<T>(params: {
     params,
     {
       catchError: true,
+      timeout: 300000,
     },
   );
 }
@@ -95,7 +102,10 @@ export function createTicketBatch<T>(params: {
  */
 export function createTicket(formData: Record<string, any>) {
   return http
-    .post<{ id: number }>(`${path}/`, formData, { catchError: true })
+    .post<{ bk_biz_id: number; id: number }>(`${path}/`, formData, {
+      catchError: true,
+      timeout: 300000,
+    })
     .then((res) => res)
     .catch((e) => {
       const { code, data } = e;
@@ -104,15 +114,13 @@ export function createTicket(formData: Record<string, any>) {
         const id = data.duplicate_ticket_id;
         const router = getRouter();
 
-        console.log('router = ', router);
-
         const route = router.resolve({
-          name: 'bizTicketManage',
+          name: 'SelfServiceMyTickets',
           params: {
             ticketId: id,
           },
         });
-        return new Promise<{ id: number }>((resolve, reject) => {
+        return new Promise<{ bk_biz_id: number; id: number }>((resolve, reject) => {
           InfoBox({
             cancelText: t('取消提单'),
             confirmText: t('继续提单'),
@@ -120,7 +128,7 @@ export function createTicket(formData: Record<string, any>) {
               if (locale.value === 'en') {
                 return (
                   <span>
-                    You have already submitted a
+                    The system has detected that a similar ticket has already been submitted
                     <a
                       href={route.href}
                       target='_blank'>
@@ -134,7 +142,7 @@ export function createTicket(formData: Record<string, any>) {
 
               return (
                 <span>
-                  你已提交过包含相同目标集群的
+                  系统检测到已提交过包含相同集群的同类
                   <a
                     href={route.href}
                     target='_blank'>
@@ -153,6 +161,7 @@ export function createTicket(formData: Record<string, any>) {
                   ...formData,
                   ignore_duplication: true,
                 });
+                window.changeConfirm = false;
                 return resolve(res);
               } catch (e: any) {
                 messageError(e?.message);
@@ -180,6 +189,25 @@ export function getTicketTypes(params?: { is_apply: 0 | 1 }) {
       value: string;
     }[]
   >(`${path}/flow_types/`, params ?? {});
+}
+
+export function getTicketGroupTypes() {
+  return http.get<
+    {
+      children: {
+        label: string;
+        value: string;
+      }[];
+      label: string;
+      value: string;
+    }[]
+  >(
+    `${path}/ticket_group_types/`,
+    {},
+    {
+      cache: true,
+    },
+  );
 }
 
 /**
@@ -356,74 +384,6 @@ export function deleteTicketFlowConfig(params: { config_ids: number[] }) {
 }
 
 /**
- * 查询服务器资源的城市信息
- */
-export const getInfrasCities = () =>
-  http.get<
-    {
-      city_code: string;
-      city_name: string;
-      inventory: number;
-      inventory_tag: string;
-    }[]
-  >('/apis/infras/cities/');
-
-/**
- * 服务器规格列表
- */
-export const getInfrasHostSpecs = () =>
-  http.get<
-    {
-      cpu: string;
-      mem: string;
-      spec: string;
-      type: string;
-    }[]
-  >('/apis/infras/cities/host_specs/');
-
-/**
- * redis 容量列表
- */
-export const getCapSpecs = (params: {
-  cityCode: string;
-  cluster_type: string;
-  ip_source: string;
-  nodes: {
-    master: Array<{
-      bk_biz_id: number;
-      bk_cloud_id: number;
-      bk_cpu?: number;
-      bk_disk?: number;
-      bk_host_id: number;
-      bk_mem?: number;
-      ip: string;
-    }>;
-    slave: Array<{
-      bk_biz_id: number;
-      bk_cloud_id: number;
-      bk_cpu?: number;
-      bk_disk?: number;
-      bk_host_id: number;
-      bk_mem?: number;
-      ip: string;
-    }>;
-  };
-}) =>
-  http.post<
-    {
-      cap_key: string;
-      group_num: number;
-      max_disk: number;
-      maxmemory: number;
-      selected: boolean;
-      shard_num: number;
-      spec: string;
-      total_disk: string;
-      total_memory: number;
-    }[]
-  >('/apis/infras/cities/cap_specs/', params);
-
-/**
  * 创建业务英文缩写
  */
 export const createAppAbbr = (params: { db_app_abbr: string; id: number }) =>
@@ -520,4 +480,39 @@ export function ticketBatchProcessTodo(params: {
   }[];
 }) {
   return http.post(`${path}/batch_process_todo/`, params);
+}
+
+/**
+ * 获取集群下架待办列表
+ */
+export function ticketClusterDisableTodo(params: {
+  db_type: DBTypes;
+  is_assist: boolean;
+  limit?: number;
+  offset?: number;
+}) {
+  return http.get<ListBase<TicketClusterDisableTodoModel[]>>(`${path}/cluster_disable_todo/`, params).then((data) => ({
+    ...data,
+    results: data.results.map((item) => new TicketClusterDisableTodoModel(item)),
+  }));
+}
+
+/**
+ * 获取集群下架待办汇总数量
+ */
+export function getClusterDisableCount() {
+  return http.get<{
+    to_assist: Record<DBTypes, number>;
+    todo: Record<DBTypes, number>;
+  }>(`${path}/get_cluster_disable_count/`);
+}
+
+/**
+ * 主机处理待办汇总数量
+ */
+export function getHostTodoCount() {
+  return http.get<{
+    fault_count: number;
+    recycle_count: number;
+  }>(`${path}/get_host_todo_count/`);
 }

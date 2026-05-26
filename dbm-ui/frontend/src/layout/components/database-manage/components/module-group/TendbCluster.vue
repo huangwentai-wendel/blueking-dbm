@@ -2,7 +2,9 @@
   <FunController
     controller-id="tendbcluster"
     module-id="mysql">
-    <BkMenuGroup name="Tendb Cluster">
+    <MenuGroup
+      :db-type="DBTypes.TENDBCLUSTER"
+      :is-error="isError">
       <BkSubmenu key="tendb-cluster-manage">
         <template #icon>
           <DbIcon type="cluster" />
@@ -78,15 +80,15 @@
         </BkMenuItem>
       </BkSubmenu>
       <div
-        v-if="Object.keys(favorMeunMap).length > 0"
+        v-if="Object.keys(toolboxFavorMap).length > 0"
         class="split-line" />
       <ToolboxMenu
         v-for="toolboxGroupId in toolboxMenuSortList"
         :id="toolboxGroupId"
         :key="toolboxGroupId"
         v-db-console="'tendbCluster.toolbox'"
-        :favor-map="favorMeunMap"
-        :toolbox-menu-config="toolboxMenuConfig" />
+        :favor-map="toolboxFavorMap"
+        :toolbox-menu-config="toolboxMenuList" />
       <BkMenuItem
         key="spiderToolbox"
         v-db-console="'tendbCluster.toolbox'">
@@ -99,44 +101,28 @@
           {{ t('工具箱') }}
         </span>
       </BkMenuItem>
-    </BkMenuGroup>
+    </MenuGroup>
   </FunController>
 </template>
 <script setup lang="ts">
-  import { onBeforeUnmount, shallowRef } from 'vue';
   import { useI18n } from 'vue-i18n';
 
-  import { useEventBus } from '@hooks';
+  import { ClusterTypes, DBTypes } from '@common/const';
 
-  import { useUserProfile } from '@stores';
-
-  import { ClusterTypes, UserPersonalSettings } from '@common/const';
-
-  import toolboxMenuConfig from '@views/db-manage/tendb-cluster/toolbox-menu';
-
-  import { makeMap } from '@utils';
+  import { toolboxMenuList } from '@views/db-manage/tendb-cluster/toolbox/toolboxMenuList';
 
   import CountTag from './components/CountTag.vue';
+  import MenuGroup from './components/MenuGroup.vue';
   import ToolboxMenu from './components/ToolboxMenu.vue';
+  import { useToolboxFavor } from './hooks/useToolboxFavor';
 
-  const userProfile = useUserProfile();
+  interface Props {
+    isError: boolean;
+  }
+
+  defineProps<Props>();
+
   const { t } = useI18n();
-  const eventBus = useEventBus();
 
-  const toolboxMenuSortList = shallowRef<string[]>([]);
-  const favorMeunMap = shallowRef<Record<string, boolean>>({});
-
-  const renderToolboxMenu = () => {
-    toolboxMenuSortList.value =
-      userProfile.profile[UserPersonalSettings.SPIDER_TOOLBOX_MENUS] || toolboxMenuConfig.map((item) => item.id);
-    favorMeunMap.value = makeMap(userProfile.profile[UserPersonalSettings.SPIDER_TOOLBOX_FAVOR]);
-  };
-
-  renderToolboxMenu();
-
-  eventBus.on('SPIDER_TOOLBOX_CHANGE', renderToolboxMenu);
-
-  onBeforeUnmount(() => {
-    eventBus.off('SPIDER_TOOLBOX_CHANGE', renderToolboxMenu);
-  });
+  const { toolboxFavorMap, toolboxMenuSortList } = useToolboxFavor(DBTypes.TENDBCLUSTER, toolboxMenuList);
 </script>

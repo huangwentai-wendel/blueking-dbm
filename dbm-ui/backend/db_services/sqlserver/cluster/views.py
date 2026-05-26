@@ -8,24 +8,31 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from backend.bk_web.swagger import common_swagger_auto_schema
+from backend.db_meta.enums import InstanceInnerRole
 from backend.db_services.dbbase.cluster.views import ClusterViewSet as BaseClusterViewSet
+from backend.db_services.mysql.cluster.serializers import (
+    GetIntersectedSlavaMachinesResponseSerializer,
+    GetIntersectedSlavaMachinesSerializer,
+)
 from backend.db_services.sqlserver.cluster.handlers import ClusterServiceHandler
 from backend.db_services.sqlserver.cluster.serializers import (
     CheckDBExistResponseSerializer,
     CheckDBExistSerializer,
     GetDBForDrsResponseSerializer,
     GetDBForDrsSerializer,
+    GETIGNOREDBSerializer,
     ImportDBStructResponseSerializer,
     ImportDBStructSerializer,
     MultiGetDBForDrsResponseSerializer,
     MultiGetDBForDrsSerializer,
 )
+from backend.flow.utils.sqlserver.sqlserver_db_function import get_backup_filter_dbs
 from backend.iam_app.handlers.drf_perm.base import DBManagePermission
 
 SWAGGER_TAG = "db_services/sqlserver/cluster"
@@ -78,3 +85,30 @@ class ClusterViewSet(BaseClusterViewSet):
     def import_db_struct(self, request, bk_biz_id):
         data = self.params_validate(self.get_serializer_class())
         return Response(ClusterServiceHandler(bk_biz_id).import_db_struct(**data))
+
+    @common_swagger_auto_schema(
+        operation_summary=_("获取关联集群从库的交集"),
+        request_body=GetIntersectedSlavaMachinesSerializer(),
+        tags=[SWAGGER_TAG],
+        responses={status.HTTP_200_OK: GetIntersectedSlavaMachinesResponseSerializer()},
+    )
+    @action(methods=["POST"], detail=False, serializer_class=GetIntersectedSlavaMachinesSerializer)
+    def get_intersected_slave_machines_from_clusters(self, request, bk_biz_id):
+        validated_data = self.params_validate(self.get_serializer_class())
+        return Response(
+            ClusterServiceHandler(bk_biz_id).get_intersected_machines_from_clusters(
+                cluster_ids=validated_data["cluster_ids"],
+                role=InstanceInnerRole.SLAVE.value,
+                is_stand_by=validated_data["is_stand_by"],
+            )
+        )
+
+    @common_swagger_auto_schema(
+        operation_summary=_("获取集群的忽略库配置"),
+        tags=[SWAGGER_TAG],
+    )
+    @action(methods=["POST"], detail=False, serializer_class=GETIGNOREDBSerializer)
+    def get_ignore_dbs(self, request, bk_biz_id):
+        validated_data = self.params_validate(self.get_serializer_class())
+        ignore_infos = {cluster_id: get_backup_filter_dbs(cluster_id) for cluster_id in validated_data["cluster_ids"]}
+        return Response(ignore_infos)

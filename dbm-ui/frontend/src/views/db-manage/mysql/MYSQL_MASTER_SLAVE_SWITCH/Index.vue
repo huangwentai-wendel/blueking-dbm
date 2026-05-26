@@ -41,7 +41,9 @@
             :master="item.master" />
           <EditableColumn
             :label="t('同机关联集群')"
-            :min-width="150">
+            :min-width="150"
+            readonly
+            required>
             <EditableBlock :placeholder="t('自动生成')">
               <p
                 v-for="cluster in item.master.related_clusters"
@@ -62,11 +64,6 @@
       </BkFormItem>
       <BkFormItem class="mb-8">
         <BkCheckbox v-model="formData.is_verify_checksum">
-          {{ t('检查主从同步延迟') }}
-        </BkCheckbox>
-      </BkFormItem>
-      <BkFormItem class="mb-8">
-        <BkCheckbox v-model="formData.is_check_delay">
           {{ t('检查主从数据校验结果') }}
         </BkCheckbox>
       </BkFormItem>
@@ -85,7 +82,7 @@
         :content="t('重置将会情况当前填写的所有内容_请谨慎操作')"
         :title="t('确认重置页面')">
         <BkButton
-          class="ml8 w-88"
+          class="ml-8 w-88"
           :disabled="isSubmitting">
           {{ t('重置') }}
         </BkButton>
@@ -94,7 +91,6 @@
   </SmartAction>
 </template>
 <script lang="ts" setup>
-  import type { _DeepPartial } from 'pinia';
   import { reactive, useTemplateRef } from 'vue';
   import type { ComponentProps } from 'vue-component-type-helpers';
   import { useI18n } from 'vue-i18n';
@@ -112,8 +108,8 @@
 
   import { random } from '@utils';
 
-  import MasterHostColumn, { type SelectorHost } from './components/MasterHostColumn.vue';
-  import SlaveHostColumn from './components/SlaveHostColumn.vue';
+  import MasterHostColumn, { type SelectorHost } from './components/MasterColumn.vue';
+  import SlaveHostColumn from './components/SlaveColumn.vue';
 
   interface RowData {
     master: ComponentProps<typeof MasterHostColumn>['modelValue'];
@@ -131,9 +127,10 @@
     },
   ];
 
-  const createTableRow = (data: _DeepPartial<RowData> = {}) => ({
+  const createTableRow = (data: DeepPartial<RowData> = {}) => ({
     master: Object.assign(
       {
+        bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
         bk_cloud_id: 0,
         bk_host_id: 0,
         ip: '',
@@ -144,6 +141,7 @@
     ),
     slave: Object.assign(
       {
+        bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
         bk_cloud_id: 0,
         bk_host_id: 0,
         ip: '',
@@ -153,9 +151,9 @@
   });
 
   const defaultData = () => ({
-    is_check_delay: false,
-    is_check_process: false,
-    is_verify_checksum: false,
+    is_check_delay: true,
+    is_check_process: true,
+    is_verify_checksum: true,
     payload: createTickePayload(),
     tableData: [createTableRow()],
   });
@@ -172,17 +170,17 @@
     onSuccess(ticketDetail) {
       const { details } = ticketDetail;
       Object.assign(formData, {
-        payload: createTickePayload(ticketDetail),
         is_check_delay: details.is_check_delay,
         is_check_process: details.is_check_process,
         is_verify_checksum: details.is_verify_checksum,
-        tableData: details.infos.map((item) => {
-          return createTableRow({
+        payload: createTickePayload(ticketDetail),
+        tableData: details.infos.map((item) =>
+          createTableRow({
             master: {
               ip: item.master_ip?.ip,
             },
-          });
-        }),
+          }),
+        ),
       });
     },
   });
@@ -219,15 +217,15 @@
           cluster_ids: item.master.related_clusters.map((item) => item.id),
           master_ip: {
             bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
-            ip: item.master.ip,
             bk_cloud_id: item.master.bk_cloud_id,
             bk_host_id: item.master.bk_host_id,
+            ip: item.master.ip,
           },
           slave_ip: {
             bk_biz_id: window.PROJECT_CONFIG.BIZ_ID,
-            ip: item.slave.ip,
             bk_cloud_id: item.slave.bk_cloud_id,
             bk_host_id: item.slave.bk_host_id,
+            ip: item.slave.ip,
           },
         })),
         is_check_delay: formData.is_check_delay,

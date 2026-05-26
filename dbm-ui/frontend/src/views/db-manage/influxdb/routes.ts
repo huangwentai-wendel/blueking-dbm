@@ -16,6 +16,8 @@ import type { RouteRecordRaw } from 'vue-router';
 import type { BigdataFunctions } from '@services/model/function-controller/functionController';
 import FunctionControllModel from '@services/model/function-controller/functionController';
 
+import { DBTypes } from '@common/const';
+
 import { t } from '@locales/index';
 
 const routes: RouteRecordRaw[] = [
@@ -23,6 +25,7 @@ const routes: RouteRecordRaw[] = [
     path: 'influxdb',
     name: 'InfluxDBManage',
     meta: {
+      dbType: DBTypes.INFLUXDB,
       navName: t('InfluxDB实例管理'),
     },
     redirect: {
@@ -30,14 +33,6 @@ const routes: RouteRecordRaw[] = [
     },
     component: () => import('@views/db-manage/influxdb/Index.vue'),
     children: [
-      // {
-      //   name: 'SelfServiceApplyInfluxDB',
-      //   path: 'apply',
-      //   meta: {
-      //     navName: t('申请InfluxDB集群部署'),
-      //   },
-      //   component: () => import('@views/db-manage/influxdb/apply/index.vue'),
-      // },
       {
         path: 'instance-list/:groupId(\\d+)?',
         name: 'InfluxDBInstances',

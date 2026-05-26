@@ -34,6 +34,7 @@
           :key="index">
           <ClusterColumn
             v-model="item.cluster"
+            :selected="selected"
             @batch-edit="handleBatchEdit" />
           <EditableColumn
             :label="t('所属业务')"
@@ -67,7 +68,7 @@
         :content="t('重置将会情况当前填写的所有内容_请谨慎操作')"
         :title="t('确认重置页面')">
         <BkButton
-          class="ml8 w-88"
+          class="ml-8 w-88"
           :disabled="isSubmitting">
           {{ t('重置') }}
         </BkButton>
@@ -76,8 +77,8 @@
   </SmartAction>
 </template>
 <script lang="ts" setup>
-  import type { _DeepPartial } from 'pinia';
   import { reactive, useTemplateRef } from 'vue';
+  import type { ComponentProps } from 'vue-component-type-helpers';
   import { useI18n } from 'vue-i18n';
 
   import { useBatchCreateTicket } from '@hooks';
@@ -85,14 +86,15 @@
   import { useGlobalBizs } from '@stores';
 
   import { TicketTypes } from '@common/const';
-  import type { ComponentProps } from 'vue-component-type-helpers';
+
   import BatchInput from '@views/db-manage/common/batch-input/Index.vue';
   import TicketPayload, {
     createTickePayload,
   } from '@views/db-manage/common/toolbox-field/form-item/ticket-payload/Index.vue';
 
-  import ClusterColumn, { type IValue } from './components/ClusterColumn.vue';
   import { random } from '@utils';
+
+  import ClusterColumn, { type IValue } from './components/ClusterColumn.vue';
 
   interface RowData {
     cluster: ComponentProps<typeof ClusterColumn>['modelValue'];
@@ -110,7 +112,7 @@
     },
   ];
 
-  const createTableRow = (data: _DeepPartial<RowData> = {}) => ({
+  const createTableRow = (data: DeepPartial<RowData> = {}) => ({
     cluster: Object.assign(
       {
         bk_biz_id: 0,

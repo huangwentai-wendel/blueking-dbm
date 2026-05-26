@@ -1,7 +1,7 @@
 <template>
   <div class="sqlserver-db-backup-page">
     <SmartAction>
-      <KeyOpreationAlert />
+      <KeyOperationAlert />
       <DbForm
         ref="form"
         class="mt-16 mb-24 toolbox-form"
@@ -25,9 +25,13 @@
             </BkRadioButton>
           </BkRadioGroup>
         </BkFormItem>
+        <BatchInput
+          :config="batchInputConfig"
+          @change="handleBatchInput" />
         <EditableTable
+          :key="tableKey"
           ref="editableTable"
-          class="mb-24"
+          class="mt-16 mb-24"
           :model="formData.tableData">
           <EditableRow
             v-for="(rowData, index) in formData.tableData"
@@ -38,25 +42,29 @@
               @batch-edit="handleClusterBatchEdit" />
             <EditableColumn
               :label="t('架构版本')"
-              :width="300">
+              readonly
+              :width="150">
               <EditableBlock
                 v-model="rowData.cluster.cluster_type_name"
                 :placeholder="t('自动生成')">
               </EditableBlock>
             </EditableColumn>
-            <KeyOprationColumn
+            <KeyOperationColumn
               v-model="rowData.white_regex"
               field="white_regex"
               :label="t('包含 Key')"
               required
               @batch-edit="handleBatchEdit">
-            </KeyOprationColumn>
-            <KeyOprationColumn
+            </KeyOperationColumn>
+            <KeyOperationColumn
               v-model="rowData.black_regex"
               field="black_regex"
               :label="t('排除 Key')"
               @batch-edit="handleBatchEdit">
-            </KeyOprationColumn>
+            </KeyOperationColumn>
+            <DeleteRateColumn
+              v-model="rowData.delete_rate"
+              :cluster-id="rowData.cluster.id" />
             <OperationColumn
               :create-row-method="createRowData"
               :table-data="formData.tableData" />
@@ -77,7 +85,7 @@
           :content="t('重置将会清空当前填写的所有内容_请谨慎操作')"
           :title="t('确认重置页面')">
           <BkButton
-            class="ml8 w-88"
+            class="ml-8 w-88"
             :disabled="isSubmitting">
             {{ t('重置') }}
           </BkButton>
@@ -94,25 +102,30 @@
 
   import { useCreateTicket, useTicketDetail } from '@hooks';
 
-  import { TicketTypes } from '@common/const';
+  import { ClusterTypes, TicketTypes } from '@common/const';
 
+  import BatchInput from '@views/db-manage/common/batch-input/Index.vue';
   import TicketPayload, {
     createTickePayload,
   } from '@views/db-manage/common/toolbox-field/form-item/ticket-payload/Index.vue';
-  import KeyOprationColumn from '@views/db-manage/redis/common/edit-field/KeyOprationColumn.vue';
-  import KeyOpreationAlert from '@views/db-manage/redis/common/KeyOpreationAlert.vue';
+  import KeyOperationAlert from '@views/db-manage/redis/common/toolbox-common/key-operation-alert/Index.vue';
+  import KeyOperationColumn from '@views/db-manage/redis/common/toolbox-field/key-operation-column/Index.vue';
+
+  import { random } from '@utils';
 
   import ClusterColumn from './components/ClusterColumn.vue';
+  import DeleteRateColumn from './components/DeleteRateColumn.vue';
 
   interface IDataRow {
     black_regex: string;
     cluster: {
       bk_cloud_id: number;
-      cluster_type: string;
+      cluster_type: ClusterTypes;
       cluster_type_name: string;
       id: number;
       master_domain: string;
     };
+    delete_rate: number | string;
     white_regex: string;
   }
 
@@ -128,6 +141,7 @@
       },
       values.cluster,
     ),
+    delete_rate: values.delete_rate || '',
     white_regex: values.white_regex || '',
   });
 
@@ -152,9 +166,16 @@
             cluster: {
               master_domain: item.domain,
             } as IDataRow['cluster'],
+            // delete_rate: item.delete_rate,
             white_regex: item.white_regex,
           }),
         ),
+      });
+
+      nextTick(() => {
+        formData.tableData.forEach((item, index) =>
+          Object.assign(item, { delete_rate: details.rules[index]!.delete_rate }),
+        );
       });
     },
   });
@@ -164,6 +185,7 @@
     rules: {
       black_regex: string;
       cluster_id: number;
+      delete_rate: number;
       domain: string;
       white_regex: string;
     }[];
@@ -172,6 +194,7 @@
   const formRef = useTemplateRef('form');
   const editableTableRef = useTemplateRef('editableTable');
 
+  const tableKey = ref(random());
   const formData = reactive(createDefaultFormData());
 
   // 集群列表跳转
@@ -194,6 +217,48 @@
   );
   const selectedMap = computed(() => Object.fromEntries(selected.value.map((cur) => [cur.master_domain, true])));
 
+  const batchInputConfig = [
+    {
+      case: 'redis.test.dba.db',
+      key: 'domain',
+      label: t('集群域名'),
+    },
+    {
+      case: 'key1\\nkey2',
+      key: 'white_regex',
+      label: t('包含 Key'),
+    },
+    {
+      case: 'key1\\nkey2',
+      key: 'black_regex',
+      label: t('排除 Key'),
+    },
+    {
+      case: '5000',
+      key: 'delete_rate',
+      label: t('每秒删除 Key 个数'),
+    },
+  ];
+
+  const handleBatchInput = (data: Record<string, any>[], isClear: boolean) => {
+    const dataList = data.map((item) =>
+      createRowData({
+        black_regex: item.black_regex?.replaceAll('\\n', '\n') || '',
+        cluster: {
+          master_domain: item.domain || '',
+        } as IDataRow['cluster'],
+        delete_rate: item?.delete_rate ? Number(item.delete_rate) : '',
+        white_regex: item.white_regex?.replaceAll('\\n', '\n') || '',
+      }),
+    );
+    if (isClear) {
+      tableKey.value = random();
+      formData.tableData = [...dataList];
+    } else {
+      formData.tableData = [...(formData.tableData[0].cluster.id ? formData.tableData : []), ...dataList];
+    }
+  };
+
   const handleClusterBatchEdit = (clusterList: RedisModel[]) => {
     const newList: IDataRow[] = [];
     clusterList.forEach((item) => {
@@ -204,6 +269,7 @@
               bk_cloud_id: item.bk_cloud_id,
               cluster_type: item.cluster_type,
               cluster_type_name: item.cluster_type_name,
+
               id: item.id,
               master_domain: item.master_domain,
             },
@@ -211,15 +277,13 @@
         );
       }
     });
-    formData.tableData = [...(formData.tableData[0].cluster.master_domain ? formData.tableData : []), ...newList];
-    window.changeConfirm = true;
+    formData.tableData = [...(selected.value.length ? formData.tableData : []), ...newList];
   };
 
-  const handleBatchEdit = (value: string[], field: string) => {
+  const handleBatchEdit = (value: string, field: string) => {
     formData.tableData.forEach((item) => {
       Object.assign(item, { [field]: value });
     });
-    window.changeConfirm = true;
   };
 
   const handleSubmit = async () => {
@@ -232,6 +296,7 @@
           rules: formData.tableData.map((item) => ({
             black_regex: item.black_regex,
             cluster_id: item.cluster.id,
+            delete_rate: Number(item.delete_rate),
             domain: item.cluster.master_domain,
             white_regex: item.white_regex,
           })),
@@ -243,7 +308,6 @@
 
   const handleReset = () => {
     Object.assign(formData, createDefaultFormData());
-    window.changeConfirm = false;
   };
 
   const handleTypeChange = () => {

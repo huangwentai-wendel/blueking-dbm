@@ -15,17 +15,20 @@
   <EditableColumn
     field="dst_cluster"
     :label="t('目标集群')"
-    required
-    :width="200">
+    :loading="isLoading"
+    :min-width="350"
+    required>
     <EditableSelect
       v-model="modelValue"
       :clearable="false"
+      filterable
       :list="list"
       @change="handleChange" />
   </EditableColumn>
 </template>
 
 <script setup lang="ts">
+  import _ from 'lodash';
   import { useI18n } from 'vue-i18n';
   import { useRequest } from 'vue-request';
 
@@ -38,7 +41,7 @@
 
   const props = defineProps<Props>();
 
-  const modelValue = defineModel<number>();
+  const modelValue = defineModel<number | string>();
   const clusterName = defineModel<string>('clusterName');
 
   const { t } = useI18n();
@@ -52,7 +55,11 @@
       .filter((item) => item.value !== props.srcClusterId),
   );
 
-  const { data, run } = useRequest(getRedisListByBizId, {
+  const {
+    data,
+    loading: isLoading,
+    run,
+  } = useRequest(getRedisListByBizId, {
     manual: true,
   });
 
@@ -69,7 +76,13 @@
     },
   );
 
-  const handleChange = (value: number) => {
+  watch(list, () => {
+    if (modelValue.value && _.isString(modelValue.value)) {
+      modelValue.value = list.value.find((item) => item.label === modelValue.value)?.value || '';
+    }
+  });
+
+  const handleChange = (value: number | string) => {
     const clusterItem = (data.value?.results || []).find((item) => item.id === value);
     clusterName.value = clusterItem?.master_domain || '';
   };

@@ -31,6 +31,7 @@ type IsMasterResult struct {
 	Secondary  bool               `json:"secondary"`
 	Primary    string             `json:"primary"`
 	Me         string             `json:"me"`
+	Msg        string             `json:"msg,omitempty"`
 	ElectionID primitive.ObjectID `json:"electionId"`
 	LastWrite  struct {
 		Optime struct {
@@ -59,8 +60,8 @@ func IsMaster(client *mongo.Client, timeoutSecond int64) (*IsMasterResult, error
 // GetVersion Get Version
 func GetVersion(client *mongo.Client, timeoutSecond int64) (string, error) {
 	type serverBuildInfo struct {
-		Version      string `bson:version`
-		VersionArray []int  `bson:versionArray`
+		Version      string `bson:"version"`
+		VersionArray []int  `bson:"versionArray"`
 	}
 	var out serverBuildInfo
 	err := RunCommand(client, "admin", "buildinfo", timeoutSecond, &out)
@@ -76,7 +77,8 @@ func GetVersion(client *mongo.Client, timeoutSecond int64) (string, error) {
 
 // RunAdminCommand exec admin command
 func RunAdminCommand(client *mongo.Client, cmdVal bson.M, timeoutSecond int64, out interface{}) (err error) {
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(timeoutSecond)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecond)*time.Second)
+	defer cancel()
 	ret := client.Database("admin").RunCommand(ctx, cmdVal)
 	// bsonVal, _ := ret.DecodeBytes()
 	// fmt.Printf("RunAdminCommand in: %+v out: %+v\n", cmdVal, bsonVal.String())
@@ -86,7 +88,8 @@ func RunAdminCommand(client *mongo.Client, cmdVal bson.M, timeoutSecond int64, o
 
 // RunAdminCommandD exec admin command
 func RunAdminCommandD(client *mongo.Client, cmdVal interface{}, timeoutSecond int64, out interface{}) (err error) {
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(timeoutSecond)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecond)*time.Second)
+	defer cancel()
 	ret := client.Database("admin").RunCommand(ctx, cmdVal)
 	// bsonVal, _ := ret.DecodeBytes()
 	// fmt.Printf("RunAdminCommand in: %+v out: %+v\n", cmdVal, bsonVal.String())
@@ -96,8 +99,9 @@ func RunAdminCommandD(client *mongo.Client, cmdVal interface{}, timeoutSecond in
 
 // RunCommandWithVal Get Version
 func RunCommandWithVal(client *mongo.Client, db, cmd string, val interface{}, timeoutSecond int64, out interface{}) (err error) {
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(timeoutSecond)*time.Second)
-	ret := client.Database(db).RunCommand(ctx, bson.D{{cmd, val}})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecond)*time.Second)
+	defer cancel()
+	ret := client.Database(db).RunCommand(ctx, bson.D{{Key: cmd, Value: val}})
 	// bsonVal, _ := ret.DecodeBytes()
 	// fmt.Printf("RunCommandWithVal %s in: %+v out: %+v\n", cmd, val, bsonVal.String())
 	err = ret.Decode(out)
@@ -135,7 +139,7 @@ func InsertBackupHeartbeat(db *mongo.Client, connObj MongoHost, backupType, dir 
 			log.Errorf("InsertBackupHeartbeat: Connect to MasterHost %s:%s failed, err:%v ", connObj.Host, connObj.Port, err)
 			return nil, err
 		}
-		defer masterConn.Disconnect(nil)
+		defer masterConn.Disconnect(context.TODO())
 	} else {
 		masterConn = db
 	}

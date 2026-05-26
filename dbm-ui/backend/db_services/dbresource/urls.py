@@ -10,12 +10,14 @@ specific language governing permissions and limitations under the License.
 """
 from rest_framework.routers import DefaultRouter
 
+from backend.db_services.dbresource.views.replenish import DBReplenishViewSet
 from backend.db_services.dbresource.views.resource import DBResourceViewSet
 from backend.db_services.dbresource.views.sepc import DBSpecViewSet
 
 routers = DefaultRouter(trailing_slash=True)
 
 routers.register("resource", DBResourceViewSet, basename="resource")
+routers.register("replenish", DBReplenishViewSet, basename="replenish")
 routers.register("spec", DBSpecViewSet, basename="spec")
 
 urlpatterns = routers.urls

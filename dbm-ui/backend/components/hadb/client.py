@@ -9,7 +9,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 See the License for the specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from ..base import BaseApi
 from ..domains import HADB_APIGW_DOMAIN
@@ -29,11 +29,13 @@ class _HADBApi(BaseApi):
             method="POST",
             url="dbstatus/",
             description=_("上报和查询数据库实例的状态"),
+            default_timeout=120,
         )
         self.ha_status = self.generate_data_api(
             method="POST",
             url="hastatus/",
             description=_("上报和查询ha服务的状态"),
+            default_timeout=120,
         )
         self.switch_queue = self.generate_data_api(
             method="POST",

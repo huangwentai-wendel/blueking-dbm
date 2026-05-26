@@ -28,7 +28,7 @@
         <span v-bk-tooltips="batchShrinkDisabledInfo.tooltips">
           <AuthButton
             action-id="doris_shrink"
-            class="ml8"
+            class="ml-8"
             :disabled="batchShrinkDisabledInfo.disabled || clusterData?.operationDisabled"
             :resource="clusterData.id"
             @click="handleShowShrink">
@@ -44,7 +44,7 @@
           }">
           <AuthButton
             action-id="doris_replace"
-            class="ml8"
+            class="ml-8"
             :disabled="isBatchReplaceDisabeld || clusterData?.operationDisabled"
             :resource="clusterData.id"
             @click="handleShowReplace">
@@ -53,7 +53,11 @@
         </span>
       </OperationBtnStatusTips>
       <BkDropdown
-        class="ml8"
+        class="ml-8"
+        :popover-options="{
+          clickContentAutoHide: true,
+        }"
+        trigger="click"
         @hide="() => (isCopyDropdown = false)"
         @show="() => (isCopyDropdown = true)">
         <BkButton>
@@ -79,18 +83,15 @@
           </BkDropdownMenu>
         </template>
       </BkDropdown>
-      <DbSearchSelect
-        :data="searchSelectData"
-        :get-menu-list="getSearchMenuList"
-        :model-value="searchSelectValue"
+      <DbQuickSearch
+        v-model="quickSearchValue"
+        :data="quickSearchData"
         :placeholder="t('请输入或选择条件搜索')"
-        style="flex: 1; max-width: 560px; margin-left: auto"
-        unique-select
-        @change="handleSearchValueChange" />
+        style="flex: 1; max-width: 560px; margin-left: auto" />
     </div>
     <BkAlert
       v-if="clusterData?.operationStatusText"
-      class="mb16"
+      class="mb-16"
       theme="warning">
       <I18nT
         keypath="当前集群有xx暂时不能进行其他操作跳转xx查看进度"
@@ -109,33 +110,34 @@
       </I18nT>
     </BkAlert>
     <DbTable
-      ref="tableRef"
+      ref="hostTableRef"
       :data-source="dataSource"
-      primary-key="bk_host_id"
-      :row-config="{
-        useKey: true,
-        keyField: 'bk_host_id',
-      }"
+      :filter-value="quickSearchValue"
+      :releate-url-query="false"
+      row-key="bk_host_id"
       selectable
+      @filter-change="handleFilterChange"
       @selection="handleSelectChange">
-      <HostListFieldColumn />
-      <BkTableColumn
-        field=""
+      <HostListFieldColumn
+        :cluster-id="clusterData.id"
+        :cluster-type="clusterData.cluster_type" />
+      <TableColumn
+        col-key="row-operation"
         fixed="right"
-        :label="t('操作')"
+        :title="t('操作')"
         :width="120">
-        <template #default="{ data }: { data: DorisMachineModel }">
+        <template #default="{ row }: { row: DorisMachineModel }">
           <!-- 缩容按钮 -->
           <OperationBtnStatusTips :data="clusterData">
-            <span v-bk-tooltips="checkNodeShrinkDisable(data).tooltips">
+            <span v-bk-tooltips="checkNodeShrinkDisable(row).tooltips">
               <AuthButton
                 action-id="doris_shrink"
-                :disabled="checkNodeShrinkDisable(data).disabled || clusterData?.operationDisabled"
+                :disabled="checkNodeShrinkDisable(row).disabled || clusterData?.operationDisabled"
                 :permission="clusterData.permission.doris_shrink"
                 :resource="clusterData.id"
                 text
                 theme="primary"
-                @click="handleShrinkOne(data)">
+                @click="handleShrinkOne(row)">
                 {{ t('缩容') }}
               </AuthButton>
             </span>
@@ -151,72 +153,51 @@
               :resource="clusterData.id"
               text
               theme="primary"
-              @click="handleReplaceOne(data)">
+              @click="handleReplaceOne(row)">
               {{ t('替换') }}
             </AuthButton>
           </OperationBtnStatusTips>
         </template>
-      </BkTableColumn>
+      </TableColumn>
     </DbTable>
-    <DbSideslider
+    <ClusterExpansion
+      v-if="clusterData"
       v-model:is-show="isShowExpandsion"
-      quick-close
-      :title="t('xx扩容【name】', { title: 'Doris', name: clusterData?.cluster_name })"
-      :width="960">
-      <ClusterExpansion
-        v-if="clusterData"
-        :data="clusterData"
-        @change="handleOperationChange" />
-    </DbSideslider>
-    <DbSideslider
+      :cluster-data="clusterData"
+      @change="handleOperationChange" />
+    <ClusterShrink
+      v-if="clusterData"
       v-model:is-show="isShowShrink"
-      :title="t('xx缩容【name】', { title: 'Doris', name: clusterData?.cluster_name })"
-      :width="960">
-      <ClusterShrink
-        v-if="clusterData"
-        :data="clusterData"
-        :machine-list="operationNodeList"
-        @change="handleOperationChange" />
-    </DbSideslider>
-    <DbSideslider
+      :cluster-data="clusterData"
+      :machine-list="operationMachineList"
+      @change="handleOperationChange" />
+    <ClusterReplace
+      v-if="clusterData"
       v-model:is-show="isShowReplace"
-      :title="t('xx替换【name】', { title: 'Doris', name: clusterData?.cluster_name })"
-      :width="960">
-      <ClusterReplace
-        v-if="clusterData"
-        :data="clusterData"
-        :machine-list="operationNodeList"
-        @change="handleOperationChange" />
-    </DbSideslider>
+      :cluster-data="clusterData"
+      :machine-list="operationMachineList"
+      @change="handleOperationChange" />
   </div>
 </template>
 <script setup lang="tsx">
-  import _ from 'lodash';
   import { useI18n } from 'vue-i18n';
-  import { useRoute, useRouter } from 'vue-router';
 
   import DorisDetailModel from '@services/model/doris/doris-detail';
   import DorisMachineModel from '@services/model/doris/doris-machine';
 
-  import { useUrlSearch } from '@hooks';
-
   import { ClusterTypes } from '@common/const';
 
-  import {
-    getSearchSelectValue,
-    HostListFieldColumn,
-    URL_HOST_MEMO_KEY,
-    useCopyMachineIp,
-  } from '@views/db-manage/common/cluster-details';
+  import DbTable from '@components/db-table/IndexNew.vue';
+
+  import { HostListFieldColumn, useCopyMachineIp, useHostSearchSelect } from '@views/db-manage/common/cluster-details';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
   import ClusterExpansion from '@views/db-manage/doris/common/expansion/Index.vue';
   import ClusterReplace from '@views/db-manage/doris/common/replace/Index.vue';
   import ClusterShrink from '@views/db-manage/doris/common/shrink/Index.vue';
   import useClusterMachineList from '@views/db-manage/hooks/useClusterMachineList';
 
-  import { getSearchSelectorParams } from '@utils';
-
   interface Props {
+    activePanel: string;
     clusterData: DorisDetailModel;
   }
 
@@ -224,61 +205,28 @@
 
   const fetchClusterMachineList = useClusterMachineList(ClusterTypes.DORIS);
   const { t } = useI18n();
-  const route = useRoute();
-  const router = useRouter();
   const { copyAllIp, copyNotAliveIp } = useCopyMachineIp();
-  const { getSearchParams } = useUrlSearch();
 
-  const urlPaylaod = JSON.parse(decodeURIComponent(String(route.query[URL_HOST_MEMO_KEY] || '{}')));
+  const hostTableRef = ref<InstanceType<typeof DbTable>>();
+  const { initQuickSearchValue, quickSearchData, quickSearchValue } = useHostSearchSelect(ClusterTypes.DORIS, {
+    clusterId: props.clusterData.id,
+    serviceHandler: () => {
+      fetchData();
+    },
+  });
+
+  watch(
+    () => props.activePanel,
+    () => {
+      initQuickSearchValue();
+    },
+  );
 
   const dataSource = (params: Parameters<typeof fetchClusterMachineList>[0]) =>
     fetchClusterMachineList({
       ...params,
       cluster_ids: `${props.clusterData.id}`,
     });
-
-  const getSearchMenuList = (payload: { children: any[]; id: string }) => {
-    return Promise.resolve().then(() => {
-      if (payload.id === 'instance_role') {
-        return _.uniqBy(
-          tableRef.value?.getData<DorisMachineModel>().map((item) => ({
-            id: item.instance_role,
-            name: item.instance_role,
-          })),
-          'id',
-        );
-      }
-      return payload.children || [];
-    });
-  };
-
-  const searchSelectData = [
-    {
-      id: 'ip',
-      name: 'IP',
-    },
-    {
-      id: 'instance_role',
-      name: t('部署角色'),
-    },
-    {
-      id: 'region',
-      name: t('地域'),
-    },
-    {
-      id: 'bk_sub_zone',
-      name: t('园区'),
-    },
-    {
-      id: 'bk_os_name',
-      name: t('操作系统'),
-    },
-
-    {
-      id: 'bk_svr_device_cls_name',
-      name: t('机型'),
-    },
-  ];
 
   const checkNodeShrinkDisable = (node: DorisMachineModel) => {
     const options = {
@@ -296,62 +244,51 @@
       options.tooltips.content = t('节点类型不支持缩容');
     } else {
       // Observer 若存在至少需要2台
-      // 冷/热 数据节点必选1种以上，每个角色至少需要2台
+      // 温/热 数据节点必选1种以上，每个角色至少需要2台
       let observerNodeNum = 0;
       let hotNodeNum = 0;
-      let coldNodeNum = 0;
-      (tableRef.value.getData() as DorisMachineModel[]).forEach((nodeItem) => {
+      let warmNodeNum = 0;
+      (hostTableRef.value!.getData() as DorisMachineModel[]).forEach((nodeItem) => {
         if (nodeItem.isObserver) {
           observerNodeNum = observerNodeNum + 1;
         } else if (nodeItem.isHot) {
           hotNodeNum = hotNodeNum + 1;
-        } else if (nodeItem.isCold) {
-          coldNodeNum = coldNodeNum + 1;
+        } else if (nodeItem.isWarm) {
+          warmNodeNum = warmNodeNum + 1;
         }
       });
-
       if (node.isObserver && observerNodeNum === 2) {
         options.disabled = true;
         options.tooltips.disabled = false;
-        options.tooltips.content = t('Follower类型节点若存在至少保留两台');
-      } else if (node.isHot && hotNodeNum > 0 && coldNodeNum === 0) {
+        options.tooltips.content = t('Observer 类型节点若存在至少保留两台');
+      } else if (node.isHot && hotNodeNum > 0 && warmNodeNum === 0) {
         options.disabled = true;
         options.tooltips.disabled = false;
-        options.tooltips.content = t('冷/热 数据节点必选 1 种以上，每个角色至少需要 2 台');
-      } else if (node.isCold && coldNodeNum > 0 && hotNodeNum === 0) {
+        options.tooltips.content = t('温/热 数据节点必选 1 种以上，每个角色至少需要 2 台');
+      } else if (node.isWarm && warmNodeNum > 0 && hotNodeNum === 0) {
         options.disabled = true;
         options.tooltips.disabled = false;
-        options.tooltips.content = t('冷/热 数据节点必选 1 种以上，每个角色至少需要 2 台');
+        options.tooltips.content = t('温/热 数据节点必选 1 种以上，每个角色至少需要 2 台');
       }
     }
 
     return options;
   };
 
-  const tableRef = useTemplateRef('tableRef');
   const isShowReplace = ref(false);
   const isShowExpandsion = ref(false);
   const isShowShrink = ref(false);
   const isCopyDropdown = ref(false);
 
-  const operationNodeList = shallowRef<Array<DorisMachineModel>>([]);
+  const operationMachineList = shallowRef<Array<DorisMachineModel>>([]);
   const selectedMachineList = shallowRef<Array<DorisMachineModel>>([]);
-  const searchSelectValue = shallowRef<ReturnType<typeof getSearchSelectValue>>([]);
 
   const isBatchReplaceDisabeld = computed(() => selectedMachineList.value.length < 1);
-
-  const selectedMachineMap = computed(() => {
-    return selectedMachineList.value.reduce<Record<number, DorisMachineModel>>((result, item) => {
-      return Object.assign(result, {
-        [item.bk_host_id]: item,
-      });
-    }, {});
-  });
 
   const batchShrinkDisabledInfo = computed(() => {
     // 1.Follower 为必须，3个节点, 缩容
     // 2.Observer 非必选，若选至少需要2台
-    // 3.冷/热 数据节点必选1种以上，每个角色至少需要2台
+    // 3.温/热 数据节点必选1种以上，每个角色至少需要2台
 
     const options = {
       disabled: false,
@@ -373,58 +310,14 @@
       return options;
     }
 
-    let observerNumTotal = 0;
-    let observerNum = 0;
-    let hotNodeNumTotal = 0;
-    let hotNodeNum = 0;
-    let coldNodeNumTotal = 0;
-    let coldNodeNum = 0;
-    tableRef.value!.getData<DorisMachineModel>().forEach((nodeItem) => {
-      if (nodeItem.isObserver) {
-        observerNumTotal = observerNumTotal + 1;
-      } else if (nodeItem.isHot) {
-        hotNodeNumTotal = hotNodeNumTotal + 1;
-      } else if (nodeItem.isCold) {
-        coldNodeNumTotal = coldNodeNumTotal + 1;
-      }
-      if (selectedMachineMap.value[nodeItem.bk_host_id]) {
-        return;
-      }
-      if (nodeItem.isObserver) {
-        observerNum = observerNum + 1;
-      } else if (nodeItem.isHot) {
-        hotNodeNum = hotNodeNum + 1;
-      } else if (nodeItem.isCold) {
-        coldNodeNum = coldNodeNum + 1;
-      }
-    });
-
-    if (observerNumTotal > 0 && observerNumTotal - observerNum === 1) {
-      options.disabled = true;
-      options.tooltips.disabled = false;
-      options.tooltips.content = t('Observer类型节点若存在至少保留两台');
-    } else if ((hotNodeNumTotal === 0 && coldNodeNum === 1) || (coldNodeNumTotal === 0 && hotNodeNum === 1)) {
-      options.disabled = true;
-      options.tooltips.disabled = false;
-      options.tooltips.content = t('冷/热 数据节点必选 1 种以上，每个角色至少需要 2 台');
-    }
-
     return options;
   });
 
   const fetchData = () => {
-    const serachParams = getSearchSelectorParams(searchSelectValue.value);
-    tableRef.value?.fetchData(serachParams);
-
-    router.replace({
-      query: {
-        ...getSearchParams(),
-        [URL_HOST_MEMO_KEY]: encodeURIComponent(JSON.stringify(serachParams)),
-      },
-    });
+    hostTableRef?.value?.fetchData({ ...quickSearchValue.value });
   };
 
-  const handleSelectChange = (_: any[], list: DorisMachineModel[]) => {
+  const handleSelectChange = (_key: string[], list: DorisMachineModel[]) => {
     selectedMachineList.value = list;
   };
 
@@ -439,12 +332,12 @@
 
   // 复制所有 IP
   const handleCopyAll = () => {
-    copyAllIp(tableRef.value!.getData<DorisMachineModel>());
+    copyAllIp(hostTableRef.value!.getData());
   };
 
   // 复制异常 IP
   const handleCopeFailed = () => {
-    copyNotAliveIp(tableRef.value!.getData<DorisMachineModel>());
+    copyNotAliveIp(hostTableRef.value!.getData());
   };
 
   // 复制已选 IP
@@ -454,33 +347,28 @@
 
   // 批量缩容
   const handleShowShrink = () => {
-    operationNodeList.value = selectedMachineList.value;
+    operationMachineList.value = selectedMachineList.value;
     isShowShrink.value = true;
   };
 
   // 批量扩容
   const handleShowReplace = () => {
-    operationNodeList.value = selectedMachineList.value;
+    operationMachineList.value = selectedMachineList.value;
     isShowReplace.value = true;
   };
   const handleShrinkOne = (data: DorisMachineModel) => {
-    operationNodeList.value = [data];
+    operationMachineList.value = [data];
     isShowShrink.value = true;
   };
 
   const handleReplaceOne = (data: DorisMachineModel) => {
-    operationNodeList.value = [data];
+    operationMachineList.value = [data];
     isShowReplace.value = true;
   };
 
-  const handleSearchValueChange = _.debounce((payload: any) => {
-    searchSelectValue.value = payload;
-    fetchData();
-  }, 100);
-
-  onMounted(() => {
-    searchSelectValue.value = getSearchSelectValue(searchSelectData, urlPaylaod);
-  });
+  const handleFilterChange = (filterValue: Record<string, any>) => {
+    quickSearchValue.value = filterValue;
+  };
 </script>
 
 <style lang="less">

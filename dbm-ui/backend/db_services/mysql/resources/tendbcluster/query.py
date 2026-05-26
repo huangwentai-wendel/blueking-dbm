@@ -8,11 +8,10 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
 from django.db.models import F, Prefetch, Q, QuerySet, Value
-from django.forms import model_to_dict
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.configuration.constants import DBType
 from backend.db_meta.api.cluster.tendbcluster.detail import scan_cluster
@@ -20,17 +19,97 @@ from backend.db_meta.api.cluster.tendbcluster.handler import TenDBClusterCluster
 from backend.db_meta.enums import InstanceRole, TenDBClusterSpiderRole
 from backend.db_meta.enums.cluster_type import ClusterType
 from backend.db_meta.exceptions import DBMetaException
-from backend.db_meta.models import AppCache
+from backend.db_meta.models import AppCache, Machine
 from backend.db_meta.models.cluster import Cluster
 from backend.db_meta.models.instance import ProxyInstance, StorageInstance
-from backend.db_services.dbbase.resources import query
-from backend.db_services.dbbase.resources.query import ResourceList
+from backend.db_services.dbbase.resources.query import (
+    CommonExportQueryResourceMixin,
+    CommonQueryResourceMixin,
+    ResourceList,
+)
 from backend.db_services.dbbase.resources.register import register_resource_decorator
+from backend.db_services.mysql.resources.query import MysqlListRetrieveResource
 from backend.ticket.constants import TicketType
+from backend.utils.time import datetime2str
+
+
+class TenDBClusterCommonQueryResourceMixin(CommonExportQueryResourceMixin):
+    """补充TenDBCluster集群列表导出所需的header及数据"""
+
+    @classmethod
+    def fill_instances_to_cluster_info(cls, cluster_info: Dict, instance_queryset: QuerySet, role_header_ids: set):
+        """
+        将实例信息填充到集群信息中
+        """
+        instances = instance_queryset.all()
+        if not instances.exists():
+            return
+
+        # 获取第一个实例的集群类型即可
+        cluster_type = instances[0].cluster_type
+        for ins in instances:
+            # 暂时过滤掉 repeater 角色实例
+            if "repeater" in ins.instance_role:
+                continue
+
+            # # 确定实例的角色 tendbcluster需要用到TenDBClusterSpiderRole枚举类角色
+            if isinstance(ins, ProxyInstance):
+                role = ins.tendbclusterspiderext.spider_role
+            else:
+                role = ins.instance_role
+
+            # 添加实例信息
+            if role in cluster_info:
+                cluster_info[role] += f"\n{ins.machine.ip}:{ins.port}"
+            else:
+                role_header_ids.add(role)
+                cluster_info[role] = f"{ins.machine.ip}:{ins.port}"
+
+            # 将需要分片信息的角色重新赋予初始值
+            if role in [
+                InstanceRole.REMOTE_MASTER,
+                InstanceRole.REMOTE_SLAVE,
+            ]:
+                cluster_info[role] = ""
+
+        # 补充tendbcluster集群的分片信息
+        is_tendbcluster = cluster_type == ClusterType.TenDBCluster.value
+        is_storage_instance = isinstance(instances[0], StorageInstance)
+        if is_tendbcluster and is_storage_instance:
+            remote_db, remote_dr, _, _ = TenDBClusterClusterHandler.get_remote_infos(instances)
+            for instance in remote_db + remote_dr:
+                role = instance.instance_role
+                cluster_info[role] += f"\n{instance.machine.ip}:{instance.port}(%_{instance.shard_id})"
+
+    @classmethod
+    def update_headers(cls, headers, **kwargs):
+        extra_headers = [
+            {"id": "clb", "name": _("clb")},
+            {"id": "spider_master", "name": _("Spider_master")},
+            {"id": "spider_slave", "name": _("Spider_slave")},
+            {"id": "spider_mnt", "name": _("Spider_mnt")},
+            {"id": "remote_master", "name": _("Remote_master")},
+            {"id": "remote_slave", "name": _("Remote_slave")},
+        ]
+        return headers, extra_headers
+
+    @classmethod
+    def update_cluster_info(cls, cluster, cluster_info, **kwargs):
+        """
+        补充额外的集群列表数据
+        """
+        # 补充clb/北极星
+        clb_entry, _ = CommonQueryResourceMixin.get_cluster_clb_polaris_entries(cluster)
+        cluster_info.update(
+            {
+                "clb": clb_entry,
+            }
+        )
+        return cluster_info
 
 
 @register_resource_decorator()
-class ListRetrieveResource(query.ListRetrieveResource):
+class ListRetrieveResource(MysqlListRetrieveResource, TenDBClusterCommonQueryResourceMixin):
     """查看 mysql dbha 架构的资源"""
 
     cluster_type = ClusterType.TenDBCluster
@@ -106,6 +185,8 @@ class ListRetrieveResource(query.ListRetrieveResource):
         cloud_info: Dict[str, Any],
         biz_info: AppCache,
         cluster_stats_map: Dict[str, Dict[str, int]],
+        cluster_zone_map: Dict[str, str],
+        dns_to_clb: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
         """将集群对象转为可序列化的 dict 结构"""
@@ -115,7 +196,7 @@ class ListRetrieveResource(query.ListRetrieveResource):
             for role in TenDBClusterSpiderRole.get_values()
         }
 
-        remote_db, remote_dr = TenDBClusterClusterHandler.get_remote_infos(cluster.storages)
+        remote_db, remote_dr, _, _ = TenDBClusterClusterHandler.get_remote_infos(cluster.storages)
         remote_db = [{**inst.simple_desc, "shard_id": inst.shard_id} for inst in remote_db]
         remote_dr = [{**inst.simple_desc, "shard_id": inst.shard_id} for inst in remote_dr]
         # 计算machine分组
@@ -124,9 +205,14 @@ class ListRetrieveResource(query.ListRetrieveResource):
         # 获取集群规格
         spec_id = cluster.storages[0].machine.spec_id
         spec = kwargs["remote_spec_map"].get(spec_id)
-
+        temporary_ticket_type = [
+            TicketType.TENDBCLUSTER_ROLLBACK_CLUSTER,
+            TicketType.TENDBCLUSTER_ROLLBACK,
+            TicketType.TENDBCLUSTER_FIXPOINT_NEW,
+            TicketType.TENDBCLUSTER_FIXPOINT_EXIST,
+        ]
         cluster_extra_info = {
-            "cluster_spec": model_to_dict(spec) if spec else None,
+            "cluster_spec": spec.to_dict() if spec else None,
             "cluster_capacity": spec.capacity * machine_pair_cnt if spec else None,
             "spider_master": spider[TenDBClusterSpiderRole.SPIDER_MASTER],
             "spider_slave": spider[TenDBClusterSpiderRole.SPIDER_SLAVE],
@@ -136,7 +222,7 @@ class ListRetrieveResource(query.ListRetrieveResource):
             "machine_pair_cnt": machine_pair_cnt,
             "remote_db": remote_db,
             "remote_dr": remote_dr,
-            "temporary_info": cls.get_temporary_cluster_info(cluster, TicketType.TENDBCLUSTER_ROLLBACK_CLUSTER),
+            "temporary_info": cls.get_temporary_cluster_info(cluster, temporary_ticket_type),
         }
         cluster_info = super()._to_cluster_representation(
             cluster,
@@ -147,6 +233,8 @@ class ListRetrieveResource(query.ListRetrieveResource):
             cloud_info,
             biz_info,
             cluster_stats_map,
+            cluster_zone_map,
+            dns_to_clb,
             **kwargs,
         )
         cluster_info.update(cluster_extra_info)
@@ -178,6 +266,7 @@ class ListRetrieveResource(query.ListRetrieveResource):
             "inst_port",
             "status",
             "create_at",
+            "bk_biz_id",
             "machine__bk_host_id",
             "machine__spec_config",
             "machine__ip",
@@ -217,11 +306,11 @@ class ListRetrieveResource(query.ListRetrieveResource):
                 .filter(query_filters & filter_spider_master)
             )
             # ⚠️这里的union不要用链式union(eg: s1.union(s2).union(s3))，否则django解析sql语句会生成额外的扩号导致mysql语法错误。
-            instances = remote_insts.union(spider_insts, controller_insts).values(*fields).order_by("-create_at")
+            instances = remote_insts.union(spider_insts, controller_insts).values(*fields)
         else:
-            instances = remote_insts.union(spider_insts).values(*fields).order_by("-create_at")
+            instances = remote_insts.union(spider_insts).values(*fields)
 
-        return instances
+        return instances.order_by(query_params.get("ordering", "-create_at"))
 
     @classmethod
     def _filter_instance_hook(cls, bk_biz_id, query_params, instances, **kwargs):
@@ -252,9 +341,33 @@ class ListRetrieveResource(query.ListRetrieveResource):
         **kwargs,
     ) -> ResourceList:
         filter_params_map = {
-            "spider_role": Q(proxyinstance__tendbclusterspiderext__spider_role=query_params.get("spider_role"))
+            "spider_role": Q(proxyinstance__tendbclusterspiderext__spider_role=query_params.get("spider_role")),
+            "instance_role": (
+                Q(storageinstance__instance_role__in=query_params.get("instance_role", "").split(","))
+                | Q(
+                    proxyinstance__tendbclusterspiderext__spider_role__in=query_params.get("instance_role", "").split(
+                        ","
+                    )
+                )
+            ),
         }
-        return super()._list_machines(bk_biz_id, query_params, limit, offset, filter_params_map, **kwargs)
+        resource_list = super()._list_machines(bk_biz_id, query_params, limit, offset, filter_params_map, **kwargs)
+        proxy_ips = [
+            machine.get("ip")
+            for machine in resource_list.data
+            if machine.get("instance_role") == "proxy" and machine.get("ip")
+        ]
+        if proxy_ips:
+            machines = Machine.objects.filter(ip__in=proxy_ips).prefetch_related(
+                "proxyinstance_set__tendbclusterspiderext"
+            )
+            machine_map = {machine.ip: machine for machine in machines}
+            for machine in resource_list.data:
+                if machine.get("instance_role") == "proxy":
+                    ip = machine.get("ip")
+                    machine_obj = machine_map.get(ip)
+                    machine["instance_role"] = machine_obj.proxyinstance_set.all()[0].tendbclusterspiderext.spider_role
+        return resource_list
 
     @classmethod
     def get_topo_graph(cls, bk_biz_id: int, cluster_id: int) -> dict:
@@ -284,3 +397,58 @@ class ListRetrieveResource(query.ListRetrieveResource):
         """获取集群主节点信息"""
         cluster_id__primary_address_map = Cluster.get_cluster_id__primary_address_map(cluster_ids)
         return [{"cluster_id": k, "primary": v} for k, v in cluster_id__primary_address_map.items()]
+
+    @staticmethod
+    def common_query_instance(bk_biz_id: int, cluster_types: list, bk_host_ids: list) -> Tuple[List[Dict], List[Dict]]:
+        """实例通用属性查询"""
+        query_condition = Q(bk_biz_id=bk_biz_id, cluster_type__in=cluster_types)
+        if bk_host_ids:
+            query_condition = query_condition & Q(machine__bk_host_id__in=bk_host_ids)
+
+        # 获取remote实例的查询集
+        remote_insts = (
+            StorageInstance.objects.select_related("machine")
+            .prefetch_related("cluster")
+            .annotate(role=F("instance_role"), inst_port=F("port"))
+            .filter(query_condition)
+        )
+        # 获取spider实例的查询集
+        spider_insts = (
+            ProxyInstance.objects.select_related("machine")
+            .prefetch_related("cluster")
+            .annotate(role=F("tendbclusterspiderext__spider_role"), inst_port=F("port"))
+            .filter(query_condition)
+        )
+        headers = [
+            {"id": "ip_port", "name": _("实例")},
+            {"id": "instance_id", "name": _("ID")},
+            {"id": "status", "name": _("状态")},
+            {"id": "instance_role", "name": _("部署角色")},
+            {"id": "version", "name": _("版本")},
+            {"id": "master_domain", "name": _("所属集群")},
+            {"id": "ip", "name": _("IP")},
+            {"id": "bk_sub_zone", "name": _("园区")},
+            {"id": "bk_os_name", "name": _("操作系统")},
+            {"id": "create_at", "name": _("部署时间")},
+        ]
+        # 插入数据
+        data_list = []
+        for instances in [remote_insts, spider_insts]:
+            for ins in instances:
+                for cluster in ins.cluster.all():
+                    data_list.append(
+                        {
+                            "ip_port": ins.ip_port,
+                            "instance_id": ins.id,
+                            "status": ins.status,
+                            "instance_role": ins.role,
+                            "version": ins.version,
+                            "master_domain": cluster.immute_domain,
+                            "ip": ins.machine.ip,
+                            "bk_sub_zone": ins.machine.bk_sub_zone,
+                            "bk_os_name": ins.machine.bk_os_name,
+                            "create_at": datetime2str(ins.create_at),
+                        }
+                    )
+
+        return headers, data_list

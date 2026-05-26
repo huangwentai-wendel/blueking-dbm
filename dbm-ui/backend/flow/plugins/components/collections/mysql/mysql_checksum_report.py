@@ -8,13 +8,17 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+import base64
+import gzip
+import json
+
 from django.db.transaction import atomic
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from pipeline.component_framework.component import Component
 
 from backend.components import DRSApi
 from backend.constants import IP_PORT_DIVIDER
-from backend.flow.consts import CHECKSUM_DB, CHECKSUM_TABlE_PREFIX
+from backend.flow.consts import CHECKSUM_DB
 from backend.flow.plugins.components.collections.common.base_service import BaseService
 from backend.ticket.models import Ticket
 
@@ -29,16 +33,36 @@ class MySQLChecksumReportService(BaseService):
         kwargs = data.get_one_of_inputs("kwargs")
 
         skip_tables = []
-        if trans_data.checksum_report:
-            if trans_data.checksum_report["summaries"]:
-                for table_checksum in trans_data.checksum_report["summaries"]:
-                    if table_checksum["skipped"] != 0:
-                        skip_tables.append(table_checksum["table"])
+        try:
+            if trans_data.checksum_report:
+                raw_checksum_report = trans_data.checksum_report["raw_checksum_report"]
+                self.log_info(f"raw checksum report: {raw_checksum_report}")
+
+                checksum_report_byte = base64.b64decode(raw_checksum_report)
+
+                checksum_report_str = gzip.decompress(checksum_report_byte).decode("utf-8")
+                self.log_info(f"checksum report str: {checksum_report_str}")
+
+                checksum_report = json.loads(checksum_report_str)
+                self.log_info(f"checksum report: {checksum_report}")
+
+                if checksum_report["summaries"]:
+                    for table_checksum in checksum_report["summaries"]:
+                        if table_checksum["skipped"] != 0:
+                            skip_tables.append(table_checksum["table"])
+        except Exception as e:  # noqa
+            self.log_error(f"{e}")
+            return False
+
+        # repl_table = kwargs["repl_table"]
+        # if "." not in repl_table:
+        #     repl_table = f"{CHECKSUM_DB}{repl_table}"
 
         diff_sql, consistent_sql = self._generate_sql(
             global_data["master_ip"],
             global_data["master_port"],
-            "{}.{}{}".format(CHECKSUM_DB, CHECKSUM_TABlE_PREFIX, global_data["ran_str"]),
+            f"{CHECKSUM_DB}.{kwargs['repl_table']}"
+            # .format(CHECKSUM_DB, CHECKSUM_TABlE_PREFIX, kwargs["cluster_id"]),
         )
 
         address = "{}{}{}".format(global_data["slave_ip"], IP_PORT_DIVIDER, global_data["slave_port"])
@@ -91,13 +115,12 @@ class MySQLChecksumReportService(BaseService):
         self.log_info(_("uid:{}".format(global_data["uid"])))
 
         # 原子更新：将校验结果插入ticket信息中，用后后续ticket flow上下文获取
+
         with atomic():
             ticket = Ticket.objects.select_for_update().get(id=global_data["uid"])
             flags = ticket.details.get("is_consistent_list", {})
             flags.update({address: trans_data.is_consistent})
-            ticket.update_details(
-                is_consistent_list=flags, checksum_table="{}{}".format(CHECKSUM_TABlE_PREFIX, global_data["ran_str"])
-            )
+            ticket.update_details(is_consistent_list=flags, checksum_table=kwargs["repl_table"])
 
         return True
 

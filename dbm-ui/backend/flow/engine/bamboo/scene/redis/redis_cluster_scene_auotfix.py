@@ -15,14 +15,14 @@ from copy import deepcopy
 from dataclasses import asdict
 from typing import Any, Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.components import DBConfigApi
 from backend.components.dbconfig.constants import FormatType, LevelName
 from backend.configuration.constants import DBType
 from backend.constants import IP_PORT_DIVIDER
 from backend.db_meta import api
-from backend.db_meta.enums import ClusterType, InstanceRole
+from backend.db_meta.enums import ClusterEntryRole, ClusterType, InstanceRole
 from backend.db_meta.models import Cluster
 from backend.db_services.redis.util import is_predixy_proxy_type, is_twemproxy_proxy_type
 from backend.flow.consts import (
@@ -42,14 +42,18 @@ from backend.flow.engine.bamboo.scene.redis.atom_jobs import (
     RedisMakeSyncAtomJob,
     StorageRepLink,
 )
+from backend.flow.plugins.components.collections.common.add_alarm_shield import AddAlarmShieldComponent
+from backend.flow.plugins.components.collections.common.disable_alarm_shield import DisableAlarmShieldComponent
+from backend.flow.plugins.components.collections.redis.dns_manage import RedisDnsManageComponent
 from backend.flow.plugins.components.collections.redis.exec_actuator_script import ExecuteDBActuatorScriptComponent
 from backend.flow.plugins.components.collections.redis.exec_shell_script import ExecuteShellReloadMetaComponent
 from backend.flow.plugins.components.collections.redis.get_redis_payload import GetRedisActPayloadComponent
 from backend.flow.plugins.components.collections.redis.redis_db_meta import RedisDBMetaComponent
 from backend.flow.plugins.components.collections.redis.redis_ticket import RedisTicketComponent
+from backend.flow.plugins.components.collections.redis.redis_update_version import RedisUpdateVersionComponent
 from backend.flow.utils.base.payload_handler import PayloadHandler
 from backend.flow.utils.redis.redis_act_playload import RedisActPayload
-from backend.flow.utils.redis.redis_context_dataclass import ActKwargs, CommonContext
+from backend.flow.utils.redis.redis_context_dataclass import ActKwargs, CommonContext, DnsKwargs
 from backend.flow.utils.redis.redis_db_meta import RedisDBMeta
 from backend.flow.utils.redis.redis_proxy_util import get_cache_backup_mode, get_twemproxy_cluster_server_shards
 from backend.ticket.constants import TicketType
@@ -77,6 +81,7 @@ class RedisClusterAutoFixSceneFlow(object):
                  {"ip": "1.1.1.a","spec_id": 17,
                   "target": {"bk_cloud_id": 0,"bk_host_id": 216,"status": 1,"ip": "2.2.2.b"}
                  }],
+            "need_manual_confirm": True,
             }
         ]
     }
@@ -201,9 +206,11 @@ class RedisClusterAutoFixSceneFlow(object):
     # 这里整理替换所需要的参数
     def start_redis_auotfix(self):
         redis_pipeline, act_kwargs = self.__init_builder(_("REDIS-故障自愈"))
-        sub_pipelines = []
+        # sub_pipelines = []
+        cluster_ids = []
         for cluster_fix in self.data["infos"]:
             for cluster_id in cluster_fix["cluster_ids"]:
+                cluster_ids.append(int(cluster_id))
                 cluster_kwargs = deepcopy(act_kwargs)
                 cluster_info = self.get_cluster_info(self.data["bk_biz_id"], cluster_id)
                 flow_data = self.data
@@ -216,9 +223,11 @@ class RedisClusterAutoFixSceneFlow(object):
                     act_component_code=GetRedisActPayloadComponent.code,
                     kwargs=asdict(cluster_kwargs),
                 )
-                sub_pipelines.append(self.cluster_fix(flow_data, cluster_kwargs, cluster_fix))
+                # 单机多实例 ，让他串行跑吧
+                redis_pipeline.add_sub_pipeline(self.cluster_fix(flow_data, cluster_kwargs, cluster_fix))
+                # sub_pipelines.append(self.cluster_fix(flow_data, cluster_kwargs, cluster_fix))
 
-            redis_pipeline.add_parallel_sub_pipeline(sub_flow_list=sub_pipelines)
+            # redis_pipeline.add_parallel_sub_pipeline(sub_flow_list=sub_pipelines)
 
             # 主从的， 是以机器维度发起的自愈， 那么也以机器维度发起下架，方便主机回收
             # # #### 下架旧实例 （生产Ticket单据） ################################################## 完毕 ###
@@ -237,8 +246,8 @@ class RedisClusterAutoFixSceneFlow(object):
                     },
                 )
             # # #### 下架旧实例 ###################################################################### 完毕 ###
-
-        return redis_pipeline.run_pipeline()
+        return redis_pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=cluster_ids)
+        # return redis_pipeline.run_pipeline()
 
     # 组装&控制 集群替换流程
     def cluster_fix(self, flow_data, act_kwargs, fix_params):
@@ -246,6 +255,7 @@ class RedisClusterAutoFixSceneFlow(object):
 
         # 先补充slave
         if fix_params.get("redis_slave"):
+            act_kwargs.cluster["update_storage"] = True
             slave_kwargs = deepcopy(act_kwargs)
             sub_pipeline.add_sub_pipeline(
                 self.slave_fix(
@@ -253,13 +263,14 @@ class RedisClusterAutoFixSceneFlow(object):
                     slave_kwargs,
                     {
                         "redis_slave": fix_params.get("redis_slave"),
-                        "slave_spec": fix_params.get("resource_spec", {}).get("redis_slave", {}),
+                        "slave_spec": fix_params.get("redis_slave")[0].get("target", {}).get("spec", {}),
                     },
                 )
             )
 
         # 然后在搞定proxy
         if fix_params.get("proxy"):
+            act_kwargs.cluster["update_proxy"] = True
             proxy_kwargs = deepcopy(act_kwargs)
             sub_pipeline.add_sub_pipeline(
                 self.proxy_fix(
@@ -267,10 +278,15 @@ class RedisClusterAutoFixSceneFlow(object):
                     proxy_kwargs,
                     {
                         "proxy": fix_params.get("proxy"),
-                        "proxy_spec": fix_params.get("resource_spec", {}).get("proxy", {}),
+                        "proxy_spec": fix_params.get("proxy")[0].get("target", {}).get("spec", {}),
                     },
                 )
             )
+        sub_pipeline.add_act(
+            act_name=_("{}-更新版本").format(act_kwargs.cluster["immute_domain"]),
+            act_component_code=RedisUpdateVersionComponent.code,
+            kwargs=asdict(act_kwargs),
+        )
 
         return sub_pipeline.build_sub_process(sub_name=_("故障自愈-{}").format(act_kwargs.cluster["immute_domain"]))
 
@@ -372,6 +388,7 @@ class RedisClusterAutoFixSceneFlow(object):
                             "immute_domain": act_kwargs.cluster["immute_domain"],
                             "bk_cloud_id": act_kwargs.cluster["bk_cloud_id"],
                             "proxy": old_proxies,
+                            "need_manual_confirm": flow_data["fix_info"].get("need_manual_confirm", True),
                         }
                     ],
                 },
@@ -383,6 +400,32 @@ class RedisClusterAutoFixSceneFlow(object):
     def slave_fix(self, flow_data, sub_kwargs, slave_fix_info):
         sub_pipeline = SubBuilder(root_id=self.root_id, data=flow_data)
         slave_fix_detail = slave_fix_info["redis_slave"]
+        immute_domain = sub_kwargs.cluster["immute_domain"]
+        # 特别需要屏蔽：Persist 异常 critical; 主机单核CPU使用率 , 但是需要 蓝鲸监控的策略 ID，运行时才有）
+        # 收集自愈涉及的 slave IP 和对应的 master IP
+        _fix_ips = set()
+        for fix_link in slave_fix_detail:
+            old_slave, new_slave = fix_link["ip"], fix_link["target"]["ip"]
+            _fix_ips.add(old_slave)
+            _fix_ips.add(new_slave)
+            master_ip = sub_kwargs.cluster["slave_master_map"].get(old_slave)
+            if master_ip:
+                _fix_ips.add(master_ip)
+        sub_pipeline.add_act(
+            act_name=_("屏蔽集群告警-{}".format(immute_domain)),
+            act_component_code=AddAlarmShieldComponent.code,
+            kwargs={
+                **asdict(sub_kwargs),
+                "description": _("Redis自愈-屏蔽告警-{}").format(immute_domain),
+                "dimensions": [
+                    {"name": "appid", "values": [sub_kwargs.cluster["bk_biz_id"]]},
+                    {"name": "cluster_domain", "values": [immute_domain]},
+                    {"name": "bk_target_ip", "values": list(_fix_ips)},
+                ],
+                "duration_seconds": 3 * 3600,
+            },
+        )
+
         newslave_to_master, replace_link_info = {}, {}
 
         for fix_link in slave_fix_detail:
@@ -499,6 +542,8 @@ class RedisClusterAutoFixSceneFlow(object):
         # predixy类型的集群需要刷新配置文件 #################################################################
         if is_predixy_proxy_type(sub_kwargs.cluster["cluster_type"]):
             sed_args = []
+            new_slaves = [fix_link["target"]["ip"] for fix_link in slave_fix_detail]
+            old_slaves = [fix_link["ip"] for fix_link in slave_fix_detail]
             for fix_link in slave_fix_detail:
                 old_slave, new_slave = fix_link["ip"], fix_link["target"]["ip"]
                 for slave_port in sub_kwargs.cluster["slave_ports"][old_slave]:
@@ -525,7 +570,66 @@ class RedisClusterAutoFixSceneFlow(object):
                 act_component_code=ExecuteShellReloadMetaComponent.code,
                 kwargs=asdict(sub_kwargs),
             )
-        # predixy类型的集群需要刷新配置文件 ######################################################## 完毕 ###
+            # predixy类型的集群需要刷新配置文件 ######################################################## 完毕 ###
+
+            # rediscluster集群类型需要更新Nodes域名 ########################################################
+            sub_kwargs.cluster["nodes_domain"] = "nodes." + sub_kwargs.cluster["immute_domain"]
+            sub_kwargs.cluster["meta_func_name"] = RedisDBMeta.update_cluster_entry.__name__
+            sub_pipeline.add_act(
+                act_name=_("Redis-更新sbind_entry元数据"),
+                act_component_code=RedisDBMetaComponent.code,
+                kwargs=asdict(sub_kwargs),
+            )
+
+            # 增加nodes域名
+            access_sub_builder = AccessManagerAtomJob(
+                self.root_id,
+                flow_data,
+                sub_kwargs,
+                {
+                    "cluster_id": sub_kwargs.cluster["cluster_id"],
+                    "port": DEFAULT_REDIS_START_PORT,
+                    "add_ips": new_slaves,
+                    "op_type": DnsOpType.CREATE,
+                    "role": [ClusterEntryRole.NODE_ENTRY.value],
+                },
+            )
+            if access_sub_builder:
+                sub_pipeline.add_sub_pipeline(sub_flow=access_sub_builder)
+            # 如果这里为空，说明之前并不存在nodes接入层记录，此时，需要用另一种方式初始化nodes域名
+            else:
+                sub_kwargs.exec_ip = new_slaves
+                sub_pipeline.add_act(
+                    act_name=_("Redis-初始化nodes域名"),
+                    act_component_code=RedisDnsManageComponent.code,
+                    kwargs={
+                        **asdict(sub_kwargs),
+                        **asdict(
+                            DnsKwargs(
+                                dns_op_type=DnsOpType.CREATE,
+                                add_domain_name="nodes." + sub_kwargs.cluster["immute_domain"],
+                                dns_op_exec_port=DEFAULT_REDIS_START_PORT,
+                            )
+                        ),
+                    },
+                )
+
+            # 删除老实例的nodes域名
+            access_sub_builder = AccessManagerAtomJob(
+                self.root_id,
+                flow_data,
+                sub_kwargs,
+                {
+                    "cluster_id": sub_kwargs.cluster["cluster_id"],
+                    "port": DEFAULT_REDIS_START_PORT,
+                    "del_ips": old_slaves,
+                    "op_type": DnsOpType.RECYCLE_RECORD,
+                    "role": [ClusterEntryRole.NODE_ENTRY.value],
+                },
+            )
+            if access_sub_builder:
+                sub_pipeline.add_sub_pipeline(sub_flow=access_sub_builder)
+        # #### rediscluster集群类型需要更新Nodes域名 ############################################### 完毕 ###
 
         # 主从版本需要 刷新bkdbmon ########################################################
         if sub_kwargs.cluster["cluster_type"] == ClusterType.TendisRedisInstance.value:
@@ -559,6 +663,7 @@ class RedisClusterAutoFixSceneFlow(object):
                                 "immute_domain": sub_kwargs.cluster["immute_domain"],
                                 "bk_cloud_id": sub_kwargs.cluster["bk_cloud_id"],
                                 "redis_slave": old_slaves,
+                                "need_manual_confirm": flow_data["fix_info"].get("need_manual_confirm", True),
                             }
                         ],
                     },
@@ -571,9 +676,17 @@ class RedisClusterAutoFixSceneFlow(object):
                     "immute_domain": sub_kwargs.cluster["immute_domain"],
                     "bk_cloud_id": sub_kwargs.cluster["bk_cloud_id"],
                     "redis_slave": old_slaves,
+                    "need_manaul_confirm": flow_data["fix_info"].get("need_manual_confirm", True),
                 }
             )
         # # #### 下架旧实例 ###################################################################### 完毕 ###
+
+        # slave 自愈完成后解除告警屏蔽
+        sub_pipeline.add_act(
+            act_name=_("解除集群告警屏蔽-{}".format(immute_domain)),
+            act_component_code=DisableAlarmShieldComponent.code,
+            kwargs=asdict(sub_kwargs),
+        )
 
         return sub_pipeline.build_sub_process(sub_name=_("Slave替换-{}").format(sub_kwargs.cluster["cluster_type"]))
 

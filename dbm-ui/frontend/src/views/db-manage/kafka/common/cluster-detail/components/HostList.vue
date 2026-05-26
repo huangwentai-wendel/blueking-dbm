@@ -32,7 +32,7 @@
         <span v-bk-tooltips="batchShrinkDisabledInfo.tooltips">
           <AuthButton
             action-id="kafka_shrink"
-            class="ml8"
+            class="ml-8"
             :disabled="batchShrinkDisabledInfo.disabled || clusterData?.operationDisabled"
             :resource="clusterData.id"
             @click="handleShowShrink">
@@ -50,7 +50,7 @@
           }">
           <AuthButton
             action-id="kafka_replace"
-            class="ml8"
+            class="ml-8"
             :disabled="isBatchReplaceDisabeld || clusterData?.operationDisabled"
             :resource="clusterData.id"
             @click="handleShowReplace">
@@ -59,7 +59,11 @@
         </span>
       </OperationBtnStatusTips>
       <BkDropdown
-        class="ml8"
+        class="ml-8"
+        :popover-options="{
+          clickContentAutoHide: true,
+        }"
+        trigger="click"
         @hide="() => (isCopyDropdown = false)"
         @show="() => (isCopyDropdown = true)">
         <BkButton>
@@ -85,18 +89,15 @@
           </BkDropdownMenu>
         </template>
       </BkDropdown>
-      <DbSearchSelect
-        :data="searchSelectData"
-        :get-menu-list="getSearchMenuList"
-        :model-value="searchSelectValue"
+      <DbQuickSearch
+        v-model="quickSearchValue"
+        :data="quickSearchData"
         :placeholder="t('请输入或选择条件搜索')"
-        style="flex: 1; max-width: 560px; margin-left: auto"
-        unique-select
-        @change="handleSearchValueChange" />
+        style="flex: 1; max-width: 560px; margin-left: auto" />
     </div>
     <BkAlert
       v-if="clusterData?.operationStatusText"
-      class="mb16"
+      class="mb-16"
       theme="warning">
       <I18nT
         keypath="当前集群有xx暂时不能进行其他操作跳转xx查看进度"
@@ -117,37 +118,37 @@
       </I18nT>
     </BkAlert>
     <DbTable
-      ref="tableRef"
+      ref="hostTableRef"
       :data-source="dataSource"
-      primary-key="bk_host_id"
-      :row-config="{
-        useKey: true,
-        keyField: 'bk_host_id',
-      }"
+      :filter-value="quickSearchValue"
+      row-key="bk_host_id"
       selectable
+      @filter-change="handleFilterChange"
       @selection="handleSelectChange">
-      <HostListFieldColumn />
-      <BkTableColumn
-        field=""
+      <HostListFieldColumn
+        :cluster-id="clusterData.id"
+        :cluster-type="ClusterTypes.KAFKA" />
+      <TableColumn
+        col-key="row-operation"
         fixed="right"
-        :label="t('操作')"
+        :title="t('操作')"
         :width="120">
-        <template #default="{ data }: { data: KafkaMachineModel }">
+        <template #default="{ row }: { row: KafkaMachineModel }">
           <!-- 缩容按钮 -->
           <OperationBtnStatusTips
             v-db-console="'kafka.nodeList.scaleDown'"
             :data="clusterData">
             <span
-              v-bk-tooltips="checkNodeShrinkDisable(data).tooltips"
-              class="ml8">
+              v-bk-tooltips="checkNodeShrinkDisable(row).tooltips"
+              class="ml-8">
               <AuthButton
                 action-id="kafka_shrink"
-                :disabled="checkNodeShrinkDisable(data).disabled || clusterData?.operationDisabled"
+                :disabled="checkNodeShrinkDisable(row).disabled || clusterData?.operationDisabled"
                 :permission="clusterData.permission.kafka_shrink"
                 :resource="clusterData.id"
                 text
                 theme="primary"
-                @click="handleShrinkOne(data)">
+                @click="handleShrinkOne(row)">
                 {{ t('缩容') }}
               </AuthButton>
             </span>
@@ -159,79 +160,58 @@
             :data="clusterData">
             <AuthButton
               action-id="kafka_replace"
-              class="ml8"
+              class="ml-8"
               :disabled="clusterData?.operationDisabled"
               :permission="clusterData.permission.kafka_replace"
               :resource="clusterData.id"
               text
               theme="primary"
-              @click="handleReplaceOne(data)">
+              @click="handleReplaceOne(row)">
               {{ t('替换') }}
             </AuthButton>
           </OperationBtnStatusTips>
         </template>
-      </BkTableColumn>
+      </TableColumn>
     </DbTable>
-    <DbSideslider
+    <ClusterExpansion
+      v-if="clusterData"
       v-model:is-show="isShowExpandsion"
-      quick-close
-      :title="t('xx扩容【name】', { title: 'Kafka', name: clusterData?.cluster_name })"
-      :width="960">
-      <ClusterExpansion
-        v-if="clusterData"
-        :data="clusterData"
-        @change="handleOperationChange" />
-    </DbSideslider>
-    <DbSideslider
+      :cluster-data="clusterData"
+      @change="handleOperationChange" />
+    <ClusterShrink
+      v-if="clusterData"
       v-model:is-show="isShowShrink"
-      :title="t('xx缩容【name】', { title: 'Kafka', name: clusterData?.cluster_name })"
-      :width="960">
-      <ClusterShrink
-        v-if="clusterData"
-        :cluster-id="clusterData.id"
-        :data="clusterData"
-        :machine-list="operationNodeList"
-        @change="handleOperationChange" />
-    </DbSideslider>
-    <DbSideslider
+      :cluster-data="clusterData"
+      :machine-list="operationNodeList"
+      @change="handleOperationChange" />
+    <ClusterReplace
+      v-if="clusterData"
       v-model:is-show="isShowReplace"
-      :title="t('xx替换【name】', { title: 'Kafka', name: clusterData?.cluster_name })"
-      :width="1050">
-      <ClusterReplace
-        v-if="clusterData"
-        :data="clusterData"
-        :machine-list="operationNodeList"
-        @change="handleOperationChange" />
-    </DbSideslider>
+      :cluster-data="clusterData"
+      :machine-list="operationNodeList"
+      @change="handleOperationChange" />
   </div>
 </template>
 <script setup lang="tsx">
   import _ from 'lodash';
   import { useI18n } from 'vue-i18n';
-  import { useRoute, useRouter } from 'vue-router';
 
   import KafkaDetailModel from '@services/model/kafka/kafka-detail';
   import KafkaMachineModel from '@services/model/kafka/kafka-machine';
 
-  import { useUrlSearch } from '@hooks';
-
   import { ClusterTypes } from '@common/const';
 
-  import {
-    getSearchSelectValue,
-    HostListFieldColumn,
-    URL_HOST_MEMO_KEY,
-    useCopyMachineIp,
-  } from '@views/db-manage/common/cluster-details';
+  import DbTable from '@components/db-table/IndexNew.vue';
+
+  import { HostListFieldColumn, useCopyMachineIp, useHostSearchSelect } from '@views/db-manage/common/cluster-details';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
   import useClusterMachineList from '@views/db-manage/hooks/useClusterMachineList';
   import ClusterExpansion from '@views/db-manage/kafka/common/expansion/Index.vue';
   import ClusterReplace from '@views/db-manage/kafka/common/replace/Index.vue';
   import ClusterShrink from '@views/db-manage/kafka/common/shrink/Index.vue';
 
-  import { getSearchSelectorParams } from '@utils';
-
   interface Props {
+    activePanel: string;
     clusterData: KafkaDetailModel;
   }
 
@@ -251,84 +231,36 @@
       options.disabled = true;
       options.tooltips.disabled = false;
       options.tooltips.content = t('节点类型不支持缩容');
-    } else {
-      // 其它类型的节点数不能全部被缩容，至少保留一个
-      let brokerNum = 0;
-      tableRef.value!.getData<KafkaMachineModel>().forEach((nodeItem) => {
-        if (nodeItem.isBroker) {
-          brokerNum = brokerNum + 1;
-        }
-      });
-
-      if (node.isBroker && brokerNum < 2) {
-        options.disabled = true;
-        options.tooltips.disabled = false;
-        options.tooltips.content = t('Broker类型节点至少保留一个');
-      }
     }
 
     return options;
   };
 
   const { t } = useI18n();
-  const route = useRoute();
-  const router = useRouter();
-
-  const urlPaylaod = JSON.parse(decodeURIComponent(String(route.query[URL_HOST_MEMO_KEY] || '{}')));
-  const { getSearchParams } = useUrlSearch();
   const { copyAllIp, copyNotAliveIp } = useCopyMachineIp();
   const fetchClusterMachineList = useClusterMachineList(ClusterTypes.KAFKA);
+
+  const hostTableRef = ref<InstanceType<typeof DbTable>>();
+  const { initQuickSearchValue, quickSearchData, quickSearchValue } = useHostSearchSelect(ClusterTypes.KAFKA, {
+    clusterId: props.clusterData.id,
+    serviceHandler: () => {
+      fetchData();
+    },
+  });
+
+  watch(
+    () => props.activePanel,
+    () => {
+      initQuickSearchValue();
+    },
+  );
 
   const dataSource = (params: Parameters<typeof fetchClusterMachineList>[0]) =>
     fetchClusterMachineList({
       ...params,
       cluster_ids: `${props.clusterData.id}`,
     });
-  const getSearchMenuList = (payload: { children: any[]; id: string }) => {
-    return Promise.resolve().then(() => {
-      if (payload.id === 'instance_role') {
-        return _.uniqBy(
-          tableRef.value!.getData<KafkaMachineModel>().map((item) => ({
-            id: item.instance_role,
-            name: item.instance_role,
-          })),
-          'id',
-        );
-      }
-      return payload.children || [];
-    });
-  };
-  const searchSelectData = [
-    {
-      id: 'ip',
-      name: 'IP',
-    },
-    {
-      id: 'instance_role',
-      name: t('部署角色'),
-    },
-    {
-      id: 'region',
-      name: t('地域'),
-    },
-    {
-      id: 'bk_sub_zone',
-      name: t('园区'),
-    },
-    {
-      id: 'bk_os_name',
-      name: t('操作系统'),
-    },
 
-    {
-      id: 'bk_svr_device_cls_name',
-      name: t('机型'),
-    },
-  ];
-
-  const searchSelectValue = shallowRef<ReturnType<typeof getSearchSelectValue>>([]);
-
-  const tableRef = useTemplateRef('tableRef');
   const isShowReplace = ref(false);
   const isShowExpandsion = ref(false);
   const isShowShrink = ref(false);
@@ -338,13 +270,6 @@
   const selectedMachineList = shallowRef<Array<KafkaMachineModel>>([]);
 
   const isBatchReplaceDisabeld = computed(() => selectedMachineList.value.length < 1);
-  const selectedMachineMap = computed(() => {
-    return selectedMachineList.value.reduce<Record<number, KafkaMachineModel>>((result, item) => {
-      return Object.assign(result, {
-        [item.bk_host_id]: item,
-      });
-    }, {});
-  });
 
   const batchShrinkDisabledInfo = computed(() => {
     const options = {
@@ -366,37 +291,17 @@
       options.tooltips.content = t('仅Broker类型节点支持缩容');
       return options;
     }
-    let brokerNum = 0;
-    tableRef.value!.getData<KafkaMachineModel>().forEach((nodeItem) => {
-      if (selectedMachineMap.value[nodeItem.bk_host_id]) {
-        return;
-      }
-      if (nodeItem.isBroker) {
-        brokerNum = brokerNum + 1;
-      }
-    });
 
-    if (brokerNum < 1) {
-      options.disabled = true;
-      options.tooltips.disabled = false;
-      options.tooltips.content = t('Broker类型节点至少保留一个');
-    }
     return options;
   });
 
   const fetchData = () => {
-    const serachParams = getSearchSelectorParams(searchSelectValue.value);
-    tableRef.value?.fetchData(serachParams);
-
-    router.replace({
-      query: {
-        ...getSearchParams(),
-        [URL_HOST_MEMO_KEY]: encodeURIComponent(JSON.stringify(serachParams)),
-      },
+    hostTableRef?.value?.fetchData({
+      ...quickSearchValue.value,
     });
   };
 
-  const handleSelectChange = (_: any[], list: KafkaMachineModel[]) => {
+  const handleSelectChange = (_key: string[], list: KafkaMachineModel[]) => {
     selectedMachineList.value = list;
   };
 
@@ -411,12 +316,12 @@
 
   // 复制所有 IP
   const handleCopyAll = () => {
-    copyAllIp(tableRef.value!.getData<KafkaMachineModel>());
+    copyAllIp(hostTableRef.value!.getData());
   };
 
   // 复制异常 IP
   const handleCopeFailed = () => {
-    copyNotAliveIp(tableRef.value!.getData<KafkaMachineModel>());
+    copyNotAliveIp(hostTableRef.value!.getData());
   };
 
   // 复制已选 IP
@@ -445,14 +350,9 @@
     isShowReplace.value = true;
   };
 
-  const handleSearchValueChange = _.debounce((payload: any) => {
-    searchSelectValue.value = payload;
-    fetchData();
-  }, 100);
-
-  onMounted(() => {
-    searchSelectValue.value = getSearchSelectValue(searchSelectData, urlPaylaod);
-  });
+  const handleFilterChange = (filterValue: Record<string, any>) => {
+    quickSearchValue.value = filterValue;
+  };
 </script>
 <style lang="less">
   .kafka-detail-host-list {

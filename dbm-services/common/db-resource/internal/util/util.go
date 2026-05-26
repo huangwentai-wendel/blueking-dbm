@@ -24,8 +24,8 @@ import (
 func CleanOsName(osName string) string {
 	tr := regexp.MustCompile(`(?i)^tencent`)
 	if tr.MatchString(strings.TrimSpace(osName)) {
-		r := regexp.MustCompile(`\d+(.\d)+`)
-		return "tliunx-" + r.FindString(osName)
+		r := regexp.MustCompile(`\d+(\.\d+)*`)
+		return "tlinux-" + r.FindString(osName)
 	}
 	wr := regexp.MustCompile(`(?i)Windows\s*Server\s*\d\d\d\d`)
 	if wr.MatchString(osName) {
@@ -47,4 +47,9 @@ func TransInnerSwitchIpAsNetDeviceId(inner_switch_ips string) string {
 		fakeNetDeviceIdList = append(fakeNetDeviceIdList, fmt.Sprintf("%08x", crc32.Checksum([]byte(ip), crc32q)))
 	}
 	return strings.Join(lo.Uniq(fakeNetDeviceIdList), ",")
+}
+
+// CleanStr clean string
+func CleanStr(v string) string {
+	return strings.ReplaceAll(strings.TrimSpace(v), "\"", "")
 }

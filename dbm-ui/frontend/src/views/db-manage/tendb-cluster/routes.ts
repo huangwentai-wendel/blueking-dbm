@@ -30,7 +30,6 @@ const tendbClusterInstanceRoute = {
   path: 'instance-list',
   name: 'tendbClusterInstance',
   meta: {
-    fullscreen: true,
     navName: t('TendbCluster分布式集群_实例视图'),
   },
   component: () => import('@views/db-manage/tendb-cluster/instance-list/Index.vue'),
@@ -85,98 +84,69 @@ const spiderToolboxRoute = {
   },
   component: () => import('@views/db-manage/tendb-cluster/toolbox/Index.vue'),
   children: [
-    {
-      path: 'sql-execute/:step?',
-      name: 'spiderSqlExecute',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.sqlExecute',
-        navName: t('SQL变更执行'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/sql-execute/Index.vue'),
-    },
+    createRouteItem(TicketTypes.TENDBCLUSTER_IMPORT_SQLFILE, t('变更SQL执行'), {}, { params: '/:step?' }),
     createRouteItem(TicketTypes.TENDBCLUSTER_RENAME_DATABASE, t('DB 重命名'), {
       dbConsole: 'tendbCluster.toolbox.dbRename',
     }),
-    {
-      path: 'master-slave-swap/:page?',
-      name: 'spiderMasterSlaveSwap',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.masterSlaveSwap',
-        navName: t('主从互切'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/master-slave-swap/Index.vue'),
-    },
-    {
-      path: 'master-failover/:page?',
-      name: 'spiderMasterFailover',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.masterFailover',
-        navName: t('主库故障切换'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/master-failover/Index.vue'),
-    },
+    createRouteItem(TicketTypes.TENDBCLUSTER_MASTER_SLAVE_SWITCH, t('主从互切'), {
+      dbConsole: 'tendbCluster.toolbox.masterSlaveSwap',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_INSTANCE_FAIL_OVER, t('主库故障切换'), {
+      dbConsole: 'tendbCluster.toolbox.instanceFailover',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_MASTER_FAIL_OVER, t('主库故障切换'), {
+      dbConsole: 'tendbCluster.toolbox.masterFailover',
+    }),
     createRouteItem(TicketTypes.TENDBCLUSTER_NODE_REBALANCE, t('集群容量变更'), {
       dbConsole: 'tendbCluster.toolbox.capacityChange',
     }),
-    {
-      path: 'proxy-scale-up/:page?',
-      name: 'SpiderProxyScaleUp',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.proxyScaleUp',
-        navName: t('扩容接入层'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/proxy-scale-up/Index.vue'),
-    },
-    createRouteItem(TicketTypes.TENDBCLUSTER_SPIDER_REDUCE_NODES, t('缩容接入层'), {
+    createRouteItem(TicketTypes.TENDBCLUSTER_SPIDER_ADD_NODES, t('添加 Spider'), {
+      dbConsole: 'tendbCluster.toolbox.proxyScaleUp',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_SPIDER_REDUCE_NODES, t('减少 Spider'), {
       dbConsole: 'tendbCluster.toolbox.proxyScaleDown',
     }),
-    createRouteItem(TicketTypes.TENDBCLUSTER_SPIDER_SWITCH_NODES, t('替换接入层'), {
-      dbConsole: 'tendbCluster.toolbox.spiderSwitchNodes',
+    createRouteItem(TicketTypes.TENDBCLUSTER_SPIDER_CONF_UP_DOWN, t('Spider 升降配'), {
+      dbConsole: 'tendbCluster.toolbox.spiderConfUpDown',
     }),
-    {
-      path: 'proxy-slave-apply/:page?',
-      name: 'SpiderProxySlaveApply',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.proxySlaveApply',
-        navName: t('部署只读接入层'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/proxy-slave-apply/Index.vue'),
-    },
+    createRouteItem(TicketTypes.TENDBCLUSTER_SPIDER_SWITCH_NODES, t('替换 Spider'), {
+      dbConsole: 'tendbCluster.toolbox.switchNodes',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_SPIDER_SLAVE_APPLY, t('部署只读接入层'), {
+      dbConsole: 'tendbCluster.toolbox.proxySlaveApply',
+    }),
     createRouteItem(TicketTypes.TENDBCLUSTER_SPIDER_MNT_APPLY, t('添加运维节点'), {
       dbConsole: 'tendbCluster.toolbox.addMnt',
     }),
-    {
-      path: 'db-table-backup/:page?',
-      name: 'spiderDbTableBackup',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.dbTableBackup',
-        navName: t('库表备份'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/db-table-backup/Index.vue'),
-    },
-    {
-      path: 'db-backup/:page?',
-      name: 'spiderDbBackup',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.dbBackup',
-        navName: t('全库备份'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/db-backup/Index.vue'),
-    },
-    // 库表闪回
-    {
-      path: 'flashback/:page?',
-      name: 'spiderFlashback',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.flashback',
-        navName: t('闪回'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/flashback/Index.vue'),
-    },
-    // 记录级闪回
-    // 两个闪回两个路由，这里没问题
-    createRouteItem(TicketTypes.TENDBCLUSTER_FLASHBACK, t('闪回'), {
+    createRouteItem(TicketTypes.TENDBCLUSTER_REMOTE_UPGRADE, t('版本升级'), {
+      dbConsole: 'tendbCluster.toolbox.remoteUpgrade',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_LOCAL_UPGRADE, t('版本升级'), {
+      dbConsole: 'tendbCluster.toolbox.localUpgrade',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_SPIDER_UPGRADE, t('版本升级'), {
+      dbConsole: 'tendbCluster.toolbox.spiderUpgrade',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_MIGRATE_UPGRADE, t('版本升级'), {
+      dbConsole: 'tendbCluster.toolbox.migateUpgrade',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_DB_TABLE_BACKUP, t('库表备份'), {
+      dbConsole: 'tendbCluster.toolbox.dbTableBackup',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_FULL_BACKUP, t('全库备份'), {
+      dbConsole: 'tendbCluster.toolbox.dbBackup',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_FLASHBACK, t('回档'), {
       dbConsole: 'tendbCluster.toolbox.flashback',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_ROLLBACK, t('回档'), {
+      dbConsole: 'tendbCluster.toolbox.rollback',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_FIXPOINT_EXIST, t('构造'), {
+      dbConsole: 'tendbCluster.toolbox.fixpointExist',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_FIXPOINT_NEW, t('构造'), {
+      dbConsole: 'tendbCluster.toolbox.fixpointNew',
     }),
     createRouteItem(TicketTypes.TENDBCLUSTER_ROLLBACK_CLUSTER, t('定点构造'), {
       dbConsole: 'tendbCluster.toolbox.rollback',
@@ -190,55 +160,28 @@ const spiderToolboxRoute = {
       },
       component: () => import('@views/db-manage/tendb-cluster/rollback-record/Index.vue'),
     },
-    {
-      path: 'db-clear/:page?',
-      name: 'spiderDbClear',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.dbClear',
-        navName: t('清档'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/db-clear/Index.vue'),
-    },
-    {
-      path: 'checksum/:page?',
-      name: 'spiderChecksum',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.checksum',
-        navName: t('数据校验修复'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/checksum/Index.vue'),
-    },
-    {
-      path: 'privilege-clone-client/:page?',
-      name: 'spiderPrivilegeCloneClient',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.clientPermissionClone',
-        navName: t('客户端权限克隆'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/privilege-clone-client/Index.vue'),
-    },
-    {
-      path: 'privilege-clone-inst/:page?',
-      name: 'spiderPrivilegeCloneInst',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.dbInstancePermissionClone',
-        navName: t('DB 实例权限克隆'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/privilege-clone-inst/Index.vue'),
-    },
-    {
-      path: 'openarea-template',
-      name: 'spiderOpenareaTemplate',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.openareaTemplat',
-        navName: t('开区模版'),
-      },
-      component: () => import('@views/db-manage/tendb-cluster/openarea-template/Index.vue'),
-    },
+    createRouteItem(TicketTypes.TENDBCLUSTER_TRUNCATE_DATABASE, t('清档'), {
+      dbConsole: 'tendbCluster.toolbox.dbClear',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_CHECKSUM, t('数据校验修复'), {
+      dbConsole: 'tendbCluster.toolbox.checksum',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_CLIENT_CLONE_RULES, t('客户端权限克隆'), {
+      dbConsole: 'tendbCluster.toolbox.clientPermissionClone',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_INSTANCE_CLONE_RULES, t('DB 实例权限克隆'), {
+      dbConsole: 'tendbCluster.toolbox.dbInstancePermissionClone',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_OPEN_AREA, t('开区模版'), {
+      dbConsole: 'tendbCluster.toolbox.openAreaTemplate',
+    }),
     createRouteItem(TicketTypes.TENDBCLUSTER_MIGRATE_CLUSTER, t('迁移主从'), {
       dbConsole: 'tendbCluster.toolbox.masterSlaveClone',
     }),
     createRouteItem(TicketTypes.TENDBCLUSTER_RESTORE_LOCAL_SLAVE, t('重建从库'), {
+      dbConsole: 'tendbCluster.toolbox.slaveLocalRebuild',
+    }),
+    createRouteItem(TicketTypes.TENDBCLUSTER_RESTORE_SLAVE, t('重建从库'), {
       dbConsole: 'tendbCluster.toolbox.slaveRebuild',
     }),
     {
@@ -250,14 +193,9 @@ const spiderToolboxRoute = {
       },
       component: () => import('@views/db-manage/tendb-cluster/webconsole/Index.vue'),
     },
-    {
-      path: 'toolbox-result/:ticketType?/:ticketId?',
-      name: 'TendbclusterToolboxResult',
-      meta: {
-        dbConsole: 'tendbCluster.toolbox.toolboxResult',
-      },
-      component: () => import('@views/db-manage/common/toolbox-result/Index.vue'),
-    },
+    createRouteItem(TicketTypes.TENDBCLUSTER_CLUSTER_STANDARDIZE, t('集群标准化'), {
+      dbConsole: 'tendbCluster.toolbox.clusterStandardize',
+    }),
   ],
 };
 
@@ -266,6 +204,7 @@ const renderRoutes = [
     path: 'tendb-cluster',
     name: 'SpiderManage',
     meta: {
+      dbType: DBTypes.TENDBCLUSTER,
       navName: t('Spider_集群管理'),
     },
     redirect: {
@@ -277,7 +216,6 @@ const renderRoutes = [
         path: 'cluster-list/:clusterId?',
         name: 'tendbClusterList',
         meta: {
-          fullscreen: true,
           navName: t('TendbCluster分布式集群_集群管理'),
         },
         component: () => import('@views/db-manage/tendb-cluster/cluster-list/Index.vue'),
@@ -293,27 +231,27 @@ const renderRoutes = [
       },
       {
         path: 'openarea-template-create',
-        name: 'spiderOpenareaTemplateCreate',
+        name: 'TendbClusterOpenareaTemplateCreate',
         meta: {
           navName: t('新建开区模板'),
         },
-        component: () => import('@views/db-manage/tendb-cluster/openarea-template-create/Index.vue'),
+        component: () => import('@views/db-manage/tendb-cluster/TENDBCLUSTER_OPEN_AREA/template-create/Index.vue'),
       },
       {
         path: 'openarea-template-edit/:id',
-        name: 'spiderOpenareaTemplateEdit',
+        name: 'TendbClusterOpenareaTemplateEdit',
         meta: {
           navName: t('编辑开区模板'),
         },
-        component: () => import('@views/db-manage/tendb-cluster/openarea-template-create/Index.vue'),
+        component: () => import('@views/db-manage/tendb-cluster/TENDBCLUSTER_OPEN_AREA/template-create/Index.vue'),
       },
       {
         path: 'openarea-create/:id',
-        name: 'spiderOpenareaCreate',
+        name: 'TendbClusterOpenareaCreate',
         meta: {
           navName: t('新建开区'),
         },
-        component: () => import('@views/db-manage/tendb-cluster/openarea-create/Index.vue'),
+        component: () => import('@views/db-manage/tendb-cluster/TENDBCLUSTER_OPEN_AREA/create/Index.vue'),
       },
     ] as RouteRecordRaw[],
   },

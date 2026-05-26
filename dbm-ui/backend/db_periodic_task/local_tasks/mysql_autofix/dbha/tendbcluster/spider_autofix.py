@@ -8,109 +8,199 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
+import logging
+import uuid
+from typing import List
 
-from backend.db_meta.enums import InstancePhase, InstanceStatus, MachineType
-from backend.db_meta.models import Cluster, ProxyInstance
-from backend.db_monitor.models import MySQLAutofixTicketStatus, MySQLAutofixTodo
-from backend.db_periodic_task.local_tasks.mysql_autofix.dbha.group_todo import GroupedTodo
-from backend.db_periodic_task.local_tasks.mysql_autofix.exception import (
-    MySQLDBHAAutofixBadInstanceStatus,
-    MySQLDBHAAutofixSpiderMultiClusters,
-)
+from django.utils.translation import gettext_lazy as _
+
+from backend.components.bkmonitorv3.client import BKMonitorV3EventApi
+from backend.db_meta.enums import MachineType, TenDBClusterSpiderRole
+from backend.db_meta.models import Machine, ProxyInstance
+from backend.db_monitor.constants import MonitorEventType
+from backend.db_monitor.dataclass import BaseEventBody, MonitorEvent
+from backend.db_monitor.models import MySQLDBHAAutofixTicketPriority, MySQLDBHAAutofixTicketStageQueue, MySQLDBHAEvent
 from backend.db_services.dbbase.constants import IpSource
-from backend.ticket.builders.common.base import HostRecycleSerializer
-from backend.ticket.builders.common.constants import ShrinkType
 from backend.ticket.constants import TicketType
-from backend.ticket.models import Ticket
+
+logger = logging.getLogger("celery.mysql_dbha_autofix")
 
 
-def spider_autofix(gtd: GroupedTodo):
+def replace_spider(cluster_ids: List[int], machine_type: MachineType, events: List[MySQLDBHAEvent]):
     """
-    1. 踢除故障 spider, 自动过单, 自动执行
-    2. 提一个扩容单, 自动过单, 人工执行
-    代码顺序实现为先生成扩容, 再踢除. 会比较好写
+    DBM 不允许 spider 机器在多集群共享
+    spider 替换单据也不支持
+    所以这里不考虑 len(cluster_ids) > 1 的情况
     """
-    records = MySQLAutofixTodo.objects.filter(check_id=gtd.check_id)
 
-    proxies = list(
-        ProxyInstance.objects.filter(
-            machine__ip=gtd.ip,
-            machine__bk_cloud_id=gtd.bk_cloud_id,
-            status=InstanceStatus.UNAVAILABLE,
-            phase=InstancePhase.ONLINE,
-            machine_type=MachineType.SPIDER,
-        ).prefetch_related("machine")
-    )
-    if len(proxies) != records.count():
-        raise MySQLDBHAAutofixBadInstanceStatus(machine_type=gtd.machine_type, ip=gtd.ip)
+    # Todo 理论上, 在events中ip应该是唯一的
 
-    if len(gtd.cluster_ids) > 1:
-        raise MySQLDBHAAutofixSpiderMultiClusters(check_id=gtd.check_id, ip=gtd.ip, cluster_ids=gtd.cluster_ids)
+    spider_master_events = []
+    spider_slave_events = []
+    for ev in events:
+        try:
+            spider_role = ProxyInstance.objects.get(machine__ip=ev.ip, port=ev.port).tendbclusterspiderext.spider_role
+        except Exception:  # noqa
+            logger.exception(
+                "[tendbcluster.replace_spider] failed to get spider_role for ip=%s, port=%d",
+                ev.ip,
+                ev.port,
+            )
+            continue
 
-    cluster_id = gtd.cluster_ids[0]
-    cluster_obj = Cluster.objects.get(pk=cluster_id)
+        if spider_role == TenDBClusterSpiderRole.SPIDER_MASTER:
+            spider_master_events.append(ev)
+        elif spider_role == TenDBClusterSpiderRole.SPIDER_SLAVE:
+            spider_slave_events.append(ev)
+        else:
+            logger.warning(
+                "[tendbcluster.replace_spider] unexpected spider_role=%s for ip=%s, port=%d",
+                spider_role,
+                ev.ip,
+                ev.port,
+            )
 
-    # 自动审核, 人工执行, 不跟踪状态
-    Ticket.create_ticket(
-        ticket_type=TicketType.MYSQL_DBHA_AUTOFIX_SPIDER_ADD,
-        creator="system",
-        bk_biz_id=gtd.bk_biz_id,
-        remark=TicketType.MYSQL_DBHA_AUTOFIX_SPIDER_ADD,
-        details={
-            "bk_cloud_id": gtd.bk_cloud_id,
-            "bk_biz_id": gtd.bk_biz_id,
-            "ip_source": IpSource.RESOURCE_POOL,
-            "infos": [
-                {
-                    "cluster_id": cluster_id,
-                    "add_spider_role": proxies[0].tendbclusterspiderext.spider_role,
-                    "resource_spec": {
-                        "spider": {
-                            "spec_id": proxies[0].machine.spec_id,
-                            "count": 1,
-                            "location_spec": {
-                                "city": cluster_obj.region,
-                                "sub_zone_ids": [proxies[0].machine.bk_sub_zone_id],
-                            },
-                        }
-                    },
-                }
-            ],
-        },
+    logger.info(
+        "[tendbcluster.replace_spider] cluster_ids=%s, spider_master_ips=%s, spider_slave_ips=%s",
+        cluster_ids,
+        [ev.ip for ev in spider_master_events],
+        [ev.ip for ev in spider_slave_events],
     )
 
-    tk = Ticket.create_ticket(
-        ticket_type=TicketType.MYSQL_DBHA_AUTOFIX_SPIDER_REDUCE,
-        creator="system",
-        bk_biz_id=gtd.bk_biz_id,
-        remark=TicketType.MYSQL_DBHA_AUTOFIX_SPIDER_REDUCE,
-        details={
-            "bk_cloud_id": gtd.bk_cloud_id,
-            "bk_biz_id": gtd.bk_biz_id,
+    if spider_master_events:
+        replace_spider_by_role(
+            cluster_ids=cluster_ids,
+            spider_role=TenDBClusterSpiderRole.SPIDER_MASTER,
+            events=spider_master_events,
+            priority=MySQLDBHAAutofixTicketPriority.P1,
+        )
+
+    if spider_slave_events:
+        replace_spider_by_role(
+            cluster_ids=cluster_ids,
+            spider_role=TenDBClusterSpiderRole.SPIDER_SLAVE,
+            events=spider_slave_events,
+            priority=MySQLDBHAAutofixTicketPriority.P3,
+        )
+
+
+def replace_spider_by_role(
+    cluster_ids: List[int],
+    spider_role: TenDBClusterSpiderRole,
+    events: List[MySQLDBHAEvent],
+    priority: MySQLDBHAAutofixTicketPriority,
+):
+    spec_ids = set()
+
+    spider_old_ip_list = []
+    for ev in events:
+        try:
+            m = Machine.objects.get(bk_cloud_id=ev.bk_cloud_id, ip=ev.ip)
+        except Exception:  # noqa
+            logger.exception(
+                "[tendbcluster.replace_spider_by_role] failed to get machine for ip=%s, bk_cloud_id=%d",
+                ev.ip,
+                ev.bk_cloud_id,
+            )
+            continue
+        spider_old_ip_list.append(
+            {
+                "bk_cloud_id": ev.bk_cloud_id,
+                "ip": ev.ip,
+                "bk_host_id": m.bk_host_id,
+                "bk_biz_id": ev.bk_biz_id,
+                "port": ev.port,
+            }
+        )
+
+    if not spider_old_ip_list:
+        logger.warning(
+            "[tendbcluster.replace_spider_by_role] no valid ip_list built, skipping, cluster_ids=%s",
+            cluster_ids,
+        )
+        return
+
+    for p in ProxyInstance.objects.filter(cluster__pk__in=cluster_ids, tendbclusterspiderext__spider_role=spider_role):
+        spec_ids.add(p.machine.spec_id)
+
+    if len(spec_ids) > 1:
+        logger.warning(
+            "[tendbcluster.replace_spider_by_role] inconsistent spec_ids=%s for cluster_ids=%s, spider_role=%s",
+            spec_ids,
+            cluster_ids,
+            spider_role,
+        )
+        for ev in events:
+            BKMonitorV3EventApi.send_event(
+                events=[
+                    MonitorEvent(
+                        event_name=MonitorEventType.MYSQL_DBHA_AUTOFIX_VALIDATE_FAILED,
+                        target=f"{cluster_ids[0]}",
+                        event=BaseEventBody(content=str(_("{} {} 规格不一致".format(ev.immute_domain, spider_role)))),
+                        dimension={
+                            "bk_cloud_id": ev.bk_cloud_id,
+                            "appid": ev.bk_biz_id,
+                            "cluster_domain": ev.immute_domain,
+                            "machine_type": MachineType.SPIDER.value,
+                            "instance_role": spider_role,
+                            "ip": ev.ip,
+                            "port": ev.port,
+                        },
+                        timestamp=0,
+                    )
+                ]
+            )
+        return
+
+    infos = [
+        {
+            "cluster_id": cluster_ids[0],
+            "resource_spec": {
+                f"{spider_role}": {"spec_id": list(spec_ids)[0], "count": len(set([ev.ip for ev in events]))}
+            },
+            "spider_old_ip_list": spider_old_ip_list,
+            "old_nodes": {"spider_old_ip_list": spider_old_ip_list},
+            "switch_spider_role": spider_role,
+        }
+    ]
+
+    dbas = events[0].dbas()
+    queue_uuid = uuid.uuid4().__str__()
+    ticket_param = {
+        "ticket_type": TicketType.MYSQL_DBHA_AF_SPIDER_REPLACE,
+        "remark": TicketType.MYSQL_DBHA_AF_SPIDER_REPLACE,
+        "creator": dbas[0],
+        "helpers": dbas[1:],
+        "details": {
             "is_safe": False,
-            "ip_recycle": HostRecycleSerializer.DEFAULT,
-            "shrink_type": ShrinkType.HOST,
-            "infos": [
-                {
-                    "cluster_id": cluster_id,
-                    "old_nodes": {
-                        "spider_reduced_hosts": [
-                            {
-                                "bk_cloud_id": gtd.bk_cloud_id,
-                                "ip": gtd.ip,
-                                "bk_host_id": p.machine.bk_host_id,
-                                "bk_biz_id": gtd.bk_biz_id,
-                                "port": p.port,
-                            }
-                            for p in proxies
-                        ]
-                    },
-                    "reduce_spider_role": proxies[0].tendbclusterspiderext.spider_role,
-                }
-            ],
+            "ip_source": IpSource.RESOURCE_POOL,
+            "disable_manual_confirm": True,
+            "infos": infos,
         },
-    )
-    MySQLAutofixTodo.objects.filter(check_id=gtd.check_id).update(
-        ticket_id=tk.id,
-        status=MySQLAutofixTicketStatus.PENDING,
+        "bk_biz_id": events[0].bk_biz_id,
+    }
+
+    queue_to_create = []
+    for ev in events:
+        queue_to_create.append(
+            MySQLDBHAAutofixTicketStageQueue(
+                priority=priority,
+                check_id=ev.check_id,
+                cluster_id=ev.cluster_id,
+                machine_type=MachineType.SPIDER.value,
+                ticket_param=ticket_param,
+                af_uuid=ev.af_uuid,
+                queue_uuid=queue_uuid,
+            )
+        )
+
+    MySQLDBHAAutofixTicketStageQueue.objects.bulk_create(queue_to_create)
+    logger.info(
+        "[tendbcluster.replace_spider_by_role] queued: queue_uuid=%s, cluster_ids=%s, spider_role=%s, "
+        "ips=%s, priority=%s",
+        queue_uuid,
+        cluster_ids,
+        spider_role,
+        [ev.ip for ev in events],
+        priority,
     )

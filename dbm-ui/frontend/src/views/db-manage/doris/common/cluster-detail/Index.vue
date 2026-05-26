@@ -41,8 +41,8 @@
           @click="handleShowPassword">
           {{ t('获取访问方式') }}
         </AuthButton>
-        <MoreActionExtend trigger="hover">
-          <template #handler>
+        <MoreActionExtend>
+          <template #trigger>
             <BkButton
               v-bk-tooltips="t('更多操作')"
               class="ml-4"
@@ -51,7 +51,7 @@
               <DbIcon type="more" />
             </BkButton>
           </template>
-          <BkDropdownItem v-db-console="'doris.clusterManage.scaleUp'">
+          <div v-db-console="'doris.clusterManage.scaleUp'">
             <OperationBtnStatusTips :data="data">
               <AuthButton
                 action-id="doris_scale_up"
@@ -63,8 +63,8 @@
                 {{ t('扩容') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem v-db-console="'doris.clusterManage.scaleDown'">
+          </div>
+          <div v-db-console="'doris.clusterManage.scaleDown'">
             <OperationBtnStatusTips :data="data">
               <AuthButton
                 action-id="doris_shrink"
@@ -76,8 +76,8 @@
                 {{ t('缩容') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem
+          </div>
+          <div
             v-if="data.isOnline"
             v-db-console="'doris.clusterManage.disable'">
             <OperationBtnStatusTips :data="data">
@@ -91,8 +91,8 @@
                 {{ t('禁用') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem
+          </div>
+          <div
             v-else
             v-db-console="'doris.clusterManage.enable'">
             <OperationBtnStatusTips :data="data">
@@ -105,8 +105,8 @@
                 {{ t('启用') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem v-db-console="'doris.clusterManage.delete'">
+          </div>
+          <div v-db-console="'doris.clusterManage.delete'">
             <OperationBtnStatusTips :data="data">
               <AuthButton
                 v-bk-tooltips="{
@@ -122,10 +122,8 @@
                 {{ t('删除') }}
               </AuthButton>
             </OperationBtnStatusTips>
-          </BkDropdownItem>
-          <BkDropdownItem>
-            <ClusterDomainDnsRelation :data="data" />
-          </BkDropdownItem>
+          </div>
+          <ClusterDomainDnsRelation :data="data" />
         </MoreActionExtend>
       </DisplayBox>
       <ActionPanel
@@ -134,11 +132,21 @@
         :cluster-type="ClusterTypes.DORIS">
         <template #infoContent>
           <BaseInfo
+            :cluster-type="ClusterTypes.DORIS"
             :data="data"
-            @refresh="fetchDetailData" />
+            @refresh="fetchDetailData">
+            <template #coldResource>
+              <ColdResourceInfo
+                v-db-console="'common.dorisColdResource'"
+                :cluster-type="ClusterTypes.DORIS"
+                :data="data" />
+            </template>
+          </BaseInfo>
         </template>
-        <template #hostContent>
-          <HostList :cluster-data="data" />
+        <template #hostContent="{ activePanel }">
+          <HostList
+            :active-panel="activePanel"
+            :cluster-data="data" />
         </template>
         <template #instanceContent>
           <BigDataInstanceList
@@ -146,20 +154,12 @@
             :cluster-type="ClusterTypes.DORIS" />
         </template>
       </ActionPanel>
-      <DbSideslider
+      <ClusterExpansion
         v-model:is-show="isShowExpandsion"
-        :title="t('xx扩容【name】', { title: 'Doris', name: data?.cluster_name })"
-        :width="960">
-        <ClusterExpansion :data="data" />
-      </DbSideslider>
-      <DbSideslider
+        :cluster-data="data" />
+      <ClusterShrink
         v-model:is-show="isShowShrink"
-        :title="t('xx缩容【name】', { title: 'Doris', name: data?.cluster_name })"
-        :width="960">
-        <ClusterShrink
-          :cluster-id="data.id"
-          :data="data" />
-      </DbSideslider>
+        :cluster-data="data" />
       <BkDialog
         v-model:is-show="isShowPassword"
         render-directive="if"
@@ -189,7 +189,13 @@
 
   import MoreActionExtend from '@components/more-action-extend/Index.vue';
 
-  import { ActionPanel, BigDataInstanceList, DisplayBox } from '@views/db-manage/common/cluster-details';
+  import {
+    ActionPanel,
+    BaseInfo,
+    BigDataInstanceList,
+    ColdResourceInfo,
+    DisplayBox,
+  } from '@views/db-manage/common/cluster-details';
   import ClusterDomainDnsRelation from '@views/db-manage/common/cluster-domain-dns-relation/Index.vue';
   import { useOperateClusterBasic } from '@views/db-manage/common/hooks';
   import OperationBtnStatusTips from '@views/db-manage/common/OperationBtnStatusTips.vue';
@@ -197,7 +203,6 @@
   import ClusterExpansion from '@views/db-manage/doris/common/expansion/Index.vue';
   import ClusterShrink from '@views/db-manage/doris/common/shrink/Index.vue';
 
-  import BaseInfo from './components/BaseInfo.vue';
   import HostList from './components/HostList.vue';
 
   interface Props {
@@ -223,7 +228,7 @@
       [t('Follower 节点')]: data.value?.doris_follower || [],
       [t('Observer 节点')]: data.value?.doris_observer || [],
       [t('热节点')]: data.value?.doris_backend_hot || [],
-      [t('冷节点')]: data.value?.doris_backend_cold || [],
+      [t('温节点')]: data.value?.doris_backend_warm || [],
     };
     /* eslint-enable perfectionist/sort-objects */
   });

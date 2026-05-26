@@ -14,7 +14,7 @@ from typing import Dict, List, Union
 
 from django.db import models
 from django.db.models import Q, QuerySet
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.bk_web.models import AuditedModel
 from backend.db_meta.enums import (
@@ -59,6 +59,7 @@ class InstanceMixin(object):
             "spec_config": self.machine.spec_config,
             "bk_sub_zone": self.machine.bk_sub_zone,
             "bk_biz_id": self.bk_biz_id,
+            "bk_rack_id": self.machine.bk_rack_id,
         }
 
     @property
@@ -132,6 +133,9 @@ class StorageInstance(InstanceMixin, AuditedModel):
     bk_instance_id = models.BigIntegerField(default=0, help_text=_("对应在cc的服务实例的id"))
     is_stand_by = models.BooleanField(default=True, help_text=_("多 slave 的备选标志"))
 
+    # 新版本管理-字符串定义，避免循环引用
+    db_package = models.ForeignKey("db_package.Package", on_delete=models.PROTECT, blank=True, null=True)
+
     class Meta:
         verbose_name = verbose_name_plural = _("存储实例(StorageInstance)")
         unique_together = (
@@ -180,6 +184,9 @@ class ProxyInstance(InstanceMixin, AuditedModel):
     name = models.CharField(max_length=255, default="", blank=True, null=True)
     time_zone = models.CharField(max_length=16, default=DEFAULT_TIME_ZONE, help_text=_("实例所在的时区"))
     bk_instance_id = models.BigIntegerField(default=0, help_text=_("对应在cc的服务实例的id"))
+
+    # 新版本管理-字符串定义，避免循环引用
+    db_package = models.ForeignKey("db_package.Package", on_delete=models.PROTECT, blank=True, null=True)
 
     class Meta:
         verbose_name = verbose_name_plural = _("代理实例(ProxyInstance)")

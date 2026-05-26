@@ -13,7 +13,7 @@ import logging
 import re
 from typing import List
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from pipeline.component_framework.component import Component
 from pipeline.core.flow.activity import Service
 
@@ -83,7 +83,8 @@ class OracleExecShellScriptService(BkJobService):
         FlowNode.objects.filter(root_id=root_id, node_id=node_id).update(hosts=exec_ips)
         # 拼接fast_execute_script 接口请求参数
         body = {
-            "bk_biz_id": env.JOB_BLUEKING_BIZ_ID,
+            "bk_scope_type": "biz_set",
+            "bk_scope_id": env.JOB_BLUEKING_BIZ_ID,
             "task_name": f"DBM_{node_name}_{node_id}",
             "script_content": str(base64.b64encode(kwargs["script_content"].encode("utf-8")), "utf-8"),
             "script_language": 1,

@@ -19,7 +19,18 @@ limitations under the License.
 
 package entity
 
+import metaentity "k8s-dbs/metadata/entity"
+
 // DbsContext Dbs 操作上下文
 type DbsContext struct {
-	BkAuth *BKAuth `json:",inline"`
+	BkAuth             *BKAuth `json:",inline"`
+	RequestID          string  `json:"requestId"`
+	K8sClusterConfigID uint64  `json:"k8sClusterConfigId"`
+	K8sClusterConfig   *metaentity.K8sClusterConfigEntity
+	K8sClusterName     string `json:"k8sClusterName"`
+	ClusterName        string `json:"clusterName"`
+	ClusterEntity      *metaentity.K8sCrdClusterEntity
+	Namespace          string      `json:"namespace"`
+	RequestType        string      `json:"requestType"`
+	APIRequestParams   interface{} `json:"apiRequestParams"`
 }

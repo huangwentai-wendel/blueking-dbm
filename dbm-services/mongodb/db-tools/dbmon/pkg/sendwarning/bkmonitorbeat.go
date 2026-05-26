@@ -3,8 +3,8 @@ package sendwarning
 // 用于发送bkMonitorMsg
 // 消息有两类，Event事件消息和TimeSeries时序消息
 import (
+	"dbm-services/common/go-pubpkg/mycmd"
 	"dbm-services/mongodb/db-tools/dbmon/pkg/fileutil"
-	"dbm-services/mongodb/db-tools/mongo-toolkit-go/pkg/mycmd"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -77,19 +77,19 @@ func (bm *BkMonitorEventSender) SendEventMsg(dataId int64, token string, eventNa
 		"-report.message.kind", "event",
 		"-report.agent.address", bm.AgentAddress,
 		"-report.message.body", string(tempBytes))
-	o, err := sendCmd.Run2(20 * time.Second)
+	o, err := sendCmd.Run(60 * time.Second)
 
 	if err == nil {
 		logger.Info("sendEventMsg",
 			zap.String("cmd", sendCmd.GetCmdLine("", false)),
-			zap.String("stdout", o.OutBuf.String()),
-			zap.String("stderr", o.ErrBuf.String()),
+			zap.String("stdout", o.GetStdout()),
+			zap.String("stderr", o.GetStderr()),
 			zap.String("err", fmt.Sprintf("%v", err)))
 	} else {
 		logger.Info("sendEventMsg",
 			zap.String("cmd", sendCmd.GetCmdLine("", false)),
-			zap.String("stdout", o.OutBuf.String()),
-			zap.String("stderr", o.ErrBuf.String()),
+			zap.String("stdout", o.GetStdout()),
+			zap.String("stderr", o.GetStderr()),
 			zap.String("err", fmt.Sprintf("%v", err)))
 	}
 
@@ -97,6 +97,7 @@ func (bm *BkMonitorEventSender) SendEventMsg(dataId int64, token string, eventNa
 }
 
 // SendTimeSeriesMsg dbmon心跳上报. "mongo_dbmon_heart_beat"
+// 成功时记录debug日志，失败时记录error日志
 func (bm *BkMonitorEventSender) SendTimeSeriesMsg(dataId int64, token string, targetIP string,
 	metricName string, val float64, logger *zap.Logger) (err error) {
 	bm.newDimenSion()
@@ -116,18 +117,18 @@ func (bm *BkMonitorEventSender) SendTimeSeriesMsg(dataId int64, token string, ta
 		"-report.message.kind", "timeseries",
 		"-report.agent.address", bm.AgentAddress,
 		"-report.message.body", string(tempBytes))
-	o, err := sendCmd.Run2(20 * time.Second)
+	o, err := sendCmd.Run(60 * time.Second)
 	if err == nil {
-		logger.Info("SendTimeSeriesMsg",
+		logger.Debug("SendTimeSeriesMsg",
 			zap.String("cmd", sendCmd.GetCmdLine("", false)),
-			zap.String("stdout", o.OutBuf.String()),
-			zap.String("stderr", o.ErrBuf.String()),
+			zap.String("stdout", o.GetStdout()),
+			zap.String("stderr", o.GetStderr()),
 			zap.String("err", fmt.Sprintf("%v", err)))
 	} else {
 		logger.Error("SendTimeSeriesMsg",
 			zap.String("cmd", sendCmd.GetCmdLine("", false)),
-			zap.String("stdout", o.OutBuf.String()),
-			zap.String("stderr", o.ErrBuf.String()),
+			zap.String("stdout", o.GetStdout()),
+			zap.String("stderr", o.GetStderr()),
 			zap.String("err", fmt.Sprintf("%v", err)))
 	}
 	return

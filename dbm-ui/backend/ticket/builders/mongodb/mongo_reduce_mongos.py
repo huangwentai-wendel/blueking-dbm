@@ -8,14 +8,14 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.db_meta.enums import ClusterType, MachineType
 from backend.db_meta.models import AppCache, Cluster
 from backend.flow.engine.controller.mongodb import MongoDBController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import CommonValidate, HostInfoSerializer, HostRecycleSerializer
+from backend.ticket.builders.common.base import CommonValidate, HostInfoSerializer
 from backend.ticket.builders.mongodb.base import (
     BaseMongoDBOperateDetailSerializer,
     BaseMongoOperateFlowParamBuilder,
@@ -35,9 +35,9 @@ class MongoDBReduceMongosDetailSerializer(BaseMongoDBOperateDetailSerializer):
 
     is_safe = serializers.BooleanField(help_text=_("是否做安全检测"), default=True, required=False)
     infos = serializers.ListSerializer(help_text=_("缩容接入层申请信息"), child=ReduceMongosDetailSerializer())
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.DEFAULT)
 
     def validate(self, attrs):
+        attrs = super().validate(attrs)
         cluster_ids = [info["cluster_id"] for info in attrs["infos"]]
         cluster_map = Cluster.objects.prefetch_related("proxyinstance_set__machine").in_bulk(cluster_ids)
 

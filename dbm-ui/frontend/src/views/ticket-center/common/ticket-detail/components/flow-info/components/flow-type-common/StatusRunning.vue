@@ -38,14 +38,11 @@
           </template>
         </span>
       </slot>
-      <FlowCollapse
+      <RenderErrorMessage
         v-if="data.err_msg"
-        danger
-        :title="t('失败原因')">
-        <div style="padding-left: 16px">
-          {{ data.err_msg }}
-        </div>
-      </FlowCollapse>
+        :data="data"
+        :flow-type="data.flow_type"
+        :ticket-detail="ticketDetail" />
       <Abstract :data="data" />
     </template>
   </DbTimeLineItem>
@@ -56,6 +53,7 @@
   import { useI18n } from 'vue-i18n';
 
   import FlowMode from '@services/model/ticket/flow';
+  import TicketModel from '@services/model/ticket/ticket';
 
   import CostTimer from '@components/cost-timer/CostTimer.vue';
 
@@ -65,10 +63,11 @@
   import TodoList from '../todo-list/Index.vue';
 
   import Abstract from './components/abstract/Index.vue';
-  import FlowCollapse from './components/FlowCollapse.vue';
+  import RenderErrorMessage from './components/render-error-message/Index.vue';
 
   interface Props {
     data: FlowMode<unknown, any>;
+    ticketDetail: TicketModel<unknown>;
   }
 
   defineOptions({

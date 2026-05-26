@@ -10,14 +10,13 @@ specific language governing permissions and limitations under the License.
 """
 import logging
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 
 from backend.db_meta.enums import InstanceRole
 from backend.db_meta.models import Cluster
 from backend.flow.engine.controller.pulsar import PulsarController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import HostRecycleSerializer
 from backend.ticket.builders.common.bigdata import (
     BasePulsarTicketFlowBuilder,
     BigDataSingleClusterOpsDetailsSerializer,
@@ -33,7 +32,6 @@ class PulsarShrinkDetailSerializer(BigDataSingleClusterOpsDetailsSerializer):
         bookkeeper = serializers.ListField(help_text=_("bookkeeper信息列表"), child=serializers.DictField())
 
     old_nodes = NodesSerializer(help_text=_("下架节点信息"))
-    ip_recycle = HostRecycleSerializer(help_text=_("主机回收信息"), default=HostRecycleSerializer.DEFAULT)
 
     def validate(self, attrs):
         super().validate(attrs)

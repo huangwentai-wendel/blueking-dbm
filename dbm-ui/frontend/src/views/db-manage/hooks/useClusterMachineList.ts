@@ -3,6 +3,8 @@ import { getEsMachineList } from '@services/source/es';
 import { getHdfsMachineList } from '@services/source/hdfs';
 import { getKafkaMachineList } from '@services/source/kafka';
 import { getMongodbMachineList } from '@services/source/mongodb';
+import { getOracleHaMachineList } from '@services/source/oracleHaCluster';
+import { getOracleSingleMachineList } from '@services/source/oracleSingleCluster';
 import { getPulsarMachineList } from '@services/source/pulsar';
 import { getRedisMachineList } from '@services/source/redis';
 import { getMachineList as getRiakMachineList } from '@services/source/riak';
@@ -21,9 +23,12 @@ const dataSourceMap = {
   [ClusterTypes.KAFKA]: getKafkaMachineList,
   [ClusterTypes.MONGO_REPLICA_SET]: getMongodbMachineList,
   [ClusterTypes.MONGO_SHARED_CLUSTER]: getMongodbMachineList,
+  [ClusterTypes.ORACLE_PRIMARY_STANDBY]: getOracleHaMachineList,
+  [ClusterTypes.ORACLE_SINGLE_NONE]: getOracleSingleMachineList,
+  [ClusterTypes.PREDIXY_REDIS_CLUSTER]: getRedisMachineList,
+  [ClusterTypes.PREDIXY_TENDISPLUS_CLUSTER]: getRedisMachineList,
   [ClusterTypes.PULSAR]: getPulsarMachineList,
-  [ClusterTypes.REDIS]: getRedisMachineList,
-  [ClusterTypes.REDIS_CLUSTER]: getRedisMachineList,
+  // [ClusterTypes.REDIS_CLUSTER]: getRedisMachineList,
   [ClusterTypes.REDIS_INSTANCE]: getRedisMachineList,
   [ClusterTypes.RIAK]: getRiakMachineList,
   [ClusterTypes.SQLSERVER_HA]: getSqlserverHaMachineList,
@@ -31,6 +36,8 @@ const dataSourceMap = {
   [ClusterTypes.TENDBCLUSTER]: getTendbclusterMachineList,
   [ClusterTypes.TENDBHA]: getTendbhaMachineList,
   [ClusterTypes.TENDBSINGLE]: getTendbSingleMachineList,
+  [ClusterTypes.TWEMPROXY_REDIS_INSTANCE]: getRedisMachineList,
+  [ClusterTypes.TWEMPROXY_TENDIS_SSD_INSTANCE]: getRedisMachineList,
 } as const;
 
 export default <T extends keyof typeof dataSourceMap>(clusterType: T): (typeof dataSourceMap)[T] =>

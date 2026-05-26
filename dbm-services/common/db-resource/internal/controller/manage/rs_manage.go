@@ -21,6 +21,7 @@ import (
 	"dbm-services/common/db-resource/internal/model"
 	"dbm-services/common/db-resource/internal/svr/bk"
 	"dbm-services/common/go-pubpkg/cmutil"
+	"dbm-services/common/go-pubpkg/errno"
 	"dbm-services/common/go-pubpkg/logger"
 
 	rf "github.com/gin-gonic/gin"
@@ -37,6 +38,7 @@ func init() {
 	middleware.RequestLoggerFilter.Add("/resource/update")
 	middleware.RequestLoggerFilter.Add("/resource/delete")
 	middleware.RequestLoggerFilter.Add("/resource/batch/update")
+	middleware.RequestLoggerFilter.Add("/resource/list")
 }
 
 // RegisterRouter 注册路由信息
@@ -60,6 +62,7 @@ func (c *MachineResourceHandler) RegisterRouter(engine *rf.Engine) {
 		r.POST("/operation/create", c.RecordImportResource)
 		r.POST("/spec/sum", c.SpecSum)
 		r.POST("/groupby/label/count", c.GroupByLabelCount)
+		r.POST("/refresh/disk/info", c.RefreshDiskInfo)
 	}
 }
 
@@ -68,11 +71,58 @@ type MachineDeleteInputParam struct {
 	BkHostIds []int `json:"bk_host_ids"  binding:"required"`
 }
 
+// MissingBkHostIdsResp 资源池中缺失的 bk_host_id 列表
+type MissingBkHostIdsResp struct {
+	MissingBkHostIds []int `json:"missing_bk_host_ids"`
+}
+
+// InUseBkHostIdsResp 处于"已被占用"状态因而被拒绝变更的 bk_host_id 列表
+type InUseBkHostIdsResp struct {
+	InUseBkHostIds []int `json:"in_use_bk_host_ids"`
+}
+
+// validateBkHostIdsForMutation 主机变更操作(删除/编辑)前的统一预校验
+//
+// 校验项:
+//  1. 存在性: bk_host_ids 必须全部存在于资源池, 缺失任一则直接报错
+//  2. 在用状态: 不允许变更处于 Preselected/Prepoccupied/Used/UsedByOther 状态的主机
+//
+// 返回 true 表示校验失败且已通过 SendResponse 返回错误,调用方应立即 return,不再执行后续逻辑.
+func (c *MachineResourceHandler) validateBkHostIdsForMutation(r *rf.Context, bkHostIds []int) (rejected bool) {
+	existIds, err := model.GetExistTbRpDetailHostIds(bkHostIds)
+	if err != nil {
+		logger.Error("failed to query existing bk_host_ids:%s", err.Error())
+		c.SendResponse(r, err, nil)
+		return true
+	}
+	missingIds := lo.Without(bkHostIds, existIds...)
+	if len(missingIds) > 0 {
+		logger.Error("bk_host_ids not found in resource pool: %v", missingIds)
+		c.SendResponse(r, errno.ErrHostIdNotFound, MissingBkHostIdsResp{MissingBkHostIds: missingIds})
+		return true
+	}
+	inUseIds, err := model.GetInUseTbRpDetailHostIds(bkHostIds)
+	if err != nil {
+		logger.Error("failed to query in-use bk_host_ids:%s", err.Error())
+		c.SendResponse(r, err, nil)
+		return true
+	}
+	if len(inUseIds) > 0 {
+		logger.Error("bk_host_ids are in use, mutation rejected: %v", inUseIds)
+		c.SendResponse(r, errno.ErrHostInUse, InUseBkHostIdsResp{InUseBkHostIds: inUseIds})
+		return true
+	}
+	return false
+}
+
 // Delete 删除主机
 func (c *MachineResourceHandler) Delete(r *rf.Context) {
 	var input MachineDeleteInputParam
 	if err := c.Prepare(r, &input); err != nil {
-		logger.Error("Preare Error %s", err.Error())
+		logger.Error("Prepare Error %s", err.Error())
+		return
+	}
+	if c.validateBkHostIdsForMutation(r, input.BkHostIds) {
 		return
 	}
 	affect_row, err := model.DeleteTbRpDetail(input.BkHostIds)
@@ -95,17 +145,15 @@ type BatchUpdateMachineInput struct {
 	UpdateRsMeta
 }
 
-const (
-	// EmptyArryJson empty arry json
-	EmptyArryJson = "[]"
-)
-
 // BatchUpdate 批量编辑主机信息
 func (c *MachineResourceHandler) BatchUpdate(r *rf.Context) {
 	var input BatchUpdateMachineInput
 	var err error
 	if err = c.Prepare(r, &input); err != nil {
-		logger.Error("Preare Error %s", err.Error())
+		logger.Error("Prepare Error %s", err.Error())
+		return
+	}
+	if c.validateBkHostIdsForMutation(r, input.BkHostIds) {
 		return
 	}
 	// update for biz
@@ -124,7 +172,7 @@ func (c *MachineResourceHandler) BatchUpdate(r *rf.Context) {
 		c.SendResponse(r, err, err.Error())
 		return
 	}
-	// return respone
+	// return response
 	c.SendResponse(r, nil, "ok")
 }
 
@@ -157,29 +205,29 @@ type CityMeta struct {
 	CityId string `json:"city_id"`
 }
 
-// SubZoneMeta subzones信息
+// SubZoneMeta sub zone 信息
 type SubZoneMeta struct {
 	SubZoneId string `json:"sub_zone_id"`
 	SubZone   string `json:"sub_zone"`
 }
 
 func (v UpdateRsMeta) getUpdateMap() (updateMap map[string]interface{}, err error) {
-	var lableJson, storageJson []byte
+	var labelJson, storageJson []byte
 	updateMap = make(map[string]interface{})
 	if v.Labels != nil {
-		lableJson, err = json.Marshal(*v.Labels)
+		labelJson, err = json.Marshal(lo.Uniq(*v.Labels))
 		if err != nil {
-			logger.Error(fmt.Sprintf("ConverLableToJsonStr Failed,Error:%s", err.Error()))
+			logger.Error(fmt.Sprintf("Conversion LabelToJsonStr Failed,Error:%s", err.Error()))
 			return updateMap, err
 		}
-		updateMap["labels"] = lableJson
+		updateMap["labels"] = labelJson
 	}
 	updateMap["update_time"] = time.Now()
 	if v.ForBiz != nil {
 		updateMap["dedicated_biz"] = v.ForBiz
 	}
 	if v.RsType != nil {
-		updateMap["rs_type"] = v.RsType
+		updateMap["rs_type"] = model.NormalizeResourceType(*v.RsType)
 	}
 	if v.DeviceClass != nil {
 		updateMap["device_class"] = v.DeviceClass
@@ -195,7 +243,7 @@ func (v UpdateRsMeta) getUpdateMap() (updateMap map[string]interface{}, err erro
 	if len(v.StorageDevice) > 0 {
 		storageJson, err = json.Marshal(v.StorageDevice)
 		if err != nil {
-			logger.Error(fmt.Sprintf("conver resource types Failed,Error:%s", err.Error()))
+			logger.Error(fmt.Sprintf("Conversion storage device Failed,Error:%s", err.Error()))
 			return updateMap, err
 		}
 		updateMap["storage_device"] = storageJson
@@ -207,15 +255,19 @@ func (v UpdateRsMeta) getUpdateMap() (updateMap map[string]interface{}, err erro
 func (c *MachineResourceHandler) Update(r *rf.Context) {
 	var input MachineResourceInputParam
 	if err := c.Prepare(r, &input); err != nil {
-		logger.Error("Preare Error %s", err.Error())
+		logger.Error("Prepare Error %s", err.Error())
 		return
 	}
 	logger.Debug(fmt.Sprintf("get params %v", input.Data))
+	bkHostIds := lo.Map(input.Data, func(v MachineResource, _ int) int { return v.BkHostID })
+	if c.validateBkHostIdsForMutation(r, bkHostIds) {
+		return
+	}
 	tx := model.DB.Self.Begin()
 	for _, v := range input.Data {
 		updateMap, err := v.getUpdateMap()
 		if err != nil {
-			logger.Error("conver resource types Failed,Error:%s", err.Error())
+			logger.Error("Conversion resource types Failed,Error:%s", err.Error())
 			c.SendResponse(r, err, err.Error())
 			return
 		}
@@ -223,7 +275,7 @@ func (c *MachineResourceHandler) Update(r *rf.Context) {
 			Updates(updateMap).Error
 		if err != nil {
 			tx.Rollback()
-			logger.Error(fmt.Sprintf("conver resource types Failed,Error:%s", err.Error()))
+			logger.Error(fmt.Sprintf("Conversion resource types Failed,Error:%s", err.Error()))
 			c.SendResponse(r, err, err.Error())
 			return
 		}
@@ -241,12 +293,12 @@ func (c MachineResourceHandler) GetMountPoints(r *rf.Context) {
 
 	if err := model.DB.Self.Table(model.TbRpDetailName()).Select("json_keys(storage_device)").
 		Where("JSON_LENGTH(storage_device) > 0").Find(&rs).Error; err != nil {
-		logger.Error("get mountpoints failed %s", err.Error())
+		logger.Error("get mount points failed %s", err.Error())
 		c.SendResponse(r, err, err.Error())
 		return
 	}
 
-	var mountpoints []string
+	var mountPoints []string
 	for _, v := range rs {
 		var mp []string
 		if err := json.Unmarshal(v, &mp); err != nil {
@@ -255,10 +307,10 @@ func (c MachineResourceHandler) GetMountPoints(r *rf.Context) {
 			return
 		}
 		if len(mp) > 0 {
-			mountpoints = append(mountpoints, mp...)
+			mountPoints = append(mountPoints, mp...)
 		}
 	}
-	c.SendResponse(r, nil, cmutil.RemoveDuplicate(mountpoints))
+	c.SendResponse(r, nil, cmutil.RemoveDuplicate(mountPoints))
 }
 
 // GetDiskTypes get disk types

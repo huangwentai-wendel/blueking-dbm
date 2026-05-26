@@ -11,19 +11,33 @@ specific language governing permissions and limitations under the License.
 import logging
 
 from django.db import transaction
+from django.utils.translation import gettext as _
 
 from backend.core import notify
+from backend.iam_app.handlers.drf_perm.ticket import add_ticket_audit_event, audit_ticket_status
 from backend.ticket import constants
 from backend.ticket.builders import BuilderFactory
-from backend.ticket.constants import FLOW_FINISHED_STATUS, FlowType, TicketStatus, TicketType
+from backend.ticket.constants import (
+    CLUSTER_APPLY_TICKET_TO_CLUSTER_TYPE,
+    FLOW_FINISHED_STATUS,
+    FlowType,
+    TicketStatus,
+    TicketType,
+)
 from backend.ticket.flow_manager.delivery import DeliveryFlow, DescribeTaskFlow
-from backend.ticket.flow_manager.inner import IgnoreResultInnerFlow, InnerFlow, QuickInnerFlow, SimpleTaskFlow
+from backend.ticket.flow_manager.inner import (
+    HCMReplenishResourceTaskFlow,
+    IgnoreResultInnerFlow,
+    InnerFlow,
+    QuickInnerFlow,
+    SimpleTaskFlow,
+)
 from backend.ticket.flow_manager.itsm import ItsmFlow
 from backend.ticket.flow_manager.pause import PauseFlow
 from backend.ticket.flow_manager.resource import ResourceApplyFlow, ResourceBatchApplyFlow, ResourceDeliveryFlow
 from backend.ticket.flow_manager.timer import TimerFlow
 from backend.ticket.models import Ticket
-from backend.ticket.tasks.ticket_tasks import create_recycle_ticket
+from backend.ticket.tasks.ticket_tasks import create_cluster_todo, create_monitor_grafana, create_recycle_ticket
 
 SUPPORTED_FLOW_MAP = {
     FlowType.BK_ITSM.value: ItsmFlow,
@@ -39,6 +53,7 @@ SUPPORTED_FLOW_MAP = {
     FlowType.RESOURCE_BATCH_DELIVERY: ResourceDeliveryFlow,
     FlowType.RESOURCE_BATCH_APPLY: ResourceBatchApplyFlow,
     FlowType.HOST_RECYCLE: SimpleTaskFlow,
+    FlowType.RESOURCE_HCM_REPLENISH: HCMReplenishResourceTaskFlow,
 }
 
 logger = logging.getLogger("root")
@@ -47,10 +62,6 @@ logger = logging.getLogger("root")
 class TicketFlowManager(object):
     def __init__(self, ticket: Ticket):
         self.ticket = ticket
-        self.current_flow_obj = ticket.current_flow()
-        self.current_ticket_flow = self.get_ticket_flow_cls(flow_type=self.current_flow_obj.flow_type)(
-            ticket.current_flow()
-        )
 
     @staticmethod
     def get_ticket_flow_cls(flow_type):
@@ -61,15 +72,27 @@ class TicketFlowManager(object):
 
     def run_next_flow(self):
         next_flow = self.ticket.next_flow()
+        current_flow = self.ticket.current_flow()
+
+        # 没有下一个节点，说明流程已结束
         if not next_flow:
-            # 没有下一个节点，说明流程已结束
+            logger.error(_("无可执行的下一流程"))
+            return
+
+        # 先取下一个流程，再取当前流程，可以根据流程的顺序保证并发的一致性
+        # 如果current_flow晚于next_flow，说明流程已经发起
+        is_init_flow = next_flow.id == self.ticket.flows.first().id
+
+        if current_flow.id >= next_flow.id and not is_init_flow:
+            logger.error(_("流程非预期：当前流程晚于下一个流程"))
             return
 
         # 满足下面两种条件之一，则继续执行下一个流程
         # 1. 初始状态的任务流程
         # 2. 当前流程已完成
-        is_init_flow = next_flow.id == self.current_flow_obj.id
-        if is_init_flow or self.current_ticket_flow.status in FLOW_FINISHED_STATUS:
+        current_flow_status = self.get_ticket_flow_cls(flow_type=current_flow.flow_type)(current_flow).status
+        if is_init_flow or current_flow_status in FLOW_FINISHED_STATUS:
+            logger.info(_("[{}]流程已触发:{}").format(self.ticket.id, next_flow.flow_alias))
             self.get_ticket_flow_cls(flow_type=next_flow.flow_type)(next_flow).run()
 
     def update_ticket_status(self):
@@ -113,14 +136,42 @@ class TicketFlowManager(object):
     def ticket_status_trigger(self, origin_status, target_status):
         """单据状态更新后的钩子函数。注：如果钩子函数非关键链路，请异步发起"""
 
+        # 上报单据状态流转事件，针对任务运行、成功、失败、终止状态上报
+        if target_status in audit_ticket_status:
+            add_ticket_audit_event.apply_async(args=(self.ticket.id,))
+
         # 单据状态变更后，发送通知。
         # 忽略运行中：流转到内置任务无需通知，待继续在todo创建时才触发通知
         # 忽略待补货：到资源申请节点，单据状态总会流转为待补货，但是只有待补货todo创建才触发通知
-        if target_status not in [TicketStatus.RUNNING, TicketStatus.RESOURCE_REPLENISH]:
+        # 忽略审批：创建itsm单据后，发送通知
+        if target_status not in [TicketStatus.RUNNING, TicketStatus.RESOURCE_REPLENISH, TicketStatus.APPROVE]:
             notify.send_msg.apply_async(args=(self.ticket.id,))
 
         # 如果是待下架单据，正常结束要联动回收主机
         is_recycle = self.ticket.ticket_type in BuilderFactory.recycle_ticket_type
         if target_status == TicketStatus.SUCCEEDED and is_recycle:
-            recycle_old_hosts = self.ticket.details.get("recycle_hosts", [])
-            create_recycle_ticket.apply_async(args=(self.ticket.id, recycle_old_hosts, TicketType.RECYCLE_OLD_HOST))
+            recycle_hosts = self.ticket.details.get("recycle_hosts", [])
+            create_recycle_ticket.apply_async(args=(self.ticket.id, recycle_hosts, TicketType.RECYCLE_OLD_HOST))
+
+        # 如果是部署类单据，异常终止要联动回收主机
+        is_apply = self.ticket.ticket_type in BuilderFactory.apply_ticket_type
+        if target_status == TicketStatus.TERMINATED and is_apply:
+            create_recycle_ticket.apply_async(args=(self.ticket.id, [], TicketType.RECYCLE_APPLY_HOST))
+
+        # 如果是集群的禁用、启动、删除、sqlserver重置则处理相对应代办操作
+        if (
+            self.ticket.ticket_type in BuilderFactory.ticket_type__cluster_phase
+            and target_status == TicketStatus.SUCCEEDED
+        ):
+            create_cluster_todo.apply_async(
+                args=(self.ticket.id, BuilderFactory.ticket_type__cluster_phase[self.ticket.ticket_type])
+            )
+
+        # 如果是部署集群单据，则下发监控大盘
+        if self.ticket.ticket_type in CLUSTER_APPLY_TICKET_TO_CLUSTER_TYPE and target_status == TicketStatus.SUCCEEDED:
+            # redis类型的集群部署的details中有cluster_type字段 其它类型的部署都是一对一的，从map映射中获取
+            cluster_type = self.ticket.details.get("cluster_type") or CLUSTER_APPLY_TICKET_TO_CLUSTER_TYPE.get(
+                self.ticket.ticket_type
+            )
+            bk_biz_id = self.ticket.bk_biz_id
+            create_monitor_grafana.apply_async(args=(bk_biz_id, cluster_type))

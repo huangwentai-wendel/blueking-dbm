@@ -13,7 +13,7 @@ from dataclasses import asdict
 from typing import List
 
 from django.db.transaction import atomic
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.db_proxy.constants import ExtensionServiceStatus, ExtensionType
 from backend.db_proxy.models import DBCloudProxy, DBExtension
@@ -144,7 +144,7 @@ class CloudDBProxy:
         nginx_host = self.kwargs["host_infos"][0]
         old_nginx_host = self.kwargs["details"]["old_nginx"][0]
         with atomic():
-            DBCloudProxy.objects.filter(bk_cloud_id=self.bk_cloud_id).update(
+            DBCloudProxy.objects.filter(bk_cloud_id=self.bk_cloud_id, internal_address=old_nginx_host["ip"]).update(
                 internal_address=nginx_host["ip"], external_address=nginx_host["bk_outer_ip"]
             )
             self.cloud_base_replace(

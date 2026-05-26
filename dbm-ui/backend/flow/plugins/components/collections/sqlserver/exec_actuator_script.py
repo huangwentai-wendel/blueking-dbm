@@ -13,7 +13,7 @@ import re
 from dataclasses import asdict, is_dataclass
 
 from django.conf import settings
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from jinja2.sandbox import SandboxedEnvironment as Environment
 from pipeline.component_framework.component import Component
 
@@ -71,9 +71,15 @@ class SqlserverActuatorScriptService(BkJobService):
         if is_dataclass(trans_data):
             trans_data = asdict(trans_data)
 
+        self.log_info(_("个性化参数体component_kwargs:{}").format(kwargs.get("component_kwargs", {})))
+
         db_act_template = getattr(mssql_act_payload, kwargs["get_payload_func"])(
-            ips=exec_ips, trans_data=trans_data, custom_params=kwargs.get("custom_params", {})
+            ips=exec_ips,
+            trans_data=trans_data,
+            custom_params=kwargs.get("custom_params", {}),  # todo 后续废弃
+            **kwargs.get("component_kwargs", {}),
         )
+
         db_act_template.root_id = root_id
         db_act_template.node_id = node_id
         db_act_template.version_id = self._runtime_attrs.get("version")
@@ -91,10 +97,11 @@ class SqlserverActuatorScriptService(BkJobService):
         template = jinja_env.from_string(sqlserver_actuator_template)
 
         body = {
+            "bk_scope_type": "biz_set",
+            "bk_scope_id": env.JOB_BLUEKING_BIZ_ID,
             "timeout": kwargs.get("job_timeout", 3600),
             "account_alias": WINDOW_SYSTEM_JOB_USER,
             "is_param_sensitive": 1,
-            "bk_biz_id": env.JOB_BLUEKING_BIZ_ID,
             "task_name": f"DBM_{node_name}_{node_id}",
             "script_content": base64_encode(template.render(asdict(db_act_template))),
             "script_language": 5,

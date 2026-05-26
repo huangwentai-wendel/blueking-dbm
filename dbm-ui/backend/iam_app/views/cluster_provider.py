@@ -13,7 +13,7 @@ import logging
 from typing import Dict, List
 
 from django.db import models
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from iam.resource.provider import ListResult
 from iam.resource.utils import Page
 
@@ -153,3 +153,42 @@ class SQLServerClusterResourceProvider(MySQLResourceProvider):
     def _list_instance(self, data_source: models.Model, condition: Dict, value_list: List[str], page):
         cluster_type__label = {ClusterType.SqlserverSingle: _("单节点"), ClusterType.SqlserverHA: _("高可用")}
         return super()._list_instance_with_cluster_type(data_source, condition, value_list, page, cluster_type__label)
+
+
+class OracleClusterResourceProvider(ClusterResourceProvider):
+    resource_meta: ResourceMeta = ResourceEnum.ORACLE
+    cluster_types: ClusterType = [ClusterType.OraclePrimaryStandby, ClusterType.OracleSingleNone]
+
+    def _list_instance(self, data_source: models.Model, condition: Dict, value_list: List[str], page):
+        cluster_type__label = {ClusterType.OracleSingleNone: _("单节点"), ClusterType.OraclePrimaryStandby: _("主从")}
+        return super()._list_instance_with_cluster_type(data_source, condition, value_list, page, cluster_type__label)
+
+
+class K8sSurrealClusterResourceProvider(ClusterResourceProvider):
+    resource_meta: ResourceMeta = ResourceEnum.K8S_SURREALDB
+    cluster_types: ClusterType = [ClusterType.K8sSurrealdbHa, ClusterType.K8sSurrealdbSingle]
+
+
+class K8sVictoriametricsClusterResourceProvider(ClusterResourceProvider):
+    resource_meta: ResourceMeta = ResourceEnum.K8S_VICTORIAMETRICS
+    cluster_types: ClusterType = [ClusterType.K8sVictoriametricsHa]
+
+
+class K8sRisingwaveClusterResourceProvider(ClusterResourceProvider):
+    resource_meta: ResourceMeta = ResourceEnum.K8S_RISINGWAVE
+    cluster_types: ClusterType = [ClusterType.K8sRisingwaveHa]
+
+
+class K8sMilvusClusterResourceProvider(ClusterResourceProvider):
+    resource_meta: ResourceMeta = ResourceEnum.K8S_MILVUS
+    cluster_types: ClusterType = [ClusterType.K8sMilvusHa]
+
+
+class K8sQdrantClusterResourceProvider(ClusterResourceProvider):
+    resource_meta: ResourceMeta = ResourceEnum.K8S_QDRANT
+    cluster_types: ClusterType = [ClusterType.K8sQdrantHa]
+
+
+class K8sGreptimedbClusterResourceProvider(ClusterResourceProvider):
+    resource_meta: ResourceMeta = ResourceEnum.K8S_GREPTIMEDB
+    cluster_types: ClusterType = [ClusterType.K8sGreptimedbHa]

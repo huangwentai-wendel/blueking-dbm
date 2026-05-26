@@ -49,7 +49,7 @@ type BkRepoConfig struct {
 	EndPointUrl  string `yaml:"endpointUrl"`
 }
 
-// LabelItem kubernert lable item
+// LabelItem kubernetes label item
 type LabelItem struct {
 	Key   string `json:"key" yaml:"key"`
 	Value string `json:"value" yaml:"value"`
@@ -76,11 +76,34 @@ type BcsConfig struct {
 
 // DbConfig db config
 type DbConfig struct {
-	User string `yaml:"user"`
-	Pwd  string `yaml:"pwd"`
-	Name string `yaml:"name"`
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	User         string `yaml:"user"`
+	Pwd          string `yaml:"pwd"`
+	Name         string `yaml:"name"`
+	Host         string `yaml:"host"`
+	Port         int    `yaml:"port"`
+	MaxOpenConns int    `yaml:"maxOpenConns"`
+	MaxIdleConns int    `yaml:"maxIdleConns"`
+	MaxLifetime  int    `yaml:"maxLifetime"` // 单位：小时
+}
+
+// 数据库连接池默认值
+const (
+	defaultMaxOpenConns = 200
+	defaultMaxIdleConns = 20
+	defaultMaxLifetime  = 1 // 小时
+)
+
+// SetDefaults 为零值字段填充默认值
+func (c *DbConfig) SetDefaults() {
+	if c.MaxOpenConns <= 0 {
+		c.MaxOpenConns = defaultMaxOpenConns
+	}
+	if c.MaxIdleConns <= 0 {
+		c.MaxIdleConns = defaultMaxIdleConns
+	}
+	if c.MaxLifetime <= 0 {
+		c.MaxLifetime = defaultMaxLifetime
+	}
 }
 
 // MySQLPodResource  tendbha pod resource limits
@@ -145,6 +168,7 @@ func init() {
 	if err := loadConfig(); err != nil {
 		logger.Error("load config file failed:%s", err.Error())
 	}
+	GAppConfig.DbConf.SetDefaults()
 	for _, v := range GAppConfig.MirrorsAddress {
 		switch v.Version {
 		case "5.5":
@@ -161,11 +185,11 @@ func init() {
 			GAppConfig.Image.TdbCtlImg = v.Image
 		}
 	}
-	logger.Info("simulationNodeLables: %v", lo.SliceToMap(GAppConfig.SimulationNodeLables, func(item LabelItem) (k,
+	logger.Info("simulationNodeLabels: %v", lo.SliceToMap(GAppConfig.SimulationNodeLables, func(item LabelItem) (k,
 		v string) {
 		return item.Key, item.Value
 	}))
-	logger.Info("simulationtaintLables: %v", lo.SliceToMap(GAppConfig.SimulationtaintLables, func(item LabelItem) (k,
+	logger.Info("simulationTaintLabels: %v", lo.SliceToMap(GAppConfig.SimulationtaintLables, func(item LabelItem) (k,
 		v string) {
 		return item.Key, item.Value
 	}))

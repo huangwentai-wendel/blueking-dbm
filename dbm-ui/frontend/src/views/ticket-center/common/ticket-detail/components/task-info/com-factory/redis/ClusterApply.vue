@@ -27,6 +27,9 @@
       <InfoItem :label="t('集群别名')">
         {{ ticketDetails.details.cluster_alias || '--' }}
       </InfoItem>
+      <InfoItem :label="t('管控区域')">
+        {{ ticketDetails.details.bk_cloud_name || '--' }}
+      </InfoItem>
     </InfoList>
     <RegionRequirements :details="ticketDetails.details" />
     <div class="ticket-details-info-title mt-20">{{ t('部署需求') }}</div>
@@ -79,10 +82,10 @@
         </InfoItem>
       </template>
       <template v-else>
-        <InfoItem :label="t('Proxy存储资源规格')">
-          <BkPopover
-            placement="top"
-            theme="light">
+        <InfoItem :label="t('Proxy 规格')">
+          <SpecDetailPopover
+            :data="ticketDetails.details.resource_spec.proxy"
+            placement="top">
             <span
               class="pb-2"
               style="cursor: pointer; border-bottom: 1px dashed #979ba5">
@@ -90,28 +93,74 @@
                 `${ticketDetails.details.resource_spec.proxy.count} ${t('台')}`
               }}）
             </span>
-            <template #content>
-              <SpecInfos :data="ticketDetails.details.resource_spec.proxy" />
-            </template>
-          </BkPopover>
+          </SpecDetailPopover>
+        </InfoItem>
+        <InfoItem :label="t('Proxy 资源标签')">
+          <template v-if="ticketDetails.details.resource_spec.proxy.label_names?.length">
+            <BkTag
+              v-for="item in ticketDetails.details.resource_spec.proxy.label_names"
+              :key="item">
+              {{ item }}
+            </BkTag>
+          </template>
+          <BkTag
+            v-else
+            theme="success">
+            {{ t('通用无标签') }}
+          </BkTag>
         </InfoItem>
         <InfoItem
-          :label="t('集群部署方案')"
+          :label="t('后端存储')"
           style="flex: 1 0 100%">
-          <BkTable :data="[ticketDetails.details.resource_spec.backend_group.spec_info]">
-            <BkTableColumn
-              field="spec_name"
-              :label="t('资源规格')" />
-            <BkTableColumn
-              field="machine_pair"
-              :label="t('需机器组数')" />
-            <BkTableColumn
-              field="cluster_shard_num"
-              :label="t('集群分片')" />
-            <BkTableColumn
-              field="cluster_capacity"
-              :label="t('集群容量G')" />
-          </BkTable>
+          <TicketInfoTable
+            :data="[ticketDetails.details.resource_spec.backend_group.spec_info]"
+            row-key="spec_name">
+            <TicketInfoTableColumn
+              col-key="spec_name"
+              :title="t('资源规格')">
+              <template #default>
+                <SpecDetailPopover
+                  v-if="backendGroupSpec.spec_id"
+                  :data="backendGroupSpec"
+                  placement="top-start">
+                  <span
+                    class="pb-2"
+                    style="cursor: pointer; border-bottom: 1px dashed #979ba5">
+                    {{ backendGroupSpec.spec_name }}
+                  </span>
+                </SpecDetailPopover>
+                <span v-else>{{ backendGroupSpec.spec_name }}</span>
+              </template>
+            </TicketInfoTableColumn>
+            <TicketInfoTableColumn
+              col-key="label_names"
+              :min-width="200"
+              :title="t('资源标签')">
+              <template #default>
+                <template v-if="ticketDetails.details.resource_spec.backend_group.label_names?.length">
+                  <BkTag
+                    v-for="item in ticketDetails.details.resource_spec.backend_group.label_names"
+                    :key="item">
+                    {{ item }}
+                  </BkTag>
+                </template>
+                <BkTag
+                  v-else
+                  theme="success">
+                  {{ t('通用无标签') }}
+                </BkTag>
+              </template>
+            </TicketInfoTableColumn>
+            <TicketInfoTableColumn
+              col-key="machine_pair"
+              :title="t('需机器组数')" />
+            <TicketInfoTableColumn
+              col-key="cluster_shard_num"
+              :title="t('集群分片')" />
+            <TicketInfoTableColumn
+              col-key="cluster_capacity"
+              :title="t('集群容量G')" />
+          </TicketInfoTable>
         </InfoItem>
       </template>
     </InfoList>
@@ -135,19 +184,19 @@
   import { TicketTypes } from '@common/const';
 
   import HostPreview from '@components/host-preview/HostPreview.vue';
+  import SpecDetailPopover from '@components/spec-detail-popover/Index.vue';
 
   import {
     type RedisClusterTypes,
     redisClusterTypes,
     type RedisIpSources,
     redisIpSources,
-  } from '@views/db-manage/redis/apply/common/const';
+  } from '@views/db-manage/redis/REDIS_CLUSTER_APPLY/common/const';
 
   import { firstLetterToUpper } from '@utils';
 
   import InfoList, { Item as InfoItem } from '../components/info-list/Index.vue';
   import RegionRequirements from '../components/RegionRequirements.vue';
-  import SpecInfos from '../components/SpecInfos.vue';
 
   interface Props {
     ticketDetails: TicketModel<Redis.ClusterApply>;
@@ -159,6 +208,8 @@
   });
   const props = defineProps<Props>();
   const { t } = useI18n();
+
+  const backendGroupSpec = props.ticketDetails.details.resource_spec.backend_group.spec_info;
 
   const previewState = reactive({
     isShow: false,

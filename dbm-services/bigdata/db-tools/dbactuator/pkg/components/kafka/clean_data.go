@@ -52,7 +52,7 @@ func (d *CleanDataComp) CleanData() (err error) {
 	}
 
 	// 强杀进程
-	extraCmd := `ps -ef | egrep 'supervisord|burrow|telegraf|java'|grep -v grep |awk {'print "kill -9 " $2'}|sh`
+	extraCmd := `ps -ef | grep -E 'supervisord|burrow|telegraf|java'|grep -v grep |awk {'print "kill -9 " $2'}|sh`
 	logger.Info("强杀进程, [%s]", extraCmd)
 	if _, err = osutil.ExecShellCommand(false, extraCmd); err != nil {
 		logger.Error("[%s] execute failed, %v", extraCmd, err)
@@ -97,5 +97,22 @@ func (d *CleanDataComp) CleanData() (err error) {
 		logger.Error("[%s] execute failed, %v", extraCmd, err)
 		return err
 	}
+
+	// 删除kafkaui配置
+	extraCmd = `rm -rf -- /etc/kafkaui`
+	logger.Info("删除kafkaui, [%s]", extraCmd)
+	if _, err = osutil.ExecShellCommand(false, extraCmd); err != nil {
+		logger.Error("[%s] execute failed, %v", extraCmd, err)
+		return err
+	}
+
+	// 删除环境变量文件
+	extraCmd = `rm -f /etc/profile.d/kafka*.sh /etc/sysctl.d/99-kafka.conf`
+	logger.Info("删除环境变量文件, [%s]", extraCmd)
+	if _, err = osutil.ExecShellCommand(false, extraCmd); err != nil {
+		logger.Error("[%s] execute failed, %v", extraCmd, err)
+		return err
+	}
+
 	return nil
 }

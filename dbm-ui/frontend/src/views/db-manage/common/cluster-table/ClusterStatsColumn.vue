@@ -1,19 +1,19 @@
 <template>
-  <BkTableColumn
-    field="cluster_stats"
-    :label="t('容量使用率')"
+  <TableColumn
+    col-key="cluster_stats"
+    :title="t('容量使用率')"
     :width="280">
-    <template #default="{ data }: { data: IRowData }">
-      <ClusterStatsCell
-        :cluster-id="data.id"
+    <template #default="{ row }: { row: IRowData }">
+      <ClusterStats
+        :cluster-id="row.id"
         :cluster-type="clusterType" />
     </template>
-  </BkTableColumn>
+  </TableColumn>
 </template>
 <script setup lang="ts" generic="T extends ISupportClusterType">
   import { useI18n } from 'vue-i18n';
 
-  import ClusterStatsCell from '@views/db-manage/common/cluster-stats-cell/Index.vue';
+  import ClusterStats from '@views/db-manage/common/cluster-stats/Index.vue';
 
   import type { ClusterModel, ISupportClusterType } from './types';
 

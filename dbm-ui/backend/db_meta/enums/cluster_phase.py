@@ -10,10 +10,10 @@ specific language governing permissions and limitations under the License.
 """
 from django.utils.translation import gettext_lazy as _
 
-from blue_krill.data_types.enum import EnumField, StructuredEnum
+from blue_krill.data_types.enum import EnumField, StrStructuredEnum
 
 
-class ClusterPhase(str, StructuredEnum):
+class ClusterPhase(StrStructuredEnum):
     # cluster实际可能存在的phase状态
     ONLINE = EnumField("online", _("正常"))
     OFFLINE = EnumField("offline", _("禁用"))
@@ -23,6 +23,9 @@ class ClusterPhase(str, StructuredEnum):
 
     # scr, gcs 迁移的中间阶段
     TRANS_STAGE = EnumField("trans_stage", _("scr/gcs迁移中"))
+
+    # 克隆的中间阶段
+    CLONE_STAGE = EnumField("clone_stage", _("克隆中"))
 
     @classmethod
     def cluster_status_transfer_valid(cls, source_phase, target_phase) -> bool:

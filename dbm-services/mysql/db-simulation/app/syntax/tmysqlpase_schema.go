@@ -21,24 +21,38 @@ import (
 const (
 	// AlterTypeAddColumn add_column
 	AlterTypeAddColumn = "add_column"
-
-	// SQLTypeCreateTable is creat table sql
+	// AlterTypeDropColumn drop_column
+	AlterTypeDropColumn = "drop_column"
+	// AlterTypeDropKey drop_key
+	AlterTypeDropKey = "drop_key"
+	// SQLTypeCreateTable is create table sql
 	SQLTypeCreateTable = "create_table"
 	// SQLTypeCreateDb ise create database sql
 	SQLTypeCreateDb = "create_db"
 	// SQLTypeCreateFunction is create function sql
 	SQLTypeCreateFunction = "create_function"
+	// SQLTypeDropFunction is drop function sql
+	SQLTypeDropFunction = "drop_function"
 	// SQLTypeCreateSpFunction is create sp function sql
 	SQLTypeCreateSpFunction = "create_spfunction"
 	// SQLTypeCreateTrigger is create trigger sql
 	SQLTypeCreateTrigger = "create_trigger"
+	// SQLTypeDropTrigger is drop trigger sql
+	SQLTypeDropTrigger = "drop_trigger"
 	// SQLTypeCreateEvent  is create event sql
 	SQLTypeCreateEvent = "create_event"
+	// SQLTypeDropEvent is drop event sql
+	SQLTypeDropEvent = "drop_event"
 	// SQLTypeCreateProcedure is create procedure sql
 	SQLTypeCreateProcedure = "create_procedure"
+	// SQLTypeDropProcedure is drop procedure sql
+	SQLTypeDropProcedure = "drop_procedure"
 	// SQLTypeCreateView is create view sql
 	SQLTypeCreateView = "create_view"
-
+	// SQLTypeDropView is drop view sql
+	SQLTypeDropView = "drop_view"
+	// SQLTypeRenameTable is rename table sql
+	SQLTypeRenameTable = "rename_table"
 	// SQLTypeInsert is insert sql
 	SQLTypeInsert = "insert"
 	// SQLTypeReplace is replace sql
@@ -53,19 +67,27 @@ const (
 	SQLTypeUseDb = "change_db"
 	// SQLTypeInsertSelect insert select sql
 	SQLTypeInsertSelect = "insert_select"
-	// SQLTypeRelaceSelect replace select sql
-	SQLTypeRelaceSelect = "replace_select"
+	// SQLTypeReplaceSelect replace select sql
+	SQLTypeReplaceSelect = "replace_select"
 	// SQLTypeDropTable drop table sql
 	SQLTypeDropTable = "drop_table"
-	// SQLTypeCreateIndex is creat table sql
+	// SQLTypeCreateIndex is create table sql
 	SQLTypeCreateIndex = "create_index"
+	// SQLTypeSetOption is set option sql
+	SQLTypeSetOption = "set_option"
+	// SQLTypeDropIndex is drop index sql
+	SQLTypeDropIndex = "drop_index"
+	// SQLTypeAlterDb is alter db sql
+	SQLTypeAlterDb = "alter_db"
+	// SQLTypeFlush is flush sql
+	SQLTypeFlush = "flush"
 )
 
-// NotAllowedDefaulValColMap 不允许默认值的字段
-var NotAllowedDefaulValColMap map[string]struct{}
+// NotAllowedDefaultValColMap 不允许默认值的字段
+var NotAllowedDefaultValColMap map[string]struct{}
 
 func init() {
-	NotAllowedDefaulValColMap = lo.SliceToMap([]string{"json", "tinyblob", "blob", "mediumblob", "longblob"},
+	NotAllowedDefaultValColMap = lo.SliceToMap([]string{"json", "tinyblob", "blob", "mediumblob", "longblob"},
 		func(s string) (string, struct{}) {
 			return s, struct{}{}
 		})
@@ -73,25 +95,49 @@ func init() {
 
 // ColDef mysql column definition
 type ColDef struct {
-	Type                string      `json:"type"`
-	ColName             string      `json:"col_name"`
-	DataType            string      `json:"data_type"`
-	FieldLength         int         `json:"field_length"`
-	Nullable            bool        `json:"nullable"`
-	DefaultVal          *DefaultVal `json:"default_val"`
-	AutoIncrement       bool        `json:"auto_increment"`
-	UniqueKey           bool        `json:"unique_key"`
-	PrimaryKey          bool        `json:"primary_key"`
-	Comment             string      `json:"comment"`
-	CharacterSet        string      `json:"character_set"`
-	Collate             string      `json:"collate"`
-	ReferenceDefinition interface{} `json:"reference_definition"`
+	Type                string               `json:"type"`
+	ColName             string               `json:"col_name"`
+	DataType            string               `json:"data_type"`
+	FieldLength         int                  `json:"field_length"`
+	Nullable            bool                 `json:"nullable"`
+	DefaultVal          *DefaultVal          `json:"default_val"`
+	AutoIncrement       bool                 `json:"auto_increment"`
+	UniqueKey           bool                 `json:"unique_key"`
+	PrimaryKey          bool                 `json:"primary_key"`
+	Comment             string               `json:"comment"`
+	CharacterSet        string               `json:"character_set"`
+	Collate             string               `json:"collate"`
+	ReferenceDefinition *ReferenceDefinition `json:"reference_definition"`
 }
 
-// IsNotAllowDefaulValCol tendbcluster 不允许某些类型的字段存在默认值的字段
-func (c ColDef) IsNotAllowDefaulValCol() bool {
-	if _, ok := NotAllowedDefaulValColMap[c.DataType]; ok {
+// IsNotAllowDefaultValCol tendbcluster 不允许某些类型的字段存在默认值的字段
+func (c ColDef) IsNotAllowDefaultValCol() bool {
+	if _, ok := NotAllowedDefaultValColMap[c.DataType]; ok {
 		if c.DefaultVal != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// HasInvalidJsonDefault 检查 JSON 字段是否设置了无效的默认值
+// 无效的默认值包括：字符串 'null'（DEFAULT 'null'）、空字符串 ”（DEFAULT ”）
+// 有效的默认值包括：DEFAULT NULL（NULL 关键字，MySQL 5.7 仅允许此形态）、
+// MySQL 8.0.13+ 的表达式默认值（如 DEFAULT (JSON_ARRAY())、DEFAULT ('[]') 等）
+func (c ColDef) HasInvalidJsonDefault() bool {
+	// 只检查 JSON 类型的字段
+	if c.DataType != "json" {
+		return false
+	}
+	// 如果设置了默认值，检查是否为无效值
+	if c.DefaultVal != nil {
+		trimmedValue := strings.TrimSpace(c.DefaultVal.Value)
+		// 检查默认值是否为字符串 'null'（对应 SQL: DEFAULT 'null'，不是有效的 JSON）
+		if strings.ToLower(trimmedValue) == "null" {
+			return true
+		}
+		// 检查默认值是否为空字符串（对应 SQL: DEFAULT ''，不是有效的 JSON）
+		if trimmedValue == "" {
 			return true
 		}
 	}
@@ -104,6 +150,18 @@ type DefaultVal struct {
 	Value string `json:"value"`
 }
 
+// ReferenceDefinition foreign key reference definition
+// 对应 ColDef / KeyDef 中 reference_definition 字段，描述外键引用目标
+// JSON 中 ref_db / on_delete / on_update 可能为 null，按本文件其它可空字符串字段
+// （如 Comment / CharacterSet）的惯例统一用 string 接收 null（反序列化为 ""）
+type ReferenceDefinition struct {
+	RefDb      string   `json:"ref_db"`
+	RefTable   string   `json:"ref_table"`
+	RefColumns []string `json:"ref_columns"`
+	OnDelete   string   `json:"on_delete"`
+	OnUpdate   string   `json:"on_update"`
+}
+
 // KeyDef mysql index definition
 type KeyDef struct {
 	Type     string `json:"type"`
@@ -112,12 +170,12 @@ type KeyDef struct {
 		ColName string `json:"col_name"`
 		KeyLen  int    `json:"key_len"`
 	} `json:"key_parts"`
-	KeyAlg              string      `json:"key_alg"`
-	UniqueKey           bool        `json:"unique_key"`
-	PrimaryKey          bool        `json:"primary_key"`
-	Comment             string      `json:"comment"`
-	ForeignKey          bool        `json:"foreign_key"`
-	ReferenceDefinition interface{} `json:"reference_definition"`
+	KeyAlg              string               `json:"key_alg"`
+	UniqueKey           bool                 `json:"unique_key"`
+	PrimaryKey          bool                 `json:"primary_key"`
+	Comment             string               `json:"comment"`
+	ForeignKey          bool                 `json:"foreign_key"`
+	ReferenceDefinition *ReferenceDefinition `json:"reference_definition"`
 }
 
 // TableOption mysql table option definition
@@ -126,8 +184,8 @@ type TableOption struct {
 	Value interface{} `json:"value"`
 }
 
-// ConverTableOptionToMap convert table option to map
-func ConverTableOptionToMap(options []TableOption) map[string]interface{} {
+// ConvertTableOptionToMap convert table option to map
+func ConvertTableOptionToMap(options []TableOption) map[string]interface{} {
 	r := make(map[string]interface{})
 	for _, v := range options {
 		if !util.IsEmpty(v.Key) {
@@ -200,7 +258,7 @@ type AlterCommand struct {
 	Lock         string        `json:"lock,omitempty"`
 }
 
-// ChangeDbResult mysqlparse change db result
+// ChangeDbResult TmysqlParse change db result
 type ChangeDbResult struct {
 	QueryID int    `json:"query_id"`
 	Command string `json:"command"`
@@ -233,11 +291,14 @@ type ParseLineQueryBase struct {
 	MinMySQLVersion int    `json:"min_mysql_version"`
 	MaxMySQLVersion int    `json:"max_my_sql_version"`
 	HasSubQuery     bool   `json:"has_subquery,omitempty"`
+	Line            int64  `json:"line"`
+	ErrorLine       int64  `json:"error_line"`
 }
 
 // IsSysDb sql modify target db is sys db
 func (p ParseLineQueryBase) IsSysDb() bool {
-	return lo.Contains([]string{"mysql", "information_schema", "performance_schema", "sys"}, strings.ToLower(p.DbName))
+	return lo.Contains([]string{"mysql", "db_infobase", "test", "information_schema", "performance_schema", "sys"},
+		strings.ToLower(p.DbName))
 }
 
 // UserHost user host
@@ -259,7 +320,7 @@ type CreateView struct {
 	CheckOption string   `json:"check_option,omitempty"`
 }
 
-// CreateProcedure tmysqlparse create proceduce result
+// CreateProcedure tmysqlparse create procedure result
 type CreateProcedure struct {
 	ParseBase
 	Definer     UserHost `json:"definer,omitempty"`
@@ -325,4 +386,21 @@ type ParseIncludeTableBase struct {
 	Command   string `json:"command"`
 	DbName    string `json:"db_name"`
 	TableName string `json:"table_name"`
+	ErrorLine int64  `json:"error_line"`
 }
+
+type RenameTableResult struct {
+	ParseBase
+	QueryDigestText  string           `json:"query_digest_text"`
+	QueryDigestMd5   string           `json:"query_digest_md5"`
+	RenameTablePairs RenameTablePairs `json:"rename_table_pairs"`
+}
+
+// RenameTablePair represents a pair of old/new table names for RENAME TABLE
+type RenameTablePair struct {
+	OldName string `json:"old_name"`
+	NewName string `json:"new_name"`
+}
+
+// RenameTablePairs is a slice of RenameTablePair for bulk renames
+type RenameTablePairs []RenameTablePair

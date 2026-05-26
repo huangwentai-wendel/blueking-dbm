@@ -10,7 +10,7 @@ specific language governing permissions and limitations under the License.
 """
 import copy
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 GET_MESSAGE_TYPE = [
     {"type": "rtx", "label": _("企业微信"), "is_active": True, "icon": "base64xxxxxxx"},
@@ -722,6 +722,24 @@ CREATE_POLICY_DETAILS = {
         "user_groups": [20],
     },
     "labels": [],
+    "detects": [
+        {
+            "id": 2345,
+            "level": 2,
+            "connector": "and",
+            "expression": "",
+            "trigger_config": {
+                "count": 5,
+                "uptime": {
+                    "calendars": [],
+                    "time_ranges": [{"end": "22:59", "start": "08:00"}],
+                    "active_calendars": [],
+                },
+                "check_window": 5,
+            },
+            "recovery_config": {"check_window": 5, "status_setter": "recovery"},
+        }
+    ],
 }
 
 CREATE_POLICY = [
@@ -858,3 +876,12 @@ LIST_ALARM_SHIELD_RESPONSE = [
         "update_user": "admin",
     },
 ]
+
+
+DUTY_NOTICE_RULE_DATA = {
+    "cron": {"minute": "1", "hour": "1"},
+    "after": 7,
+    "channels": {"rtx": True, "sms": True, "mail": True, "wecom_robot": "xxxxxxx"},
+    "db_type": "mysql",
+    "enabled": True,
+}

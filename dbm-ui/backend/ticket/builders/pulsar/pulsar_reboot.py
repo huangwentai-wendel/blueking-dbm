@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and limitations 
 
 import logging
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.flow.engine.controller.pulsar import PulsarController
 from backend.ticket import builders
@@ -36,4 +36,4 @@ class PulsarRebootFlowParamBuilder(builders.FlowParamBuilder):
 class PulsarRebootFlowBuilder(BasePulsarTicketFlowBuilder):
     serializer = PulsarRebootDetailSerializer
     inner_flow_builder = PulsarRebootFlowParamBuilder
-    inner_flow_name = _("Pulsar 集群重启")
+    inner_flow_name = _("Pulsar 实例重启")

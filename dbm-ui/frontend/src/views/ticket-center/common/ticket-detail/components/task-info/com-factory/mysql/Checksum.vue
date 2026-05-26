@@ -12,64 +12,110 @@
 -->
 <template>
   <InfoList>
-    <InfoItem :label="t('所属业务')">
-      {{ ticketDetails.bk_biz_name || '--' }}
-    </InfoItem>
-    <InfoItem :label="t('指定执行时间')">
-      {{ utcDisplayTime(ticketDetails.details.timing) || '--' }}
-    </InfoItem>
-    <InfoItem :label="t('自动修复')">
-      {{ ticketDetails.details.data_repair.is_repair ? t('是') : t('否') }}
+    <InfoItem :label="t('执行模式')">
+      {{
+        ticketDetails.details.need_manual_confirm
+          ? t('手动执行')
+          : `${t('定时执行')}（${utcDisplayTime(ticketDetails.details.timing) || '--'}）`
+      }}
     </InfoItem>
     <InfoItem :label="t('全局超时时间（h）')">
       {{ ticketDetails.details.runtime_hour }}
     </InfoItem>
+    <InfoItem :label="t('修复数据')">
+      {{ ticketDetails.details.data_repair.is_repair ? t('是') : t('否') }}
+    </InfoItem>
+    <InfoItem
+      v-if="ticketDetails.details.data_repair.is_repair"
+      :label="t('修复模式')">
+      {{ repairModesMap[ticketDetails.details.data_repair.mode] }}
+    </InfoItem>
   </InfoList>
-  <BkTable
-    :data="ticketDetails.details.infos"
-    show-overflow-tooltip>
-    <BkTableColumn
-      :label="t('目标集群')"
-      :min-width="220">
-      <template #default="{ data }: { data: RowData }">
-        {{ ticketDetails.details.clusters[data.cluster_id].immute_domain }}
+  <TicketInfoTable
+    :data="props.ticketDetails.details.infos"
+    row-key="cluster_id">
+    <TicketInfoTableColumn
+      col-key="cluster_id"
+      :get-copy-value="(row: RowData) => ticketDetails.details.clusters[row.cluster_id].immute_domain"
+      :title="t('目标集群')"
+      :width="300">
+      <template #default="{ row }: { row: RowData }">
+        {{ ticketDetails.details.clusters[row.cluster_id].immute_domain }}
       </template>
-    </BkTableColumn>
-    <BkTableColumn :label="t('校验主库')">
-      <template #default="{ data }: { data: RowData }">
-        {{ data.master.ip }}
+    </TicketInfoTableColumn>
+    <TicketInfoTableColumn
+      col-key="slave"
+      :min-width="150"
+      :title="t('校验从库')">
+      <template #title>
+        <span class="mysql-checksum-ip-header">
+          <span>{{ t('校验从库') }}</span>
+          <PopoverCopy class="copy-btn">
+            <div @click="() => handleCopySlave('ip')">
+              {{ t('复制IP') }}
+            </div>
+            <div @click="() => handleCopySlave('instance')">
+              {{ t('复制实例') }}
+            </div>
+          </PopoverCopy>
+        </span>
       </template>
-    </BkTableColumn>
-    <BkTableColumn :label="t('校验从库')">
-      <template #default="{ data }: { data: RowData }">
+      <template #default="{ row }: { row: RowData }">
         <div
-          v-for="(item, index) in data.slaves"
+          v-for="(item, index) in row.slaves"
           :key="index">
-          <p class="pt-2 pb-2">{{ item.ip }}: {{ item.port }}</p>
+          <p class="pt-2 pb-2">{{ item.ip }}:{{ item.port }}</p>
         </div>
       </template>
-    </BkTableColumn>
-    <BkTableColumn :label="t('校验DB')">
-      <template #default="{ data }: { data: RowData }">
-        <TagBlock :data="data.db_patterns" />
+    </TicketInfoTableColumn>
+    <TicketInfoTableColumn
+      col-key="master"
+      :min-width="150"
+      :title="t('校验主库')">
+      <template #title>
+        <span class="mysql-checksum-ip-header">
+          <span>{{ t('校验主库') }}</span>
+          <PopoverCopy class="copy-btn">
+            <div @click="() => handleCopyMaster('ip')">
+              {{ t('复制IP') }}
+            </div>
+            <div @click="() => handleCopyMaster('instance')">
+              {{ t('复制实例') }}
+            </div>
+          </PopoverCopy>
+        </span>
       </template>
-    </BkTableColumn>
-    <BkTableColumn :label="t('校验表名')">
-      <template #default="{ data }: { data: RowData }">
-        <TagBlock :data="data.table_patterns" />
+      <template #default="{ row }: { row: RowData }"> {{ row.master.ip }}:{{ row.master.port }} </template>
+    </TicketInfoTableColumn>
+    <TicketInfoTableColumn
+      col-key="db_patterns"
+      :title="t('校验 DB 名')">
+      <template #default="{ row }: { row: RowData }">
+        <TagBlock :data="row.db_patterns" />
       </template>
-    </BkTableColumn>
-    <BkTableColumn :label="t('忽略DB')">
-      <template #default="{ data }: { data: RowData }">
-        <TagBlock :data="data.ignore_dbs" />
+    </TicketInfoTableColumn>
+    <TicketInfoTableColumn
+      col-key="ignore_dbs"
+      :title="t('忽略 DB 名')">
+      <template #default="{ row }: { row: RowData }">
+        <TagBlock :data="row.ignore_dbs" />
       </template>
-    </BkTableColumn>
-    <BkTableColumn :label="t('忽略表名')">
-      <template #default="{ data }: { data: RowData }">
-        <TagBlock :data="data.ignore_tables" />
+    </TicketInfoTableColumn>
+    <TicketInfoTableColumn
+      col-key="table_patterns"
+      :title="t('校验表名')">
+      <template #default="{ row }: { row: RowData }">
+        <TagBlock :data="row.table_patterns" />
       </template>
-    </BkTableColumn>
-  </BkTable>
+    </TicketInfoTableColumn>
+    <TicketInfoTableColumn
+      col-key="ignore_tables"
+      :title="t('忽略表名')">
+      <template #default="{ row }: { row: RowData }">
+        <TagBlock :data="row.ignore_tables" />
+      </template>
+    </TicketInfoTableColumn>
+  </TicketInfoTable>
 </template>
 <script setup lang="ts">
   import { useI18n } from 'vue-i18n';
@@ -78,9 +124,10 @@
 
   import { TicketTypes } from '@common/const';
 
+  import PopoverCopy from '@components/popover-copy/Index.vue';
   import TagBlock from '@components/tag-block/Index.vue';
 
-  import { utcDisplayTime } from '@utils';
+  import { execCopy, utcDisplayTime } from '@utils';
 
   import InfoList, { Item as InfoItem } from '../components/info-list/Index.vue';
 
@@ -95,7 +142,51 @@
     inheritAttrs: false,
   });
 
-  defineProps<Props>();
+  const props = defineProps<Props>();
 
   const { t } = useI18n();
+
+  const repairModesMap = {
+    auto: t('自动修复'),
+    manual: t('手动执行'),
+  } as Record<string, string>;
+
+  const handleCopySlave = (field: 'ip' | 'instance') => {
+    const slaves = props.ticketDetails.details.infos.reduce<RowData['slaves']>((acc, item) => {
+      if (item.slaves.length) {
+        return [...acc, ...item.slaves];
+      }
+      return acc;
+    }, []);
+    const items = slaves.map((item) => (item && field === 'instance' ? `${item.ip}:${item.port}` : item.ip));
+    if (items.length > 0) {
+      execCopy(items.join('\n'), t('复制成功，共n条', { n: items.length }));
+    }
+  };
+
+  const handleCopyMaster = (field: 'ip' | 'instance') => {
+    const items = props.ticketDetails.details.infos.map((item) =>
+      item.master && field === 'instance' ? `${item.master.ip}:${item.master.port}` : item.master.ip,
+    );
+    if (items.length > 0) {
+      execCopy(items.join('\n'), t('复制成功，共n条', { n: items.length }));
+    }
+  };
 </script>
+<style lang="less">
+  .mysql-checksum-ip-header {
+    display: flex;
+
+    &:hover {
+      .copy-btn {
+        display: block;
+      }
+    }
+
+    .copy-btn {
+      display: none;
+      margin-left: 4px;
+      cursor: pointer;
+    }
+  }
+</style>

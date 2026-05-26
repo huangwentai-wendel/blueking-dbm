@@ -14,12 +14,13 @@ import os
 from dataclasses import asdict
 from typing import Any, Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.components import DBConfigApi
 from backend.components.dbconfig.constants import FormatType, LevelName
 from backend.configuration.constants import DBType
 from backend.core import consts
+from backend.db_meta.enums import ClusterEntryRole, ClusterEntryType, ClusterType
 from backend.db_meta.enums.instance_role import InstanceRole
 from backend.db_meta.models import Cluster, StorageInstance
 from backend.db_services.mysql.sql_import.constants import BKREPO_SQLFILE_PATH
@@ -31,12 +32,19 @@ from backend.flow.engine.bamboo.scene.common.download_file import (
 )
 from backend.flow.engine.bamboo.scene.common.get_file_list import GetFileList
 from backend.flow.plugins.components.collections.common.create_ticket import CreateTicketComponent
+from backend.flow.plugins.components.collections.common.display_semantic_check_info import (
+    DisplaySemanticCheckInfoComponent,
+)
 from backend.flow.plugins.components.collections.mysql.exec_actuator_script import ExecuteDBActuatorScriptComponent
+from backend.flow.plugins.components.collections.mysql.exec_actuator_script_with_bk_job_record import (
+    ExecuteDBActuatorScriptWithBkJobRecordComponent,
+)
 from backend.flow.plugins.components.collections.mysql.semantic_check import SemanticCheckComponent
 from backend.flow.plugins.components.collections.mysql.trans_flies import TransFileComponent
 from backend.flow.utils.mysql.mysql_act_dataclass import DownloadMediaKwargs, ExecActuatorKwargs
 from backend.flow.utils.mysql.mysql_act_playload import MysqlActPayload
 from backend.flow.utils.mysql.mysql_commom_query import (
+    get_mysql_start_configs,
     merge_resp_to_cluster,
     parse_db_from_sqlfile,
     query_mysql_variables,
@@ -84,16 +92,17 @@ class ImportSQLFlow(object):
         sub_pipelines = []
         base_path = self.data["path"]
         sql_files = self.__get_sql_file_name_list()
-        clusters = Cluster.objects.filter(id__in=self.data["cluster_ids"])
+        clusters = Cluster.objects.filter(id__in=self.data["cluster_ids"]).prefetch_related(
+            "clusterentry_set__storageinstance_set__machine",
+            "storageinstance_set__machine",
+        )
 
         # 合并下发需要变更的文件，不同的bk_cloud_id需要分组处理
         act_lists = []
         cluster_bk_cloud_id_map_list = {}
         for cluster in clusters:
             cluster_bk_cloud_id_map_list.setdefault(cluster.bk_cloud_id, []).append(
-                cluster.storageinstance_set.get(
-                    instance_role__in=[InstanceRole.ORPHAN, InstanceRole.BACKEND_MASTER]
-                ).machine.ip
+                self._resolve_mysql_import_storage(cluster).machine.ip
             )
 
         for bk_cloud_id, ip_list in cluster_bk_cloud_id_map_list.items():
@@ -126,20 +135,18 @@ class ImportSQLFlow(object):
         for cluster_id in self.data["cluster_ids"]:
             # 这样获取顺便可以验证是否传入非法的集群id
             cluster = clusters.get(id=cluster_id)
-            master = cluster.storageinstance_set.get(
-                instance_role__in=[InstanceRole.ORPHAN, InstanceRole.BACKEND_MASTER]
-            )
+            master = self._resolve_mysql_import_storage(cluster)
 
             sub_pipeline = SubBuilder(self.root_id, self.data)
             sub_pipeline.add_act(
                 act_name=_("执行SQL导入"),
-                act_component_code=ExecuteDBActuatorScriptComponent.code,
+                act_component_code=ExecuteDBActuatorScriptWithBkJobRecordComponent.code,
                 kwargs=asdict(
                     ExecActuatorKwargs(
                         job_timeout=LONG_JOB_TIMEOUT,
                         exec_ip=master.machine.ip,
                         bk_cloud_id=cluster.bk_cloud_id,
-                        cluster={"port": master.port},
+                        cluster={"cluster_id": cluster.id, "port": master.port},
                         get_mysql_payload_func=MysqlActPayload.get_import_sqlfile_payload.__name__,
                     )
                 ),
@@ -161,7 +168,10 @@ class ImportSQLFlow(object):
         if len(cluster_ids) <= 0:
             raise Exception(_("查询不到可执行的集群！！！"))
         templ_cluster_id = cluster_ids[0]
-        cluster = Cluster.objects.get(id=templ_cluster_id)
+        cluster = Cluster.objects.prefetch_related(
+            "clusterentry_set__storageinstance_set__machine",
+            "storageinstance_set__machine",
+        ).get(id=templ_cluster_id)
         template_cluster = self.__get_master_instance_info(cluster=cluster)
         cluster_type = template_cluster["cluster_type"]
         template_db_version = self.__get_version_and_charset(
@@ -172,16 +182,26 @@ class ImportSQLFlow(object):
         bk_cloud_id = template_cluster["bk_cloud_id"]
         origin_mysql_var_map = query_mysql_variables(host=backend_ip, port=backend_port, bk_cloud_id=bk_cloud_id)
         backend_charset = origin_mysql_var_map.get("character_set_client")
-        start_mysqld_configs = {}
-        logger.info(f"backend_charset: {backend_charset}")
-
-        for var in ["sql_mode", "log_bin_trust_function_creators"]:
-            if origin_mysql_var_map.__contains__(var):
-                start_mysqld_configs[var] = origin_mysql_var_map.get(var)
+        start_mysqld_configs = get_mysql_start_configs(origin_mysql_var_map)
+        logger.info(_("backend_charset: {}").format(backend_charset))
 
         semantic_check_pipeline = Builder(
             root_id=self.root_id, data=self.data, need_random_pass_cluster_ids=[templ_cluster_id]
         )
+
+        # 添加单据信息回显节点
+        semantic_check_pipeline.add_act(
+            act_name=_("回显SQL语义检测单据信息"),
+            act_component_code=DisplaySemanticCheckInfoComponent.code,
+            kwargs={
+                "cluster_ids": self.data["cluster_ids"],
+                "execute_objects": self.data["execute_objects"],
+                "path": self.data["path"],
+                "bk_biz_id": self.data["bk_biz_id"],
+                "charset": self.data["charset"],
+            },
+        )
+
         # Add db-actuator download action to pipeline
         add_db_actuator_download_to_pipeline(
             pipeline=semantic_check_pipeline, bk_cloud_id=bk_cloud_id, exec_ip=backend_ip
@@ -191,7 +211,9 @@ class ImportSQLFlow(object):
         path = self.data["path"]
         resp = parse_db_from_sqlfile(path=path, files=list(sqlfile_list))
         if resp is None:
-            logger.warning("root id:[{}]parse db from sqlfile resp is None,set dump_all to True.".format(self.root_id))
+            logger.warning(
+                _("root id:[{}] parse db from sqlfile resp is None，已设置 dump_all 为 True。").format(self.root_id)
+            )
         else:
             template_cluster.update(merge_resp_to_cluster(resp))
         template_cluster["semantic_dump_schema_file_name_suffix"] = self.semantic_dump_schema_file_name_suffix
@@ -205,6 +227,7 @@ class ImportSQLFlow(object):
                     exec_ip=backend_ip,
                     cluster=template_cluster,
                     get_mysql_payload_func=MysqlActPayload.get_semantic_dump_schema_payload.__name__,
+                    job_timeout=LONG_JOB_TIMEOUT,
                 )
             ),
         )
@@ -244,14 +267,65 @@ class ImportSQLFlow(object):
 
         semantic_check_pipeline.run_pipeline(is_drop_random_user=True)
 
-    def __get_master_instance_info(self, cluster: Cluster) -> dict:
-        backend_info = StorageInstance.objects.filter(
-            cluster=cluster,
-            instance_role__in=[InstanceRole.ORPHAN, InstanceRole.BACKEND_MASTER],
-        ).first()
-        if not backend_info:
+    @staticmethod
+    def _resolve_mysql_import_storage(cluster: Cluster) -> StorageInstance:
+        """
+        解析 SQL 导入应连接的存储实例。TenDBSingle 以主 DNS 入口绑定的实例为准；主 DNS 入口记录及
+        其绑定的存储实例均至多 1 条，否则抛错。其它类型见 cluster M2M 上按角色筛选。
+        """
+        if cluster.cluster_type == ClusterType.TenDBSingle.value:
+            entry_qs = cluster.clusterentry_set.filter(
+                cluster_entry_type=ClusterEntryType.DNS.value,
+                role=ClusterEntryRole.MASTER_ENTRY.value,
+            )
+            entry_count = entry_qs.count()
+            if entry_count > 1:
+                raise Exception(
+                    _("TenDBSingle 集群 {} 存在 {} 条主 DNS 入口记录，期望至多 1 条，请检查元数据").format(cluster.id, entry_count)
+                )
+            master_entry = entry_qs.first() if entry_count == 1 else None
+            if master_entry is not None:
+                bound_qs = master_entry.storageinstance_set.select_related("machine").order_by("id")
+                bound_count = bound_qs.count()
+                if bound_count > 1:
+                    raise Exception(
+                        _("TenDBSingle 集群 {} 主 DNS 入口绑定了 {} 个存储实例，期望至多 1 个，请检查元数据").format(cluster.id, bound_count)
+                    )
+                bound = bound_qs.first()
+                if bound is not None:
+                    return bound
+            logger.warning(_("TenDBSingle 集群 {} 未从主入口 DNS 解析到存储实例，使用兜底逻辑").format(cluster.id))
+            fallback = cluster.main_storage_instances().first()
+            if fallback is not None:
+                return fallback
+            storage = (
+                StorageInstance.objects.filter(
+                    cluster=cluster,
+                    instance_role__in=[InstanceRole.ORPHAN, InstanceRole.BACKEND_MASTER],
+                )
+                .select_related("machine")
+                .order_by("instance_role", "id")
+                .first()
+            )
+            if storage is not None:
+                return storage
             raise Exception(_("查询不到可执行的实例！！！"))
-        logger.info(f"get backend info: {backend_info}")
+
+        storage = (
+            cluster.storageinstance_set.filter(
+                instance_role__in=[InstanceRole.ORPHAN, InstanceRole.BACKEND_MASTER],
+            )
+            .select_related("machine")
+            .order_by("instance_role", "id")
+            .first()
+        )
+        if storage is None:
+            raise Exception(_("查询不到可执行的实例！！！"))
+        return storage
+
+    def __get_master_instance_info(self, cluster: Cluster) -> dict:
+        backend_info = self._resolve_mysql_import_storage(cluster)
+        logger.info("get backend info: {}".format(backend_info))
         return {
             "id": cluster.id,
             "bk_cloud_id": cluster.bk_cloud_id,

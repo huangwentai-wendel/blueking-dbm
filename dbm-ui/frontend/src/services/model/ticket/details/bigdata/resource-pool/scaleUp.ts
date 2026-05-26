@@ -1,4 +1,4 @@
-import type { ResourcePoolDetailBase } from '../../common';
+import type { ResourcePoolDetailBase } from '../../resource-pool';
 
 import type { ResourceSpec } from './common';
 
@@ -23,6 +23,7 @@ export interface ScaleUp extends ResourcePoolDetailBase {
     namenode: ExtInfoItem;
     proxy: ExtInfoItem;
     slave: ExtInfoItem;
+    warm: ExtInfoItem;
     zookeeper: ExtInfoItem;
   };
   resource_spec: ResourceSpec;

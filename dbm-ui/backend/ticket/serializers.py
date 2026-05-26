@@ -11,7 +11,7 @@ specific language governing permissions and limitations under the License.
 from typing import Optional
 
 from django.utils import timezone
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.bk_web.constants import LEN_L_LONG
@@ -21,6 +21,7 @@ from backend.core.notify.constants import MsgType
 from backend.ticket import mock_data
 from backend.ticket.builders import BuilderFactory
 from backend.ticket.constants import (
+    FLOW_TASK_TYPES,
     TICKET_RUNNING_STATUS_SET,
     TODO_RUNNING_STATUS,
     FlowType,
@@ -128,13 +129,14 @@ class TicketSerializer(AuditedSerializer, serializers.ModelSerializer):
     def get_todo_operators(self, obj):
         # 任取一个运行中的todo，获取operators即可
         obj.running_todos = [todo for todo in obj.todo_of_ticket.all() if todo.status == TodoStatus.TODO]
+        obj.inner_todo = [todo for todo in obj.running_todos if todo.type == TodoType.INNER_APPROVE]
         return obj.running_todos[0].operators if obj.running_todos else []
 
     def get_todo_helpers(self, obj):
         return obj.running_todos[0].helpers if obj.running_todos else []
 
     def get_status(self, obj):
-        if obj.status == TicketStatus.RUNNING and obj.running_todos:
+        if obj.status == TicketStatus.RUNNING and obj.inner_todo:
             obj.status = TicketStatus.INNER_TODO
         return obj.status
 
@@ -168,6 +170,7 @@ class TicketFlowSerializer(TranslationSerializerMixin, serializers.ModelSerializ
     # TODO: flow_output 这个key后续废弃。改造为output data字段
     flow_output = serializers.SerializerMethodField(help_text=_("流程输出数据"))
     output_data = serializers.SerializerMethodField(help_text=_("流程输出数据V2"))
+    remark = serializers.SerializerMethodField(help_text=_("备注"))
 
     def to_representation(self, instance):
         self.ticket_flow = TicketFlowManager(ticket=instance.ticket).get_ticket_flow_cls(flow_type=instance.flow_type)(
@@ -200,6 +203,11 @@ class TicketFlowSerializer(TranslationSerializerMixin, serializers.ModelSerializ
     def get_flow_type_display(self, obj):
         # 暂停节点的flow描述返回单据类型，供前端渲染
         if obj.flow_type == FlowType.PAUSE.value:
+            next_flow = Flow.objects.filter(
+                ticket=obj.ticket, id__gt=obj.id, flow_type=FlowType.INNER_FLOW.value
+            ).first()
+            if next_flow:
+                return next_flow.flow_alias or obj.get_flow_type_display()
             return obj.ticket.get_ticket_type_display()
         return obj.flow_alias or obj.get_flow_type_display()
 
@@ -211,7 +219,13 @@ class TicketFlowSerializer(TranslationSerializerMixin, serializers.ModelSerializ
         return obj.flow_output
 
     def get_output_data(self, obj):
-        return obj.flow_output_v2
+        # 目前流程摘要只用于task类型
+        if obj.flow_type not in FLOW_TASK_TYPES:
+            return []
+        return obj.output_data
+
+    def get_remark(self, obj):
+        return obj.context.get("remark") if obj.context else ""
 
     @property
     def translated_fields(self):
@@ -260,6 +274,19 @@ class TodoOperateSerializer(serializers.Serializer):
         swagger_schema_fields = {"example": todo_operate_example}
 
 
+class ClusterDisableTodoSerializer(serializers.Serializer):
+    db_type = serializers.CharField(help_text=_("db类型"))
+    cluster_id = serializers.IntegerField(help_text=_("集群id"), required=False)
+    bk_biz_id = serializers.CharField(help_text=_("业务id"), required=False)
+    create_at__lte = serializers.CharField(help_text=_("禁用时间"), required=False)
+    create_at__gte = serializers.CharField(help_text=_("禁用时间"), required=False)
+    disable_person = serializers.CharField(help_text=_("禁用人"), required=False)
+    immute_domain = serializers.CharField(help_text=_("主域名"), required=False)
+    limit = serializers.IntegerField(help_text=_("分页参数"))
+    offset = serializers.IntegerField(help_text=_("分页参数"))
+    is_assist = serializers.BooleanField(help_text=_("是否协助"))
+
+
 class TicketTypeSLZ(serializers.Serializer):
     is_apply = serializers.BooleanField(help_text=_("是否是部署类单据"), required=False, default=False)
 
@@ -281,10 +308,12 @@ class RetryFlowSLZ(serializers.Serializer):
 
 class RevokeFlowSLZ(serializers.Serializer):
     flow_id = serializers.IntegerField(help_text=_("单据流程的ID"))
+    remark = serializers.CharField(help_text=_("单据终止备注"), required=False, default="")
 
 
 class RevokeTicketSLZ(serializers.Serializer):
     ticket_ids = serializers.ListField(help_text=_("终止单据ID"), child=serializers.IntegerField())
+    remark = serializers.CharField(help_text=_("单据终止备注"), required=False, default="")
 
 
 class GetTodosSLZ(serializers.Serializer):
@@ -302,7 +331,7 @@ class OpRecordSerializer(serializers.Serializer):
     def to_representation(self, instance):
         return {
             "create_at": instance.create_at,
-            "op_type": instance.ticket.ticket_type,
+            "op_type": TicketType.get_choice_label(instance.ticket.ticket_type),
             "op_status": instance.ticket.status,
             "ticket_id": instance.ticket.id,
             "creator": instance.creator,

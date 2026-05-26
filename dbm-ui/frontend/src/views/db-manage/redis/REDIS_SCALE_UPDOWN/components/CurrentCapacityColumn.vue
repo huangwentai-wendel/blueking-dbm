@@ -15,7 +15,8 @@
   <EditableColumn
     field="cluster_capacity"
     :label="t('当前容量')"
-    :min-width="200">
+    :min-width="200"
+    readonly>
     <CapacityCell
       v-if="cluster.id"
       :data="currentCapacity" />
@@ -43,6 +44,7 @@
     capacity: props.cluster.cluster_capacity,
     clusterShardNum: props.cluster.cluster_shard_num,
     groupNum: props.cluster.machine_pair_cnt,
+    labels: [],
     spec: props.cluster.cluster_spec,
   }));
 </script>

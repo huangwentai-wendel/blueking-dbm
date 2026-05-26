@@ -9,7 +9,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from blue_krill.data_types.enum import EnumField, StructuredEnum
+from blue_krill.data_types.enum import EnumField, StrStructuredEnum
 
 # 寻找未翻译语言时，忽略方法名
 IGNORED_METHOD_LIST = [
@@ -33,7 +33,8 @@ EXCLUDE_DIRS = [
     "backend/db_monitor/management",
     "backend/db_event/management",
     "backend/flow/utils/cloud/script_template",
-    "dbm-ui/backend/db_services/report/mock_data",
+    "backend/db_services/report/mock_data",
+    "backend/dbm_aiagent/mcp_tools",
 ]
 # 寻找未翻译语言时，忽略的文件路径
 EXCLUDE_FILE_PATHS = [
@@ -44,6 +45,16 @@ EXCLUDE_FILE_PATHS = [
     # 忽略权限模型json初始化的中文
     "backend/iam_app/dataclass/__init__.py",
     "backend/ticket/constants.py",
+    # aidev 快捷指令中文
+    "backend/dbm_aiagent/config.py",
+    "backend/dbm_aiagent/agent/commands/commands.py",
+    "backend/dbm_aiagent/agent/commands/es_commands.py",
+    "backend/dbm_aiagent/agent/commands/kafka_commands.py",
+    "backend/dbm_aiagent/agent/commands/redis_commands.py",
+    "backend/dbm_aiagent/agent/commands/mongodb_commands.py",
+    "backend/dbm_aiagent/agent/commands/pulsar_commands.py",
+    "backend/dbm_aiagent/agent/commands/hdfs_commands.py",
+    "backend/dbm_aiagent/agent/commands/doris_commands.py",
 ]
 ALL_EXCLUDE_DIRS = set(EXCLUDE_DIRS + EXCLUDE_FILE_PATHS)
 
@@ -51,7 +62,7 @@ ALL_EXCLUDE_DIRS = set(EXCLUDE_DIRS + EXCLUDE_FILE_PATHS)
 EXCLUDE_LANGUAGES_IN_FILE = {}
 
 
-class Language(str, StructuredEnum):
+class Language(StrStructuredEnum):
     ZH_CN = EnumField("zh-cn", "ZH-CN")
     EN = EnumField("en", "EN")
 
@@ -60,7 +71,7 @@ class Language(str, StructuredEnum):
 LANGUAGE_REGEX_MAP = {Language.ZH_CN.value: r"[\u4e00-\u9fff]", Language.EN.value: r"[a-zA-Z]"}
 
 
-class LanguageFindMode(str, StructuredEnum):
+class LanguageFindMode(StrStructuredEnum):
     VISIT = EnumField("visit", "VISIT")
     AST_ALTER = EnumField("alter", "ALTER")
     SIMPLE_ALTER = EnumField("simple_alter", "SIMPLE_ALTER")

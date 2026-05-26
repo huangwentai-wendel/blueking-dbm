@@ -19,15 +19,16 @@ type TbRequestRecord struct {
 	ID          int    `gorm:"primaryKey;column:id;type:int(11);not null" json:"-"`
 	RequestID   string `gorm:"unique;column:request_id;type:varchar(64);not null" json:"request_id"` // request_id
 	RequestBody string `gorm:"column:request_body;type:json" json:"request_body"`
+	Platform    string `gorm:"column:platform;type:varchar(32);not null" json:"platform"`
 	Method      string `gorm:"column:method;type:varchar(16);not null" json:"method"`
 	// 请求的用户
 	User string `gorm:"column:user;type:varchar(32);not null" json:"user"`
 	// 请求路径
 	Path string `gorm:"column:path;type:varchar(32);not null" json:"path"`
 	// response data message
-	ResponeBody string `gorm:"column:response_body;type:json" json:"response_body"`
+	ResponseBody string `gorm:"column:response_body;type:json" json:"response_body"`
 	// response code
-	ResponeCode int `gorm:"column:response_code;type:int(11);not null" json:"response_code"`
+	ResponseCode int `gorm:"column:response_code;type:int(11);not null" json:"response_code"`
 	// 请求来源Ip
 	SourceIP   string    `gorm:"column:source_ip;type:varchar(32);not null" json:"source_ip"`
 	UpdateTime time.Time `gorm:"column:update_time;type:timestamp;default:CURRENT_TIMESTAMP()" json:"update_time"`

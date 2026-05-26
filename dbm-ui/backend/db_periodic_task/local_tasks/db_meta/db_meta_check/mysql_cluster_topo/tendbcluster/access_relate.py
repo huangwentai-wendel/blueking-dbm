@@ -10,10 +10,10 @@ specific language governing permissions and limitations under the License.
 """
 from typing import List
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.db_meta.enums import InstanceInnerRole, TenDBClusterSpiderRole
-from backend.db_meta.models import Cluster
+from backend.db_meta.models import Cluster, StorageInstance
 from backend.db_periodic_task.local_tasks.db_meta.db_meta_check.mysql_cluster_topo.check_response import CheckResponse
 from backend.db_periodic_task.local_tasks.db_meta.db_meta_check.mysql_cluster_topo.decorator import checker_wrapper
 from backend.db_report.enums import MetaCheckSubType
@@ -53,6 +53,7 @@ def _cluster_spider_access_remote(c: Cluster) -> List[CheckResponse]:
             continue
 
         right = []  # bind 关系正确的实例数
+        si: StorageInstance
         for si in pi.storageinstance.all():
             if si.instance_inner_role != can_access_remote_role:
                 bad.append(
@@ -62,7 +63,7 @@ def _cluster_spider_access_remote(c: Cluster) -> List[CheckResponse]:
                                 pi.tendbclusterspiderext.spider_role, si.instance_inner_role, si.ip_port
                             )
                         ),
-                        check_subtype=MetaCheckSubType.ClusterTopo,
+                        check_subtype=MetaCheckSubType.TenDBClusterSpiderBindWrongRole,
                         instance=pi,
                     )
                 )
@@ -81,7 +82,7 @@ def _cluster_spider_access_remote(c: Cluster) -> List[CheckResponse]:
                             len(right), should_remote_master_cnt
                         )
                     ),
-                    check_subtype=MetaCheckSubType.ClusterTopo,
+                    check_subtype=MetaCheckSubType.TenDBClusterRemoteCountNotMatch,
                     instance=pi,
                 )
             )
@@ -97,7 +98,7 @@ def _cluster_spider_access_remote(c: Cluster) -> List[CheckResponse]:
                             len(right), should_remote_slave_cnt
                         )
                     ),
-                    check_subtype=MetaCheckSubType.ClusterTopo,
+                    check_subtype=MetaCheckSubType.TenDBClusterRemoteCountNotMatch,
                     instance=pi,
                 )
             )

@@ -9,20 +9,23 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from backend.db_services.redis.redis_dts.enums import DtsCopyType
 from backend.db_services.redis.rollback.models import TbTendisRollbackTasks
 from backend.flow.engine.controller.redis import RedisController
 from backend.ticket import builders
-from backend.ticket.builders.common.base import SkipToRepresentationMixin
 from backend.ticket.builders.common.field import DBTimezoneField
-from backend.ticket.builders.redis.base import BaseRedisTicketFlowBuilder, ClusterValidateMixin
+from backend.ticket.builders.redis.base import (
+    BaseRedisTicketFlowBuilder,
+    ClusterValidateMixin,
+    RedisBaseOperateDetailSerializer,
+)
 from backend.ticket.constants import TicketType, WriteModeType
 
 
-class RedisRollbackDataCopyDetailSerializer(SkipToRepresentationMixin, serializers.Serializer):
+class RedisRollbackDataCopyDetailSerializer(RedisBaseOperateDetailSerializer):
     class InfoSerializer(serializers.Serializer):
         src_cluster = serializers.CharField(help_text=_("构造产物访问入口（ip:port）"))
         dst_cluster = serializers.IntegerField(help_text=_("目标集群ID"))
@@ -43,7 +46,7 @@ class RedisRollbackDataCopyDetailSerializer(SkipToRepresentationMixin, serialize
 
     def validate(self, attr):
         """根据复制类型校验info"""
-
+        attr = super().validate(attr)
         dst_cluster_set = set()
         src_cluster_set = set()
         for info in attr.get("infos"):
@@ -53,6 +56,7 @@ class RedisRollbackDataCopyDetailSerializer(SkipToRepresentationMixin, serialize
             ClusterValidateMixin.check_cluster_phase(dst_cluster)
 
             if not TbTendisRollbackTasks.objects.filter(
+                bk_biz_id=self.context["bk_biz_id"],
                 prod_cluster_id=dst_cluster,
                 temp_cluster_proxy=src_cluster,
                 recovery_time_point=info.get("recovery_time_point"),

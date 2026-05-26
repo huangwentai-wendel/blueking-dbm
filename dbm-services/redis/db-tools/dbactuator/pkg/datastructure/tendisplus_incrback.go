@@ -1100,13 +1100,13 @@ func (incr *TplusRocksDBIncrBack) ImportOneBinlogToTplus(tplusIP string, tplusPo
 	incrBackFile := filepath.Join(incr.SaveMyDir, bkItem.DecompressedFile)
 	importCmd := fmt.Sprintf(
 		"binlog_tool --logfile=%s --mode=base64 --start-position=%d --end-datetime=%d|%s -h %s -p %d -a %s --no-auth-warning",
-		incrBackFile, incr.StartPos, incr.EndTime.Unix()*1000, consts.TendisplusRediscli, tplusIP, tplusPort, tplusPasswd)
+		incrBackFile, incr.StartPos, incr.EndTime.Unix()*1000, consts.TendisplusRediscli, tplusIP, tplusPort, util.ShellQuote(tplusPasswd))
 	logCmd := fmt.Sprintf(
 		"binlog_tool --logfile=%s --mode=base64 --start-position=%d --end-datetime=%d|%s -h %s -p %d -a x --no-auth-warning",
 		incrBackFile, incr.StartPos, incr.EndTime.Unix()*1000, consts.TendisplusRediscli, tplusIP, tplusPort)
 
 	mylog.Logger.Info("导入binlog,命令:%v", logCmd)
-	ret01, err := util.RunLocalCmd("bash", []string{"-c", importCmd}, "", nil, 1*time.Hour)
+	ret01, err := util.RunLocalCmdReplacePkey("bash", []string{"-c", importCmd}, tplusPasswd, "", nil, 1*time.Hour)
 	if err != nil {
 		mylog.Logger.Error(fmt.Sprintf("导入binlog失败,详情:%v", err))
 		incr.Err = err

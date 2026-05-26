@@ -21,9 +21,11 @@ package provider
 
 import (
 	"k8s-dbs/metadata/dbaccess"
-	models "k8s-dbs/metadata/dbaccess/model"
-	entitys "k8s-dbs/metadata/provider/entity"
-	"log/slog"
+	entitys "k8s-dbs/metadata/entity"
+	models "k8s-dbs/metadata/model"
+	"sync"
+
+	"github.com/pkg/errors"
 
 	"github.com/jinzhu/copier"
 )
@@ -33,6 +35,7 @@ type K8sCrdComponentProvider interface {
 	CreateComponent(entity *entitys.K8sCrdComponentEntity) (*entitys.K8sCrdComponentEntity, error)
 	DeleteComponentByID(id uint64) (uint64, error)
 	FindComponentByID(id uint64) (*entitys.K8sCrdComponentEntity, error)
+	FindComponentsByParams(params *entitys.ComponentQueryParams) ([]*entitys.K8sCrdComponentEntity, error)
 	UpdateComponent(entity *entitys.K8sCrdComponentEntity) (uint64, error)
 	DeleteComponentByClusterID(id uint64) (uint64, error)
 }
@@ -42,6 +45,38 @@ type K8sCrdComponentProviderImpl struct {
 	dbAccess dbaccess.K8sCrdComponentDbAccess
 }
 
+var (
+	componentInstance K8sCrdComponentProvider
+	componentOnce     sync.Once
+)
+
+// GetK8sCrdComponentProvider 获取 K8sCrdComponentProvider 单例实例
+func GetK8sCrdComponentProvider(dbAccess dbaccess.K8sCrdComponentDbAccess) K8sCrdComponentProvider {
+	componentOnce.Do(func() {
+		componentInstance = &K8sCrdComponentProviderImpl{dbAccess: dbAccess}
+	})
+	if componentInstance == nil {
+		panic("K8sCrdComponentProvider instance is nil after initialization")
+	}
+	return componentInstance
+}
+
+// FindComponentsByParams 参数查询实现
+func (k K8sCrdComponentProviderImpl) FindComponentsByParams(params *entitys.ComponentQueryParams) (
+	[]*entitys.K8sCrdComponentEntity,
+	error,
+) {
+	componentModels, err := k.dbAccess.FindByParams(params)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to find component with params %+v", params)
+	}
+	var componentEntities []*entitys.K8sCrdComponentEntity
+	if err = copier.Copy(&componentEntities, componentModels); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
+	}
+	return componentEntities, nil
+}
+
 // DeleteComponentByClusterID 根据 cluster ID 来删除 component
 func (k K8sCrdComponentProviderImpl) DeleteComponentByClusterID(id uint64) (uint64, error) {
 	return k.dbAccess.DeleteByClusterID(id)
@@ -49,24 +84,24 @@ func (k K8sCrdComponentProviderImpl) DeleteComponentByClusterID(id uint64) (uint
 
 // CreateComponent 创建 component
 func (k K8sCrdComponentProviderImpl) CreateComponent(entity *entitys.K8sCrdComponentEntity) (
-	*entitys.K8sCrdComponentEntity, error,
+	*entitys.K8sCrdComponentEntity,
+	error,
 ) {
 	k8sCrdComponentModel := models.K8sCrdComponentModel{}
-	err := copier.Copy(&k8sCrdComponentModel, entity)
-	if err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return nil, err
+	if err := copier.Copy(&k8sCrdComponentModel, entity); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
 	}
+
 	componentModel, err := k.dbAccess.Create(&k8sCrdComponentModel)
 	if err != nil {
-		slog.Error("Failed to create entity", "error", err)
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to create component with entity: %+v", entity)
 	}
+
 	componentEntity := entitys.K8sCrdComponentEntity{}
-	if err := copier.Copy(&componentEntity, componentModel); err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return nil, err
+	if err = copier.Copy(&componentEntity, componentModel); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
 	}
+
 	return &componentEntity, nil
 }
 
@@ -79,13 +114,11 @@ func (k K8sCrdComponentProviderImpl) DeleteComponentByID(id uint64) (uint64, err
 func (k K8sCrdComponentProviderImpl) FindComponentByID(id uint64) (*entitys.K8sCrdComponentEntity, error) {
 	componentModel, err := k.dbAccess.FindByID(id)
 	if err != nil {
-		slog.Error("Failed to find entity", "error", err)
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to find component by ID: %v", id)
 	}
 	componentEntity := entitys.K8sCrdComponentEntity{}
-	if err := copier.Copy(&componentEntity, componentModel); err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return nil, err
+	if err = copier.Copy(&componentEntity, componentModel); err != nil {
+		return nil, errors.Wrap(err, "failed to copy")
 	}
 	return &componentEntity, nil
 }
@@ -93,20 +126,14 @@ func (k K8sCrdComponentProviderImpl) FindComponentByID(id uint64) (*entitys.K8sC
 // UpdateComponent 更新 component
 func (k K8sCrdComponentProviderImpl) UpdateComponent(entity *entitys.K8sCrdComponentEntity) (uint64, error) {
 	componentModel := models.K8sCrdComponentModel{}
-	err := copier.Copy(&componentModel, entity)
-	if err != nil {
-		slog.Error("Failed to copy entity to copied model", "error", err)
-		return 0, err
+	if err := copier.Copy(&componentModel, entity); err != nil {
+		return 0, errors.Wrap(err, "failed to copy")
 	}
+
 	rows, err := k.dbAccess.Update(&componentModel)
 	if err != nil {
-		slog.Error("Failed to update entity", "error", err)
-		return 0, err
+		return 0, errors.Wrapf(err, "failed to update component with entity: %+v", entity)
 	}
-	return rows, nil
-}
 
-// NewK8sCrdComponentProvider 创建 K8sCrdComponentDbAccess 接口实现实例
-func NewK8sCrdComponentProvider(dbAccess dbaccess.K8sCrdComponentDbAccess) K8sCrdComponentProvider {
-	return &K8sCrdComponentProviderImpl{dbAccess}
+	return rows, nil
 }

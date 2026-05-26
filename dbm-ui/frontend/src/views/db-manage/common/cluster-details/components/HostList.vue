@@ -23,63 +23,64 @@
         @click="handleAllHostIp">
         {{ t('复制所有 IP') }}
       </BkButton>
-      <DbSearchSelect
-        :data="searchSelectData"
-        :get-menu-list="getSearchMenuList"
-        :model-value="searchSelectValue"
+      <DbQuickSearch
+        v-model="quickSearchValue"
+        :data="quickSearchData"
         :placeholder="t('请输入或选择条件搜索')"
-        style="flex: 1; max-width: 560px; margin-left: auto"
-        unique-select
-        @change="handleSearchValueChange" />
+        style="flex: 1; max-width: 560px; margin-left: auto" />
     </div>
     <DbTable
-      ref="dbTable"
+      ref="hostTableRef"
       :data-source="dataSource"
-      primary-key="bk_host_id"
-      :row-config="{
-        useKey: true,
-        keyField: 'bk_host_id',
-      }"
+      :filter-value="quickSearchValue"
+      row-key="bk_host_id"
       selectable
+      @filter-change="handleFilterChange"
       @selection="handleSelectChange">
-      <HostListFieldColumn />
+      <HostListFieldColumn
+        :cluster-id="clusterId"
+        :cluster-type="clusterType" />
     </DbTable>
   </div>
 </template>
 <script setup lang="ts">
-  import _ from 'lodash';
   import { useI18n } from 'vue-i18n';
-  import { useRoute, useRouter } from 'vue-router';
 
-  import { useUrlSearch } from '@hooks';
+  import DbTable from '@components/db-table/IndexNew.vue';
 
   import useClusterMachineList from '@views/db-manage/hooks/useClusterMachineList';
 
-  import { getSearchSelectorParams } from '@utils';
-
-  import { URL_HOST_MEMO_KEY } from '../constants';
-  import { useCopyMachineIp } from '../hooks';
+  import { useCopyMachineIp, useHostSearchSelect } from '../hooks';
   import HostListFieldColumn from '../HostListFieldColumn.vue';
-  import { getSearchSelectValue } from '../utils/index';
 
   interface Props {
+    activePanel: string;
     clusterId: number;
     clusterType: Parameters<typeof useClusterMachineList>[0];
   }
+  const props = defineProps<Props>();
 
   type IData = ServiceReturnType<ReturnType<typeof useClusterMachineList>>['results'][number];
 
-  const props = defineProps<Props>();
-
   const { t } = useI18n();
-  const route = useRoute();
-  const router = useRouter();
 
-  const urlPaylaod = JSON.parse(decodeURIComponent(String(route.query[URL_HOST_MEMO_KEY] || '{}')));
-
-  const { getSearchParams } = useUrlSearch();
   const { copyAllIp, copyNotAliveIp } = useCopyMachineIp();
   const requestHandler = useClusterMachineList(props.clusterType);
+
+  const hostTableRef = ref<InstanceType<typeof DbTable>>();
+  const { initQuickSearchValue, quickSearchData, quickSearchValue } = useHostSearchSelect(props.clusterType, {
+    clusterId: props.clusterId,
+    serviceHandler: () => {
+      fetchData();
+    },
+  });
+
+  watch(
+    () => props.activePanel,
+    () => {
+      initQuickSearchValue();
+    },
+  );
 
   const dataSource = (params: ServiceParameters<typeof requestHandler>) =>
     requestHandler({
@@ -87,56 +88,13 @@
       ...params,
     });
 
-  const getSearchMenuList = (payload: { children: any[]; id: string }) => {
-    return Promise.resolve().then(() => {
-      if (payload.id === 'instance_role') {
-        return _.uniqBy(
-          dbTable.value?.getData<IData>().map((item) => ({
-            id: item.instance_role,
-            name: item.instance_role,
-          })),
-          'id',
-        );
-      }
-      return payload.children || [];
-    });
-  };
-
-  const searchSelectData = [
-    {
-      id: 'ip',
-      name: 'IP',
-    },
-    {
-      id: 'instance_role',
-      name: t('部署角色'),
-    },
-    {
-      id: 'region',
-      name: t('地域'),
-    },
-    {
-      id: 'bk_sub_zone',
-      name: t('园区'),
-    },
-    {
-      id: 'bk_os_name',
-      name: t('操作系统'),
-    },
-
-    {
-      id: 'bk_svr_device_cls_name',
-      name: t('机型'),
-    },
-  ];
-
-  const searchSelectValue = shallowRef<ReturnType<typeof getSearchSelectValue>>([]);
-
-  const dbTable = useTemplateRef('dbTable');
-
   const selectedHostList = shallowRef<IData[]>([]);
 
-  const handleSelectChange = (_: any[], list: IData[]) => {
+  const fetchData = () => {
+    hostTableRef?.value?.fetchData({ ...quickSearchValue.value });
+  };
+
+  const handleSelectChange = (_key: string[], list: IData[]) => {
     selectedHostList.value = list;
   };
 
@@ -145,27 +103,16 @@
   };
 
   const handleNotAliveHostIp = () => {
-    copyNotAliveIp(dbTable.value?.getData<IData>() || []);
+    copyNotAliveIp(hostTableRef.value!.getData() || []);
   };
 
   const handleAllHostIp = () => {
-    copyAllIp(dbTable.value?.getData<IData>() || []);
+    copyAllIp(hostTableRef.value!.getData() || []);
   };
 
-  const handleSearchValueChange = _.debounce((payload: any) => {
-    const serachParams = getSearchSelectorParams(payload);
-    dbTable.value?.fetchData(serachParams);
-    router.replace({
-      query: {
-        ...getSearchParams(),
-        [URL_HOST_MEMO_KEY]: encodeURIComponent(JSON.stringify(serachParams)),
-      },
-    });
-  }, 100);
-
-  onMounted(() => {
-    searchSelectValue.value = getSearchSelectValue(searchSelectData, urlPaylaod);
-  });
+  const handleFilterChange = (filterValue: Record<string, any>) => {
+    quickSearchValue.value = filterValue;
+  };
 </script>
 <style lang="less">
   .cluster-detail-host-list-box {

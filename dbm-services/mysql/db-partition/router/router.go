@@ -3,6 +3,7 @@ package router
 
 import (
 	"dbm-services/mysql/db-partition/handler"
+	v2 "dbm-services/mysql/db-partition/handler/v2"
 
 	"github.com/gin-gonic/gin"
 )
@@ -35,4 +36,14 @@ func RegisterRouter(engine *gin.Engine) {
 	p.POST("/migrate_config", handler.MigrateConfig)
 	// 巡检
 	p.POST("/check_log", handler.CheckLog)
+	p.POST("/partition_conf_query", handler.PartitionConfQuery)
+
+	// v2 版本路由组 /partition/v2
+	p2 := engine.Group("/partition/v2")
+	p2.POST("/query_conf", v2.QueryConf)
+	p2.POST("/create_conf", v2.CreateConf)
+	p2.POST("/update_conf", v2.UpdateConf)
+	p2.POST("/del_conf", v2.DelConf)
+	p2.POST("/disable_partition", v2.DisablePartition)
+	p2.POST("/enable_partition", v2.EnablePartition)
 }

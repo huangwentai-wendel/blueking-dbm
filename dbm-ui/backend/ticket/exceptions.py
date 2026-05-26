@@ -8,7 +8,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 """
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.exceptions import AppBaseException, ErrorCode
 
@@ -76,3 +76,9 @@ class TicketFlowsConfigException(TicketBaseException):
     ERROR_CODE = "009"
     MESSAGE = _("单据流程设置失败")
     MESSAGE_TPL = _("单据流程{ticket_type}设置失败")
+
+
+class TicketResourceApplyException(TicketBaseException):
+    ERROR_CODE = "010"
+    MESSAGE = _("单据资源申请参数异常")
+    MESSAGE_TPL = _("单据资源申请参数异常")

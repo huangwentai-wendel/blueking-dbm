@@ -11,7 +11,7 @@ specific language governing permissions and limitations under the License.
 import re
 
 from backend.ticket.constants import TicketType
-from blue_krill.data_types.enum import EnumField, StructuredEnum
+from blue_krill.data_types.enum import EnumField, StrStructuredEnum
 
 # 常规字段长度定义
 LEN_SHORT = 32
@@ -87,8 +87,12 @@ EXTERNAL_TICKET_TYPE_WHITELIST = [TicketType.MYSQL_DUMP_DATA, TicketType.TENDBCL
 
 
 # LOG
-class LogLevelName(str, StructuredEnum):
+class LogLevelName(StrStructuredEnum):
     INFO = EnumField("INFO", "INFO")
     WARNING = EnumField("WARNING", "WARNING")
     ERROR = EnumField("ERROR", "ERROR")
     DEBUG = EnumField("DEBUG", "DEBUG")
+
+
+class LogLabel(StrStructuredEnum):
+    NOT_AI = EnumField("not_for_ai", "not_for_ai")

@@ -52,6 +52,58 @@ def query_mysql_variables(host: str, port: int, bk_cloud_id: int):
     return var_map
 
 
+def get_mysql_start_configs(mysql_var_map: dict) -> dict:
+    """
+    从 MySQL 变量映射中提取模拟执行需要的启动配置
+
+    @param mysql_var_map: MySQL 变量映射，由 query_mysql_variables 返回
+    @return: 模拟执行需要的 MySQL 启动配置字典
+    """
+    start_mysqld_configs = {}
+    config_vars = [
+        # 通用参数
+        "sql_mode",
+        "lower_case_table_names",
+        "character_set_server",
+        "collation_server",
+        "default_storage_engine",
+        "default_tmp_storage_engine",
+        "explicit_defaults_for_timestamp",
+        "log_bin_trust_function_creators",
+        "default_time_zone",
+        "loose_log_bin_compress",
+        "log_bin_compress",
+        "slave_exec_mode",
+        "max_allowed_packet",
+        "wait_timeout",
+        "interactive_timeout",
+        "group_concat_max_len",
+        # InnoDB 参数
+        "innodb_file_format",
+        "innodb_file_per_table",
+        "innodb_large_prefix",
+        "innodb_default_row_format",
+        "innodb_strict_mode",
+        "innodb_autoinc_lock_mode",
+        "innodb_lock_wait_timeout",
+        # TokuDB 参数（可能影响 DDL）
+        #   "tokudb_lock_timeout",
+        #   "tokudb_commit_sync",
+        #   "tokudb_row_format",
+        # RocksDB 参数（可能影响 DDL）
+        #     "rocksdb_large_prefix",
+        #     "rocksdb_strict_collation_check",
+        #     "rocksdb_bulk_load",
+        #     "rocksdb_bulk_load_allow_unsorted",
+        #     "rocksdb_default_cf_options",
+        #     "rocksdb_lock_wait_timeout",
+    ]
+    for var in config_vars:
+        if var in mysql_var_map:
+            start_mysqld_configs[var] = mysql_var_map.get(var)
+    return start_mysqld_configs
+
+
 def show_user_host_for_host(host: str, instance: StorageInstance):
     """
     根据host查询账号信息
@@ -234,3 +286,48 @@ def create_tdbctl_user_for_remote(cluster: Cluster, ctl_primary: str, new_ip: st
     )
     logger.info(f"add tdbctl user in instance [f'{new_ip}{IP_PORT_DIVIDER}{new_port}'] success")
     return True
+
+
+def pre_check_proxy_host_in_definer(host: str, backend: StorageInstance):
+    """
+    根据传入的host，在backend实例中获取到与host相关的definer配置信息
+    检查命令目前支持到的版本有：
+    MySQL-8.0-Community
+    MySQL-5.7
+    MySQL-5.6
+    MySQL-5.5
+    MySQL-8.0
+    TXSQL-8.0
+
+    @param host: 待检测host
+    @param backend: 查询的backend实例
+    """
+    check_routines_definer = (
+        f"select ROUTINE_SCHEMA, ROUTINE_NAME, DEFINER from information_schema.ROUTINES  "
+        f"where DEFINER like '%@{host}'"
+    )
+    check_views_definer = (
+        f"select TABLE_SCHEMA, TABLE_NAME ,DEFINER from information_schema.VIEWS " f"where DEFINER like '%@{host}'"
+    )
+    check_triggers_definer = (
+        f"select TRIGGER_SCHEMA, TRIGGER_NAME, DEFINER from information_schema.TRIGGERS "
+        f"where DEFINER like '%@{host}'"
+    )
+    check_events_definer = (
+        f"select EVENT_SCHEMA, EVENT_NAME, DEFINER from information_schema.EVENTS " f"where DEFINER like '%@{host}'"
+    )
+
+    res = DRSApi.rpc(
+        {
+            "addresses": [backend.ip_port],
+            "cmds": [check_routines_definer, check_views_definer, check_triggers_definer, check_events_definer],
+            "force": False,
+            "bk_cloud_id": backend.machine.bk_cloud_id,
+        }
+    )
+    if res[0]["error_msg"]:
+        # 如果执行命令异常报错
+        raise Exception(res[0]["error_msg"])
+
+    # 遍历每个SQL返回的结果，如果返回都是空，则返回正常
+    return [i for r in res[0]["cmd_results"] for i in r["table_data"]]

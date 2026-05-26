@@ -4,13 +4,12 @@ package backupsys
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"crypto/md5"
+	"dbm-services/common/go-pubpkg/mycmd"
 	"dbm-services/mongodb/db-tools/mongo-toolkit-go/pkg/util"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -22,18 +21,6 @@ import (
 const BackupClient = "/usr/local/bin/backup_client"
 const UnixTimeLayout = "2006-01-02 15:04:05"
 
-// DoCommand 执行一个命令
-func DoCommand(timeoutSecond int64, bin string, args ...string) (bytes.Buffer, bytes.Buffer, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecond)*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, args...)
-	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-	err := cmd.Run()
-	return outBuf, errBuf, err
-}
-
 // FileExists 检查目录是否已经存在
 func FileExists(path string) bool {
 	_, err := os.Stat(path)
@@ -43,13 +30,13 @@ func FileExists(path string) bool {
 	return true
 }
 
-func splitLines(buffer bytes.Buffer) (map[string]string, error) {
+// splitLines 分割行
+func splitLines(buffer *bytes.Buffer) (map[string]string, error) {
 	out := make(map[string]string)
-	scanner := bufio.NewScanner(&buffer)
+	scanner := bufio.NewScanner(buffer)
 	scanner.Split(bufio.ScanLines)
 	for scanner.Scan() {
 		line := scanner.Text()
-		log.Printf("read line %q\n", line)
 		fs := strings.SplitN(line, ":", 2)
 		if len(fs) != 2 {
 			continue
@@ -80,33 +67,42 @@ func UploadFile(file, tag string) (task *TaskInfo, err error) {
 		if err == nil {
 			return
 		}
+		if errors.Is(err, ErrPreCheckFailed) {
+			return nil, err
+		}
 		log.Warnf("_uploadFileOnce failed, err: %v. sleep 60 seconds and try again (%d of %d)", err, i+1, maxRetryTimes)
 		time.Sleep(time.Second * 60)
 	}
 	return
 }
 
+var ErrPreCheckFailed = errors.New("precheck failed")
+
+// _uploadFileOnce 上传一个文件 重试3次 每次60秒超时.
 func _uploadFileOnce(file, tag string) (*TaskInfo, error) {
-	absPath, err := filepath.Abs(file)
+	absPath, _ := filepath.Abs(file)
 	if absPath == "" {
-		return nil, errors.Wrap(err, "filepath.Abs")
+		return nil, errors.Wrap(ErrPreCheckFailed, "filepath.Abs")
 	}
-	if FileExists(file) == false {
-		return nil, fmt.Errorf("file %s not exists", file)
+	if !FileExists(file) {
+		return nil, errors.Wrap(ErrPreCheckFailed, fmt.Sprintf("file %s not exists", file))
 	}
-	if FileExists(BackupClient) == false {
-		return nil, fmt.Errorf("BackupClient %s is not exists", BackupClient)
+	if !FileExists(BackupClient) {
+		return nil, errors.Wrap(ErrPreCheckFailed, fmt.Sprintf("backup_client %s not exists", BackupClient))
 	}
 	fileSize, _ := util.GetFileSize(absPath)
 	timeoutSecond := fileSize/1024/1024/100 + 180 // --with-md5 会计算md5. 每秒100M
-	outBuf, errBuffer, err := DoCommand(timeoutSecond, BackupClient, "-n", "-f", absPath, "--with-md5", "-t", tag)
+	ret, err := mycmd.New(BackupClient, "-n", "-f", absPath, "--with-md5", "-t", tag).
+		Run(time.Duration(timeoutSecond) * time.Second)
+
 	if err != nil {
 		return nil, err
 	}
-	out, _ := splitLines(outBuf)
+
+	out, _ := splitLines(bytes.NewBufferString(ret.GetStdout()))
 	taskId, ok := out["taskid"]
 	if !ok {
-		return nil, fmt.Errorf("failed, stdout:%s, stderr:%s", outBuf.String(), errBuffer.String())
+		return nil, fmt.Errorf("failed, stdout:%s, stderr:%s", ret.GetStdout(), ret.GetStderr())
 	}
 	return &TaskInfo{TaskId: taskId, FilePath: absPath, Tag: tag}, nil
 }
@@ -117,14 +113,7 @@ func md5String(s string) string {
 }
 
 // LoadInfoFile 获得一个文件的备份系统信息
-func LoadInfoFile(fileFullPath string) (*TaskInfo, error) {
-	if fileFullPath == "" {
-		return nil, fmt.Errorf("empty file path")
-	}
-	taskInfoFile := getInfoFilePath(fileFullPath)
-	if FileExists(taskInfoFile) == false {
-		return nil, fmt.Errorf("file %s not exists", taskInfoFile)
-	}
+func LoadTaskInfoFile(taskInfoFile string) (*TaskInfo, error) {
 	f, err := os.Open(taskInfoFile)
 	if err != nil {
 		return nil, err
@@ -135,6 +124,15 @@ func LoadInfoFile(fileFullPath string) (*TaskInfo, error) {
 		return nil, err
 	}
 	return &info, nil
+}
+
+// LoadInfoFile 获得一个文件的备份系统信息
+func LoadInfoFile(fileFullPath string) (*TaskInfo, error) {
+	if fileFullPath == "" {
+		return nil, fmt.Errorf("empty file path")
+	}
+	taskInfoFile := getInfoFilePath(fileFullPath)
+	return LoadTaskInfoFile(taskInfoFile)
 }
 
 func getInfoFilePath(fileFullPath string) string {
@@ -205,17 +203,16 @@ complete_time   : 0000-00-00 00:00:00
 expire_time     : 0000-00-00 00:00:00
 */
 func GetTaskInfo(taskid string) (*TaskInfo, error) {
-	args := []string{"-q", fmt.Sprintf("--taskid=%s", taskid)}
-	outBuf, _, err := DoCommand(10, BackupClient, args...)
+	ret, err := mycmd.New(BackupClient, "-q", fmt.Sprintf("--taskid=%s", taskid)).Run(10 * time.Second)
 	if err != nil {
 		return nil, err
 	}
 	status := &TaskInfo{TaskId: taskid}
-	outMap, err := splitLines(outBuf)
+	outMap, err := splitLines(bytes.NewBufferString(ret.GetStdout()))
 	if err != nil {
 		return nil, err
 	}
-	if outMap == nil || len(outMap) == 0 {
+	if len(outMap) == 0 {
 		return nil, fmt.Errorf("empty output")
 	}
 
@@ -233,13 +230,13 @@ func GetTaskInfo(taskid string) (*TaskInfo, error) {
 		case "status info":
 			status.StatusInfo = value
 		case "sendup datetime":
-			status.SendTime, err = parseBackupClientTime(value)
+			status.SendTime, _ = parseBackupClientTime(value)
 		case "start_time":
-			status.StartTime, err = parseBackupClientTime(value)
+			status.StartTime, _ = parseBackupClientTime(value)
 		case "complete_time":
-			status.CompleteTime, err = parseBackupClientTime(value)
+			status.CompleteTime, _ = parseBackupClientTime(value)
 		case "expire_time":
-			status.ExpireTime, err = parseBackupClientTime2(value, time.Now().Add(time.Hour*24*31))
+			status.ExpireTime, _ = parseBackupClientTime2(value, time.Now().Add(time.Hour*24*31))
 		}
 	}
 	return status, nil

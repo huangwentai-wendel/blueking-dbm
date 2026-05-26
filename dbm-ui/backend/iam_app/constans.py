@@ -11,14 +11,15 @@ specific language governing permissions and limitations under the License.
 
 from django.utils.translation import gettext as _
 
-from blue_krill.data_types.enum import EnumField, StructuredEnum
+from blue_krill.data_types.enum import EnumField, StrStructuredEnum
 
 MAX_ACTION_NAME_LEN = 32
 
 
-class CommonActionLabel(str, StructuredEnum):
+class CommonActionLabel(StrStructuredEnum):
     BIZ_READ_ONLY = EnumField("biz_read_only", _("业务只读"))
     BIZ_MAINTAIN = EnumField("biz_maintain", _("业务运维"))
+    DEVELOPER = EnumField("developer", _("开发常用"))
     EXTERNAL_DEVELOPER = EnumField("external_developer", _("外部开发商专用"))
 
     MYSQL_IMPORT_SQLFILE = EnumField("mysql_import_sqlfile", _("MySQL SQL变更"))
@@ -27,6 +28,4 @@ class CommonActionLabel(str, StructuredEnum):
     TENDBCLUSTER_IMPORT_SQLFILE = EnumField("tendbcluster_import_sqlfile", _("TendbCluster SQL变更"))
     TENDBCLUSTER_AUTHORIZE_RULES = EnumField("tendbcluster_authorize_rules", _("TendbCluster DB授权"))
 
-    KAFKA_ACCESS = EnumField("kafka_access", _("Kafka获取访问方式"))
-    ES_ACCESS = EnumField("es_access", _("ES获取访问方式"))
     HDFS_ACCESS = EnumField("hdfs_access", _("HDFS获取访问方式"))

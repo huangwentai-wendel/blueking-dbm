@@ -14,7 +14,7 @@ from collections import defaultdict
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.constants import IP_PORT_DIVIDER
@@ -389,6 +389,19 @@ class RedisClusterInsMigrateFlow(object):
                 )
                 if predixy_conf_rewrite_bulider:
                     sub_pipeline.add_sub_pipeline(predixy_conf_rewrite_bulider)
+
+            from backend.flow.plugins.components.collections.redis.redis_update_version import (
+                RedisUpdateVersionComponent,
+            )
+
+            act_kwargs.cluster["update_all"] = True
+            act_kwargs.cluster["cluster_id"] = info["cluster_id"]
+            act_kwargs.cluster["bk_biz_id"] = self.data["bk_biz_id"]
+            sub_pipeline.add_act(
+                act_name=_("{}-更新版本").format(act_kwargs.cluster["immute_domain"]),
+                act_component_code=RedisUpdateVersionComponent.code,
+                kwargs=asdict(act_kwargs),
+            )
 
             sub_pipelines.append(
                 sub_pipeline.build_sub_process(sub_name=_("{}指定实例迁移").format(act_kwargs.cluster["immute_domain"]))

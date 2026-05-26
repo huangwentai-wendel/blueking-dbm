@@ -9,21 +9,29 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
+import copy
+import logging
 from typing import Dict, List, Optional, Set
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.db_meta.enums import ClusterEntryRole, ClusterEntryType
 from backend.db_meta.models import Cluster, ClusterEntry
 from backend.flow.engine.bamboo.scene.common.builder import Builder
+from backend.flow.engine.bamboo.scene.common.clone_module_config import add_clone_cluster_storage_config_act
+from backend.flow.engine.bamboo.scene.mysql.deploy_peripheraltools.departs import ALLDEPARTS
+from backend.flow.engine.bamboo.scene.mysql.deploy_peripheraltools.subflow import (
+    standardize_mysql_cluster_by_cluster_subflow,
+)
 from backend.flow.plugins.components.collections.common.clone_priv_rules_to_other_biz import (
     ClonePrivRulesToOtherComponent,
 )
-from backend.flow.plugins.components.collections.common.pause import PauseComponent
 from backend.flow.plugins.components.collections.common.transfer_cluster_meta_to_other_biz import (
     TransferClusterMetaToOtherBizComponent,
     UpdateClusterDnsBelongAppComponent,
 )
+
+logger = logging.getLogger("flow")
 
 
 def find_other_relation_domains(immute_domains: List[str]) -> List[str]:
@@ -107,8 +115,42 @@ class TransferMySQLClusterToOtherBizFlow(object):
             },
         )
 
-        p.add_act(act_name=_("请先跑一下集群标准化，完成之后确认"), act_component_code=PauseComponent.code, kwargs={})
-
+        # 克隆集群配置：从源业务/源模块克隆到目标业务/目标模块
+        # 一次性克隆所有集群的配置，传入所有集群域名列表
+        if clusters:
+            # 获取第一个集群作为参考（所有集群应该使用相同的源模块ID和集群类型）
+            reference_cluster = clusters[0]
+            cluster_domains = [cluster.immute_domain for cluster in clusters]
+            add_clone_cluster_storage_config_act(
+                sub_pipeline=p,
+                source_module_id=reference_cluster.db_module_id,  # 源模块ID（旧模块）
+                target_module_id=self.dest_db_module_id,  # 目标模块ID（新模块）
+                cluster_domains=cluster_domains,  # 所有集群域名列表
+                source_bk_biz_id=source_bk_biz_id,  # 源业务ID（跨业务场景）
+                target_bk_biz_id=self.target_biz_id,  # 目标业务ID（跨业务场景）
+                cluster_type=reference_cluster.cluster_type,  # 集群类型
+            )
+        # 标准化集群
+        cloud_cluster_ids = [cluster.id for cluster in clusters]
+        p.add_sub_pipeline(
+            sub_flow=standardize_mysql_cluster_by_cluster_subflow(
+                root_id=self.root_id,
+                data=copy.deepcopy(self.data),
+                bk_cloud_id=bk_cloud_id,
+                bk_biz_id=self.target_biz_id,
+                cluster_ids=list(set(cloud_cluster_ids)),
+                departs=ALLDEPARTS,
+                with_deploy_binary=self.data.get("with_deploy_binary", True),
+                with_push_config=self.data.get("with_push_config", True),
+                with_collect_sysinfo=False,
+                with_actuator=True,
+                with_bk_plugin=self.data.get("with_deploy_binary", True),
+                with_cc_standardize=self.data.get("with_cc_standardize", True),
+                with_instance_standardize=self.data.get("with_instance_standardize", False),
+                with_backup_client=self.data.get("with_deploy_binary", True),
+                with_exporter_config=self.data.get("with_push_config", True),
+            )
+        )
         p.add_act(
             act_name=_("更新dns记录归属业务"),
             act_component_code=UpdateClusterDnsBelongAppComponent.code,

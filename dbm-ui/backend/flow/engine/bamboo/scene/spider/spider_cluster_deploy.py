@@ -14,7 +14,7 @@ from dataclasses import asdict
 from typing import Dict, List, Optional
 
 from django.utils.crypto import get_random_string
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.db_meta.enums import ClusterType
@@ -411,7 +411,6 @@ class TenDBClusterApplyFlow(object):
                 with_actuator=False,
                 with_bk_plugin=False,
                 with_collect_sysinfo=False,
-                with_cc_standardize=False,
                 with_instance_standardize=False,
             )
         )
@@ -629,7 +628,6 @@ class TenDBClusterApplyFlow(object):
                 ],
                 with_actuator=False,
                 with_bk_plugin=False,
-                with_cc_standardize=False,
                 with_collect_sysinfo=False,
                 with_backup_client=True,
                 with_instance_standardize=False,

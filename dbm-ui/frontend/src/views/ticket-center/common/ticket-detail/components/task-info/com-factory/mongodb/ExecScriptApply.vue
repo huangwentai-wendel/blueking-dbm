@@ -27,22 +27,25 @@
     <InfoItem
       :label="t('目标集群')"
       style="flex: 1 0 100%">
-      <BkTable :data="tableData">
-        <BkTableColumn
-          field="immute_domain"
-          :label="t('集群')">
-          <template #default="{data}: {data: IRowData}">
-            {{ ticketDetails.details.clusters[data.id].immute_domain }}
+      <TicketInfoTable
+        :data="tableData"
+        row-key="id">
+        <TicketInfoTableColumn
+          col-key="immute_domain"
+          :get-copy-value="(row: IRowData) => ticketDetails.details.clusters[row.id].immute_domain"
+          :title="t('目标集群')">
+          <template #default="{ row }: { row: IRowData }">
+            {{ ticketDetails.details.clusters[row.id].immute_domain }}
           </template>
-        </BkTableColumn>
-        <BkTableColumn
-          field="cluster_type_name"
-          :label="t('类型')">
-          <template #default="{data}: {data: IRowData}">
-            {{ ticketDetails.details.clusters[data.id].cluster_type_name }}
+        </TicketInfoTableColumn>
+        <TicketInfoTableColumn
+          col-key="cluster_type_name"
+          :title="t('类型')">
+          <template #default="{ row }: { row: IRowData }">
+            {{ ticketDetails.details.clusters[row.id].cluster_type_name }}
           </template>
-        </BkTableColumn>
-      </BkTable>
+        </TicketInfoTableColumn>
+      </TicketInfoTable>
     </InfoItem>
   </InfoList>
   <BkSideslider
@@ -139,6 +142,22 @@
 </script>
 
 <style lang="less">
+  .ongodb-exec-script-apply-domain-header {
+    &:hover {
+      [class*='db-icon'] {
+        display: inline !important;
+      }
+    }
+
+    [class*='db-icon'] {
+      display: none;
+      margin-top: 1px;
+      margin-left: 4px;
+      color: @primary-color;
+      cursor: pointer;
+    }
+  }
+
   .mongodb-exec-script-apply-content-dialog {
     .editor-layout {
       display: flex;

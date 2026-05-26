@@ -8,7 +8,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 from django.db import models
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.db_meta.enums import ClusterType
 from backend.db_report.enums import RedisBackupCheckSubType
@@ -22,3 +22,9 @@ class RedisBackupCheckReport(BaseReportABS):
     subtype = models.CharField(
         max_length=64, choices=RedisBackupCheckSubType.get_choices(), default="", help_text=_("备份检查子项")
     )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["subtype", "bk_biz_id", "state", "create_at"]),
+            models.Index(fields=["subtype", "create_at", "cluster"]),
+        ]

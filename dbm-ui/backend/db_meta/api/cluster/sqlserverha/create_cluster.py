@@ -11,7 +11,7 @@ import logging
 from typing import List, Optional
 
 from django.db import transaction
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.db_meta import request_validator
 from backend.db_meta.api import common
@@ -26,7 +26,6 @@ from backend.db_meta.enums import (
 from backend.db_meta.exceptions import DBMetaException
 from backend.db_meta.models import Cluster, ClusterEntry, StorageInstance, StorageInstanceTuple
 from backend.db_meta.models.storage_set_dtl import SqlserverClusterSyncMode
-from backend.flow.utils.sqlserver.sqlserver_db_function import get_instance_time_zone
 
 logger = logging.getLogger("root")
 
@@ -77,10 +76,14 @@ def create(
     slave_domain: Optional[str] = None,
     storages: Optional[List] = None,
     creator: str = "",
+    zone_list: list = None,
 ) -> Cluster:
     """
     注册 sqlserver-HA 集群
     """
+    # 延迟导入，避免循环依赖
+    from backend.flow.utils.sqlserver.sqlserver_db_function import get_instance_time_zone
+
     bk_biz_id = request_validator.validated_integer(bk_biz_id)
     immute_domain = request_validator.validated_domain(immute_domain)
     db_module_id = request_validator.validated_integer(db_module_id)
@@ -113,6 +116,7 @@ def create(
         major_version=major_version,
         region=region,
         disaster_tolerance_level=disaster_tolerance_level,
+        zone_list=zone_list if zone_list else [],
     )
     cluster.storageinstance_set.add(*storage_objs)
 

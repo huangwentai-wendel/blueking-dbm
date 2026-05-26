@@ -13,7 +13,7 @@ import logging.config
 from dataclasses import asdict
 from typing import Dict, Optional
 
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend.configuration.constants import DBType
 from backend.db_meta.enums import ClusterType, InstanceRole
@@ -180,7 +180,7 @@ class HdfsScaleUpFlow(object):
         hdfs_pipeline.add_act(
             act_name=_("元数据DBMeta更新及转移主机"), act_component_code=HdfsDBMetaComponent.code, kwargs=asdict(act_kwargs)
         )
-        hdfs_pipeline.run_pipeline()
+        hdfs_pipeline.run_pipeline_with_sidecar(check_ai_monitor_cluster_list=[self.data["cluster_id"]])
 
     def __init_data_with_role(self):
         data_with_role = copy.deepcopy(self.data)

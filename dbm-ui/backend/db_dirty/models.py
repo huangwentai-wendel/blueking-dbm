@@ -16,12 +16,15 @@ from django.db import models
 from django.db.models import Max
 from django.forms import model_to_dict
 from django.utils import timezone
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from backend.bk_web.constants import LEN_LONG, LEN_MIDDLE
 from backend.bk_web.models import AuditedModel
 from backend.db_dirty.constants import MACHINE_EVENT__POOL_MAP, MachineEventType, PoolType
+from backend.db_dirty.exceptions import PoolTransferException
+from backend.db_meta.models import Machine
 from backend.db_services.dbresource.handlers import ResourceHandler
+from backend.ticket.constants import TicketType
 from backend.ticket.models import Ticket
 from backend.utils.time import datetime2str
 
@@ -83,6 +86,10 @@ class DirtyMachine(AuditedModel):
             cls.objects.bulk_create(handle_hosts)
         # 主机回收，删除主机记录
         elif pool == PoolType.Recycled:
+            # 删除前检查一下不存在于machine表
+            if Machine.objects.filter(bk_host_id__in=host_ids).exists():
+                ips = list(handle_hosts.values_list("ip", flat=True))
+                raise PoolTransferException(_("主机记录仍存在元数据，不允许删除: {}").format(ips))
             handle_hosts.delete()
         # 其他情况仅更新主机归属
         elif pool in [PoolType.Resource, PoolType.Recycle, PoolType.Fault]:
@@ -112,6 +119,10 @@ class MachineEvent(AuditedModel):
     class Meta:
         verbose_name = verbose_name_plural = _("机器事件记录")
 
+    def to_dict(self):
+        # 批量用这个方法前，需要用select_related预取ticket
+        return {**model_to_dict(self), "ticket_type": getattr(self.ticket, "ticket_type", "")}
+
     @classmethod
     def hosts_can_return(cls, bk_host_ids) -> Tuple[bool, str]:
         """判断机器是否能退回"""
@@ -134,21 +145,40 @@ class MachineEvent(AuditedModel):
         pool = MACHINE_EVENT__POOL_MAP.get(event)
         # 主机池流转
         hosts = DirtyMachine.hosts_pool_transfer(hosts, pool, operator, ticket)
-        # 事件记录
-        events = [
-            MachineEvent(
+        # 主机回收/导入提前创建了主机事件
+        if not ticket or (ticket and ticket.ticket_type not in [TicketType.RESOURCE_IMPORT]):
+            # 事件记录
+            cls.create_machine_events(
                 bk_biz_id=bk_biz_id,
-                ip=host["ip"],
-                bk_host_id=host["bk_host_id"],
+                hosts=hosts,
                 event=event,
-                to=pool,
+                pool=pool,
+                operator=operator,
                 ticket=ticket,
-                creator=operator,
-                updater=operator,
                 remark=remark,
             )
-            for host in hosts
-        ]
+
+    @classmethod
+    def create_machine_events(
+        cls, bk_biz_id, hosts, event, pool, operator="", ticket=None, remark="", remark_map=None
+    ):
+        events = []
+        for host in hosts:
+            bk_host_id = host.get("bk_host_id") or host.get("host_id")
+            remark = remark_map.get(bk_host_id) if remark_map else remark
+            events.append(
+                MachineEvent(
+                    bk_biz_id=bk_biz_id,
+                    ip=host["ip"],
+                    bk_host_id=bk_host_id,
+                    event=event,
+                    to=pool,
+                    ticket=ticket,
+                    creator=operator,
+                    updater=operator,
+                    remark=remark,
+                )
+            )
         MachineEvent.objects.bulk_create(events)
 
     @classmethod
@@ -159,9 +189,9 @@ class MachineEvent(AuditedModel):
         # 获得主机ID与主机最后一次事件映射
         events = MachineEvent.objects.filter(bk_host_id__in=bk_host_ids).values("bk_host_id").annotate(last=Max("id"))
         host_last_event_id_map = {event["bk_host_id"]: event["last"] for event in events}
-        event_map = MachineEvent.objects.in_bulk(list(host_last_event_id_map.values()))
+        event_map = MachineEvent.objects.select_related("ticket").in_bulk(list(host_last_event_id_map.values()))
         host_last_event_map = {
-            host_id: model_to_dict(event_map[event_id]) for host_id, event_id in host_last_event_id_map.items()
+            host_id: event_map[event_id].to_dict() for host_id, event_id in host_last_event_id_map.items()
         }
 
         # 补充主机事件

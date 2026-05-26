@@ -27,7 +27,17 @@
         {{ item.isManulSelect ? t('从资源池手动选择') : t('从资源池自动匹配') }}
       </InfoItem>
       <InfoItem :label="t('扩容容量')">
-        {{ t('当前m_G_扩容后预估n_G', { m: item.totalDisk, n: item.expectDisk }) }}
+        {{ t('当前m_G_扩容后预估n_G', { m: item.totalDisk, n: item.totalDisk + item.expectDisk }) }}
+      </InfoItem>
+      <InfoItem :label="t('资源标签')">
+        <TagBlock
+          v-if="item.labelNames.length"
+          :data="item.labelNames" />
+        <BkTag
+          v-else
+          theme="success">
+          {{ t('通用无标签') }}
+        </BkTag>
       </InfoItem>
       <InfoItem :label="t('扩容数量')">
         {{ t('n台', [item.count]) }}({{
@@ -44,14 +54,18 @@
       <InfoItem
         v-if="item.isManulSelect"
         :label="t('已选IP')">
-        <BkTable :data="item.hostList">
-          <BkTableColumn
-            field="ip"
-            :label="t('节点 IP')" />
-          <BkTableColumn
-            field="bk_disk"
-            :label="t('磁盘容量(G)')" />
-        </BkTable>
+        <TicketInfoTable
+          :data="item.hostList"
+          ellipsis
+          row-key="ip">
+          <TicketInfoTableColumn
+            col-key="ip"
+            :get-copy-value="(row: RowData['hostList'][number]) => row.ip"
+            :title="t('节点 IP')" />
+          <TicketInfoTableColumn
+            col-key="bk_disk"
+            :title="t('磁盘容量(G)')" />
+        </TicketInfoTable>
       </InfoItem>
     </InfoList>
   </div>
@@ -61,6 +75,8 @@
   import { useI18n } from 'vue-i18n';
 
   import TicketModel, { type Bigdata } from '@services/model/ticket/ticket';
+
+  import TagBlock from '@components/tag-block/Index.vue';
 
   import InfoList, { Item as InfoItem } from '../../../components/info-list/Index.vue';
 
@@ -81,6 +97,7 @@
       ip: string;
     }[];
     isManulSelect: boolean;
+    labelNames: string[];
     nodeText: string;
     specName: string;
     totalDisk: number;
@@ -97,11 +114,13 @@
     client: 'Client',
     cold: t('冷节点'),
     datanode: 'DataNode',
+    follower: 'Follower',
     hot: t('热节点'),
     master: 'Master',
     namenode: 'NameNode',
     proxy: 'Proxy',
     slave: 'Slave',
+    warm: t('温节点'),
     zookeeper: 'Zookeeper',
   };
 
@@ -125,6 +144,7 @@
           expectDisk: extInfoData?.expansion_disk || 0,
           hostList: isManulSelect ? currentResourceSpec.hosts : [],
           isManulSelect,
+          labelNames: currentResourceSpec?.label_names || [],
           nodeText: nodeTypeText[node] || '--',
           specName: specs[currentResourceSpec.spec_id]?.name || '--',
           totalDisk: extInfoData?.total_disk || 0,

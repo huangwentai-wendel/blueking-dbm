@@ -9,7 +9,6 @@
 package backupdemand
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -50,14 +49,24 @@ type Param struct {
 	BackupType string   `json:"backup_type" validate:"required"`
 	BackupGSD  []string `json:"backup_gsd" validate:"required"` // [grant, schema, data]
 	// BackupFileTag file tag for backup system to file expires
-	BackupFileTag   string   `json:"backup_file_tag"`
-	BackupId        string   `json:"backup_id" validate:"required"`
-	BillId          string   `json:"bill_id" validate:"required"`
+	BackupFileTag string `json:"backup_file_tag"`
+	BackupId      string `json:"backup_id" validate:"required"`
+	BillId        string `json:"bill_id" validate:"required"`
+	// IsFullBackup 是否全量备份, yes,no,auto
+	// 在单节点值迁移表结构场景下，伪装表结构为全备，可用于全备恢复
+	IsFullBackup    string   `json:"is_full_backup"`
 	CustomBackupDir string   `json:"custom_backup_dir"`
 	DbPatterns      []string `json:"db_patterns"`
 	IgnoreDbs       []string `json:"ignore_dbs"`
 	TablePatterns   []string `json:"table_patterns"`
 	IgnoreTables    []string `json:"ignore_tables"`
+	// RunBackupAsUser default is mysql user
+	// because actor may run as root,
+	// and backup need to run as mysql user for backup_client or expecting backup_dir is mysql
+	RunBackupAsUser string `json:"run_backup_as_user"`
+
+	backupUserUid int
+	backupUserGid int
 }
 
 type context struct {
@@ -72,7 +81,7 @@ type context struct {
 
 type Report struct {
 	Result *dbareport.IndexContent `json:"report_result"`
-	Status *dbareport.BackupStatus `json:"report_status"`
+	//Status *dbareport.BackupStatus `json:"report_status"`
 }
 
 func (c *Component) Init() (err error) {
@@ -102,7 +111,16 @@ func (c *Component) Init() (err error) {
 		logger.Error("init db connection failed: %s", err.Error())
 		return err
 	}
-
+	if c.Params.RunBackupAsUser == "" {
+		c.Params.RunBackupAsUser = "mysql"
+	}
+	if mysqlUid, mysqlGid, err := cmutil.GetOSUserId("mysql"); err == nil {
+		c.Params.backupUserUid = mysqlUid
+		c.Params.backupUserGid = mysqlGid
+	} else {
+		logger.Error("get mysql uid failed: %s", err.Error())
+		return err
+	}
 	return nil
 }
 
@@ -112,12 +130,14 @@ func (c *Component) GenerateBackupConfig() error {
 		fmt.Sprintf("dbbackup.%d.ini", c.backupPort),
 	)
 
-	dailyBackupConfigFile, err := ini.LoadSources(ini.LoadOptions{
-		PreserveSurroundedQuote: true,
-		IgnoreInlineComment:     true,
-		AllowBooleanKeys:        true,
-		AllowShadows:            true,
-	}, dailyBackupConfigPath)
+	dailyBackupConfigFile, err := ini.LoadSources(
+		ini.LoadOptions{
+			PreserveSurroundedQuote: true,
+			IgnoreInlineComment:     true,
+			AllowBooleanKeys:        true,
+			AllowShadows:            true,
+		}, dailyBackupConfigPath,
+	)
 	if err != nil {
 		logger.Error("load %s failed: %s", dailyBackupConfigPath, err.Error())
 		return err
@@ -140,6 +160,7 @@ func (c *Component) GenerateBackupConfig() error {
 	backupConfig.Public.BackupTimeOut = ""
 	backupConfig.Public.BillId = c.Params.BillId
 	backupConfig.Public.BackupId = c.Params.BackupId
+	backupConfig.Public.IsFullBackup = c.Params.IsFullBackup
 	backupConfig.Public.DataSchemaGrant = strings.Join(c.Params.BackupGSD, ",")
 	backupConfig.Public.ShardValue = c.Params.ShardID
 	if backupConfig.BackupClient.EnableBackupClient != "no" && c.Params.BackupFileTag != "" {
@@ -149,9 +170,11 @@ func (c *Component) GenerateBackupConfig() error {
 	backupConfig.LogicalBackup.Regex = ""
 	if c.Params.BackupType == "logical" {
 		backupConfig.LogicalBackup.UseMysqldump = "auto"
-		ignoreDbs := slices.DeleteFunc(native.DBSys, func(s string) bool {
-			return s == "infodba_schema"
-		})
+		ignoreDbs := slices.DeleteFunc(
+			native.DBSys, func(s string) bool {
+				return s == "infodba_schema"
+			},
+		)
 		ignoreDbs = append(ignoreDbs, c.Params.IgnoreDbs...)
 		backupConfig.LogicalBackup.Databases = strings.Join(c.Params.DbPatterns, ",")
 		backupConfig.LogicalBackup.ExcludeDatabases = strings.Join(ignoreDbs, ",")
@@ -172,16 +195,24 @@ func (c *Component) GenerateBackupConfig() error {
 	if c.Params.CustomBackupDir != "" {
 		backupConfig.Public.BackupDir = filepath.Join(
 			backupConfig.Public.BackupDir,
-			fmt.Sprintf("%s_%s_%d_%s",
+			fmt.Sprintf(
+				"%s_%s_%d_%s",
 				c.Params.CustomBackupDir,
 				c.now.Format("20060102150405"),
 				c.backupPort,
-				c.Params.BackupId))
+				c.Params.BackupId,
+			),
+		)
 
-		err := os.Mkdir(backupConfig.Public.BackupDir, 0755)
-		if err != nil {
+		if err := os.Mkdir(backupConfig.Public.BackupDir, 0755); err != nil {
 			logger.Error("mkdir %s failed: %s", backupConfig.Public.BackupDir, err.Error())
 			return err
+		} else {
+			err = os.Chown(backupConfig.Public.BackupDir, c.Params.backupUserUid, c.Params.backupUserGid)
+			if err != nil {
+				logger.Error("backupDir chown %s failed: %s", backupConfig.Public.BackupDir, err.Error())
+				return err
+			}
 		}
 	}
 	// 增加为tbinlogdumper做库表备份的日志输出，保存流程上下文
@@ -197,8 +228,10 @@ func (c *Component) GenerateBackupConfig() error {
 	//backupConfigPath := c.backupConfigPath[port]
 	err = backupConfigFile.SaveTo(c.backupConfigPath)
 	if err != nil {
-		logger.Error("write backup config to %s failed: %s",
-			c.backupConfigPath, err.Error())
+		logger.Error(
+			"write backup config to %s failed: %s",
+			c.backupConfigPath, err.Error(),
+		)
 		return err
 	}
 
@@ -246,27 +279,34 @@ func (c *Component) KillLegacyBackup() error {
 	return nil
 }
 
+// DoBackup run dbbackup as mysql root
+// as dbbackup may need backup_client to upload files that credential may be only available in mysql user
 func (c *Component) DoBackup() error {
+	logDir := filepath.Join(c.ActuatorWorkDir(), "logs")
+	if err := os.Chown(logDir, c.Params.backupUserUid, c.Params.backupUserGid); err != nil {
+		logger.Error("chown %s to mysql failed: %s", logDir, err.Error())
+	}
 	cmdArgs := []string{c.tools.MustGet(tools.ToolDbbackupGo), "dumpbackup", "--config", c.backupConfigPath}
-	cmdArgs = append(cmdArgs, "--log-dir", filepath.Join(c.ActuatorWorkDir(), "logs"))
+	cmdArgs = append(cmdArgs, "--log-dir", logDir)
 	logger.Info("backup command: %s", strings.Join(cmdArgs, " "))
 
-	_, errStr, err := cmutil.ExecCommand(false, "",
-		cmdArgs[0], cmdArgs[1:]...)
+	_, errStr, err := cmutil.ExecCommandAsUser(
+		false, "mysql", "",
+		cmdArgs[0], cmdArgs[1:]...,
+	)
 
 	if err != nil {
 		logger.Error("execute %s failed: %s, msg:%s", cmdArgs, err.Error(), errStr)
 		return err
 	}
 	logger.Info("backup success with %s", c.backupConfigPath)
-	//}
 	return nil
 }
 
-func (c *Component) generateReport() (report *Report, indexFile string, err error) {
+func (c *Component) GenerateReport() (report *Report, indexFile string, err error) {
 	report = &Report{}
 
-	indexFileSearch := filepath.Join(c.backupDir, "*.index")
+	indexFileSearch := filepath.Join(c.backupDir, fmt.Sprintf("*%s_%d_*.index", c.Params.Host, c.Params.Port))
 	if files, err := filepath.Glob(indexFileSearch); err != nil {
 		return nil, indexFile, err
 	} else {
@@ -282,7 +322,7 @@ func (c *Component) generateReport() (report *Report, indexFile string, err erro
 				continue
 				//return nil, err
 			}
-			if result.BillId == c.Params.BillId && c.Params.BillId != "" {
+			if result.BillId == c.Params.BillId && c.Params.BillId != "" && c.Params.BackupId == result.BackupId {
 				report.Result = &result
 				indexFile = f
 				break
@@ -292,49 +332,12 @@ func (c *Component) generateReport() (report *Report, indexFile string, err erro
 	if report.Result == nil {
 		return nil, indexFile, errors.Errorf("backup index file not found for %d", c.backupPort)
 	}
-
-	statusLogFile, err := os.Open(c.statusReportPath)
-	if err != nil {
-		logger.Error(err.Error())
-		return nil, indexFile, err
-	}
-	defer func() {
-		_ = statusLogFile.Close()
-	}()
-
-	thisBillFlag := fmt.Sprintf(`"bill_id":"%s"`, c.Params.BillId)
-	var thisBillLatestStatus dbareport.BackupStatus
-	var thisBillLatestStatusLine string
-	scanner := bufio.NewScanner(statusLogFile)
-	for scanner.Scan() {
-		if err := scanner.Err(); err != nil {
-			logger.Error("scan status report failed: %s", err.Error())
-			return nil, indexFile, err
-		}
-		line := scanner.Text()
-		if strings.Contains(line, thisBillFlag) {
-			thisBillLatestStatusLine = line
-		}
-	}
-	err = json.Unmarshal([]byte(thisBillLatestStatusLine), &thisBillLatestStatus)
-	if err != nil {
-		logger.Error("unmarshal %s failed: %s", thisBillLatestStatusLine, err.Error())
-		return nil, indexFile, err
-	}
-	logger.Info("backup status: %v", thisBillLatestStatus)
-
-	// ToDo Success 应该是 mysql-dbbackup 的常量
-	if thisBillLatestStatus.Status != "Success" {
-		err := fmt.Errorf("report status is not Success: %s", thisBillLatestStatusLine)
-		logger.Error(err.Error())
-		return nil, indexFile, err
-	}
-	report.Status = &thisBillLatestStatus
+	// no need to check status file. it's deprecated
 	return
 }
 
 func (c *Component) OutPut() error {
-	report, _, err := c.generateReport()
+	report, _, err := c.GenerateReport()
 	if err != nil {
 		return err
 	}
@@ -365,12 +368,12 @@ func (c *Component) Example() interface{} {
 // OutPutForTBinlogDumper 增加为tbinlogdumper做库表备份的日志输出，保存流程上下文
 func (c *Component) OutPutForTBinlogDumper() error {
 	ret := make(map[string]interface{})
-	report, indexFile, err := c.generateReport()
+	report, indexFile, err := c.GenerateReport()
 	if err != nil {
 		return err
 	}
 	ret["report_result"] = report.Result
-	ret["report_status"] = report.Status
+	//ret["report_status"] = report.Status
 	ret["backup_dir"] = c.backupDir
 	ret["backup_index"] = indexFile
 

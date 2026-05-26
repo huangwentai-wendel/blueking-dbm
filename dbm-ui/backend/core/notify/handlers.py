@@ -20,11 +20,17 @@ from jinja2.sandbox import SandboxedEnvironment as Environment
 from backend import env
 from backend.components import CmsiApi
 from backend.components.bkchat.client import BkChatApi
-from backend.configuration.constants import BizSettingsEnum
+from backend.configuration.constants import BIZ_DEFAULT_CONFIGS, BizSettingsEnum
 from backend.configuration.models import BizSettings
-from backend.core.notify.constants import DEFAULT_BIZ_NOTIFY_CONFIG, MsgType
+from backend.core.notify.constants import MsgType
 from backend.core.notify.exceptions import NotifyBaseException
-from backend.core.notify.template import FAILED_TEMPLATE, FINISHED_TEMPLATE, TERMINATE_TEMPLATE, TODO_TEMPLATE
+from backend.core.notify.template import (
+    AI_TASK_GUARDIAN_TEMPLATE,
+    FAILED_TEMPLATE,
+    FINISHED_TEMPLATE,
+    TERMINATE_TEMPLATE,
+    TODO_TEMPLATE,
+)
 from backend.db_meta.models import AppCache
 from backend.env import DEFAULT_USERNAME
 from backend.exceptions import ApiResultError
@@ -137,6 +143,7 @@ class BkChatHandler(BaseNotifyHandler):
         return title, content
 
     def send_msg(self, msg_type, context):
+        """发送单据消息"""
         ticket, phase, receivers = context["ticket"], context["phase"], context["receivers"]
         title, content = self.render_title_content(msg_type, self.title, self.content, phase, receivers)
         ticket_operators = ticket.get_current_operators()
@@ -153,7 +160,13 @@ class BkChatHandler(BaseNotifyHandler):
             "actions": self.get_actions(msg_type, ticket),
             "click": {"click_url": ticket.url, "name": _("查看详情")},
         }
-        BkChatApi.send_msg(msg_info, use_admin=True)
+        BkChatApi.send_ticket_msg(msg_info, use_admin=True)
+
+    def send_custom_msg(self):
+        """发送任意自定义消息"""
+        content = f"### {self.title}\n{self.content}"
+        msg_info = {"receiver_id_list": self.receivers, "msg_content": content}
+        BkChatApi.send_custom_msg(msg_info, use_admin=True)
 
 
 class CmsiHandler(BaseNotifyHandler):
@@ -257,11 +270,14 @@ class NotifyAdapter:
     def get_support_msg_types(cls):
         # 获取当前环境下支持的通知类型
         # 所有的拓展方式都需要接入CMSI，所以直接返回CMSI支持方式即可
-        # TODO: 暂不暴露微信的通知方式
+        # TODO: 暂不暴露微信、短信的通知方式
         msg_types = CmsiApi.get_msg_type()
-        msg_type_map = {msg["type"]: msg for msg in msg_types}
-        msg_type_map[MsgType.WEIXIN.value]["is_active"] = False
-        return list(msg_type_map.values())
+        for msg in msg_types:
+            # 将msg_type文案转换为平台定义
+            msg["label"] = MsgType.get_choice_label(msg["type"])
+            if msg["type"] in [MsgType.WEIXIN, MsgType.SMS]:
+                msg["is_active"] = False
+        return msg_types
 
     def get_notify_class(self, msg_type: str):
         # 根据通知类型获取通知类，以及通知所需的上下文
@@ -334,14 +350,35 @@ class NotifyAdapter:
         content = textwrap.dedent(template.render(payload))
         return title, content
 
+    def render_msg_template_for_ai_task(self, ai_result: str):
+        """
+        拼装单据值守推送的信息内容，以及标题
+        """
+        biz = AppCache.objects.get(bk_biz_id=self.bk_biz_id)
+        title = _("「DBM」：检测到您的{ticket_type}单据「{ticket_id}」有风险").format(
+            ticket_type=TicketType.get_choice_label(self.ticket.ticket_type),
+            ticket_id=self.ticket.id,
+        )
+        # 渲染通知内容
+        jinja_env = Environment()
+        template = jinja_env.from_string(AI_TASK_GUARDIAN_TEMPLATE)
+        payload = {
+            "creator": self.ticket.creator,
+            "biz_name": f"{biz.bk_biz_name}(#{self.bk_biz_id}, {biz.db_app_abbr})",
+            "cluster_domains": ",".join(self.clusters),
+            "submit_time": self.ticket.create_at.astimezone().strftime("%Y-%m-%d %H:%M:%S%z"),
+            "running_time": f"{self.ticket.get_cost_time()}s",
+            "ai_result": ai_result,
+        }
+        content = textwrap.dedent(template.render(payload))
+        return title, content
+
     def send_msg(self):
         # 获取单据通知设置，优先: 单据配置 > 业务配置 > 默认业务配置
         if self.phase in self.ticket.msg_config:
             send_msg_config = self.ticket.msg_config[self.phase]
         else:
-            biz_notify_config = BizSettings.get_setting_value(
-                self.bk_biz_id, key=BizSettingsEnum.NOTIFY_CONFIG, default=DEFAULT_BIZ_NOTIFY_CONFIG
-            )
+            biz_notify_config = BizSettings.get_setting_value(self.bk_biz_id, key=BizSettingsEnum.NOTIFY_CONFIG)
             send_msg_config = biz_notify_config.get(self.phase)
 
         # 如果不存在通知配置，则提前退出
@@ -368,8 +405,43 @@ class NotifyAdapter:
             except (ApiResultError, Exception) as e:
                 logger.error(_("[{}]消息发送失败，错误信息: {}").format(MsgType.get_choice_label(msg_type), e))
 
+    def send_msg_of_ai_task_guardian(self, ai_result: str):
+        """
+        定义AI单据值守推送消息的逻辑
+        @param ai_result： 调用智能体之后的结果信息
+        """
+        biz_notify_config = BizSettings.get_setting_value(self.bk_biz_id, key=BizSettingsEnum.NOTIFY_CONFIG)
+        # 业务已配置的通知配置可能不含 AI_TASK_GUARDIAN 键（与单据状态通知配置共用同一 key），
+        # 此时 fallback 到默认 AI 值守通知配置
+        send_msg_config = biz_notify_config.get(
+            "AI_TASK_GUARDIAN", BIZ_DEFAULT_CONFIGS["DEFAULT_BIZ_AI_NOTIFY_CONFIG"]["AI_TASK_GUARDIAN"]
+        )
+
+        send_msg_types = [msg_type for msg_type in send_msg_config if send_msg_config.get(msg_type)]
+        for msg_type in send_msg_types:
+            notify_class, context = self.get_notify_class(msg_type)
+
+            # 如果是群机器人通知，则接受者为群ID
+            if msg_type == MsgType.WECOM_ROBOT:
+                self.receivers = send_msg_config.get(MsgType.WECOM_ROBOT.value, [])
+
+            # 拼接信息通知
+            title, content = self.render_msg_template_for_ai_task(ai_result=ai_result)
+
+            try:
+                notify_class(title, content, self.receivers).send_msg(msg_type, context=context)
+            except (ApiResultError, Exception) as e:
+                logger.error(_("[{}]消息发送失败，错误信息: {}").format(MsgType.get_choice_label(msg_type), e))
+
 
 @shared_task
 def send_msg(ticket_id: int, deadline: int = None):
     # 可异步发送消息，非阻塞路径默认不抛出异常
     NotifyAdapter(ticket_id, deadline).send_msg()
+
+
+@shared_task
+def send_msg_for_ai_task_guardian(ticket_id: int, ai_result: str, deadline: int = None):
+    # 可异步发送消息，非阻塞路径默认不抛出异常
+    # AI单据值守消息通道专属
+    NotifyAdapter(ticket_id, deadline).send_msg_of_ai_task_guardian(ai_result=ai_result)

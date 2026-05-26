@@ -17,6 +17,8 @@ type MySQLSwitch struct {
 	//storage layer instance used
 	Proxy  []dbutil.ProxyInfo
 	Dumper []dbutil.DumperInfo
+	//standby slave
+	IsStandBy bool
 }
 
 // ShowSwitchInstanceInfo show mysql instance's switch info
@@ -36,8 +38,8 @@ func (ins *MySQLSwitch) ShowSwitchInstanceInfo() string {
 func (ins *MySQLSwitch) CheckSwitch() (bool, error) {
 	var err error
 	if ins.Role == constvar.TenDBStorageSlave {
-		ins.ReportLogs(constvar.InfoResult, "instance is slave, needn't check")
-		return false, nil
+		ins.ReportLogs(constvar.InfoResult, "instance is backend_slave, skip check")
+		return true, nil
 	} else if ins.Role == constvar.TenDBStorageRepeater {
 		ins.ReportLogs(constvar.FailResult, "instance is repeater, dbha not support")
 		return false, err
@@ -81,17 +83,44 @@ func (ins *MySQLSwitch) CheckSwitch() (bool, error) {
 	return true, nil
 }
 
-// DoSwitch do switch from master to slave
+func (ins *MySQLSwitch) DoSwitch() error {
+	if ins.Role == constvar.TenDBStorageMaster {
+		ins.ReportLogs(constvar.InfoResult, "do mysql backend_master switch")
+		return ins.doMasterSwitch()
+	}
+	if ins.Role == constvar.TenDBStorageSlave {
+		ins.ReportLogs(constvar.InfoResult, "do mysql backend_slave switch")
+		return ins.doSlaveSwitch()
+	}
+	return nil
+}
+
+func (ins *MySQLSwitch) doSlaveSwitch() error {
+	if ins.IsStandBy {
+		ins.ReportLogs(constvar.InfoResult, "standby slave, switch do nothing, skip")
+		return nil
+	} else {
+		return ins.DeleteNameService(ins.Entry)
+	}
+}
+
+// doMasterSwitch do switch from master to slave
 //  1. refresh all proxy's backend to 1.1.1.1
 //  2. reset slave
 //  3. get slave's consistent binlog pos
 //  4. refresh backend to alive(slave) mysql
-func (ins *MySQLSwitch) DoSwitch() error {
+func (ins *MySQLSwitch) doMasterSwitch() error {
 	successFlag := true
 	proxyUser := ins.Config.DBConf.MySQL.ProxyUser
 	proxyPass := ins.Config.DBConf.MySQL.ProxyPass
 	ins.ReportLogs(constvar.InfoResult, "one phase:update all proxy's backend to 1.1.1.1 first")
 	for _, proxyIns := range ins.Proxy {
+		// proxy已经是unavailable状态，说明proxy自身已无法连接，跳过切换
+		if proxyIns.Status == constvar.UNAVAILABLE {
+			ins.ReportLogs(constvar.WarnResult, fmt.Sprintf("proxy[%s:%d] status is unavailable, skip switch",
+				proxyIns.Ip, proxyIns.Port))
+			continue
+		}
 		ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("try to flush proxy:[%s:%d]'s backends to 1.1.1.1",
 			proxyIns.Ip, proxyIns.Port))
 		err := SwitchProxyBackendAddress(proxyIns.Ip, proxyIns.AdminPort, proxyUser,
@@ -118,6 +147,12 @@ func (ins *MySQLSwitch) DoSwitch() error {
 
 	ins.ReportLogs(constvar.InfoResult, "two phase: update all proxy's backend to new master")
 	for _, proxyIns := range ins.Proxy {
+		// proxy已经是unavailable状态，说明proxy自身已无法连接，跳过切换
+		if proxyIns.Status == constvar.UNAVAILABLE {
+			ins.ReportLogs(constvar.WarnResult, fmt.Sprintf("proxy[%s:%d] status is unavailable, skip switch",
+				proxyIns.Ip, proxyIns.Port))
+			continue
+		}
 		ins.ReportLogs(constvar.InfoResult, fmt.Sprintf("try to flush proxy[%s:%d]'s backend to [%s:%d]",
 			proxyIns.Ip, proxyIns.Port, ins.StandBySlave.Ip, ins.StandBySlave.Port))
 		err = SwitchProxyBackendAddress(proxyIns.Ip, proxyIns.AdminPort, proxyUser,
@@ -145,14 +180,16 @@ func (ins *MySQLSwitch) RollBack() error {
 
 // UpdateMetaInfo swap master, slave 's meta info in cmdb
 func (ins *MySQLSwitch) UpdateMetaInfo() error {
-	cmdbClient := client.NewCmDBClient(&ins.Config.DBConf.CMDB, ins.Config.GetCloudId())
-	if err := cmdbClient.SwapMySQLRole(ins.Ip, ins.Port,
-		ins.StandBySlave.Ip, ins.StandBySlave.Port); err != nil {
-		updateErrLog := fmt.Sprintf("swap db-mysql role failed. err:%s", err.Error())
-		ins.ReportLogs(constvar.FailResult, updateErrLog)
-		return err
+	if ins.Role == constvar.TenDBStorageMaster {
+		cmdbClient := client.NewCmDBClient(&ins.Config.DBConf.CMDB, ins.Config.GetCloudId())
+		if err := cmdbClient.SwapMySQLRole(ins.Ip, ins.Port,
+			ins.StandBySlave.Ip, ins.StandBySlave.Port); err != nil {
+			updateErrLog := fmt.Sprintf("swap db-mysql role failed. err:%s", err.Error())
+			ins.ReportLogs(constvar.FailResult, updateErrLog)
+			return err
+		}
+		ins.ReportLogs(constvar.InfoResult, "mysql switch update meta info success")
 	}
-	ins.ReportLogs(constvar.InfoResult, "mysql switch update meta info success")
 	return nil
 }
 

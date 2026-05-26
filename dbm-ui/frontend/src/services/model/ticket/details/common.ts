@@ -81,8 +81,10 @@ export interface DetailSpecs {
     };
     spec_id: number;
     storage_spec: {
+      max: number;
+      min: number;
       mount_point: string;
-      size: number;
+      size?: number;
       type: string;
     }[];
   };
@@ -114,13 +116,15 @@ export interface DetailMachines {
   };
 }
 
-export interface SpecInfo {
+export interface ApplySpecInfo {
   affinity: string;
   count: number;
   cpu: {
     max: number;
     min: number;
   };
+  label_names: string[]; // 标签名称列表，单据详情回显用
+  labels: string[]; // 标签id列表
   location_spec: {
     city: string;
     include_or_exclue?: boolean;
@@ -130,12 +134,17 @@ export interface SpecInfo {
     max: number;
     min: number;
   };
-  qps: Record<string, any>;
+  qps: {
+    max: number;
+    min: number;
+  };
   spec_id: number;
   spec_name: string;
   storage_spec: {
+    max: number;
+    min: number;
     mount_point: string;
-    size: number;
+    size?: number;
     type: string;
   }[];
 }
@@ -154,53 +163,4 @@ export interface NodeInfo {
   storage_device: Record<string, any>;
   sub_zone: string;
   sub_zone_id: string;
-}
-
-export interface ResourcePoolRecycleHost {
-  bk_agent_id: string;
-  bk_biz_id: number;
-  bk_cloud_id: number;
-  bk_cloud_name: string;
-  bk_cloud_vendor?: any;
-  bk_cpu: number;
-  bk_cpu_architecture: string;
-  bk_cpu_module: string;
-  bk_disk: number;
-  bk_host_id: number;
-  bk_host_innerip: string;
-  bk_host_innerip_v6: string;
-  bk_host_name: string;
-  bk_host_outerip: string;
-  bk_mem: number;
-  bk_os_name: string;
-  bk_os_type: string;
-  city: string;
-  device_class: string;
-  host_id: number;
-  ip: string;
-  operator: string;
-  os_name: string;
-  os_type: string;
-  rack_id: string;
-  status: number;
-  sub_zone: string;
-}
-
-/**
- * 已下架主机再利用
- */
-export interface ResourcePoolRecycle extends DetailBase {
-  group: string; // 回收机器的组件类型
-  parent_ticket: number; // 关联的父单
-  recycle_hosts: ResourcePoolRecycleHost[]; // 已下架主机
-}
-
-export interface ResourcePoolDetailBase extends DetailBase, Omit<ResourcePoolRecycle, 'group' | 'parent_ticket'> {
-  clusters: DetailClusters;
-  ip_recycle: {
-    for_biz: number;
-    ip_dest: 'resource';
-  };
-  ip_source: 'resource_pool';
-  specs: DetailSpecs;
 }

@@ -9,7 +9,7 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from ..base import BaseApi
 from ..domains import JOB_APIGW_DOMAIN
@@ -70,6 +70,11 @@ class _JobApi(BaseApi):
             method="POST",
             url="get_account_list/",
             description=_("查询账号列表"),
+        )
+        self.operate_step_instance = self.generate_data_api(
+            method="POST",
+            url="operate_step_instance/",
+            description=_("用于对执行的实例的步骤进行操作"),
         )
 
     @staticmethod

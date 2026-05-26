@@ -219,9 +219,9 @@
   const MessageTipMap: Record<string, string> = {
     [MessageTypes.WECOM_ROBOT]: [
       t('获取会话ID方法:'),
-      t('1. 群聊添加群机器人: 蓝鲸监控(上云)'),
-      t('2. 手动蓝鲸监控(上云) 并输入关键字n', { n: "'会话ID'" }),
-      t('3. 将获取到的会话ID粘贴到输入框，多个会话ID使用逗号分隔'),
+      t('1. 群聊列表右上角...面板，点击消息推送，搜索：蓝鲸监控(上云) 并添加进群'),
+      t('2. 手动蓝鲸监控(上云)'),
+      t('3. 复制会话ID粘贴到输入框，多个ID使用逗号分隔'),
     ].join('\n'),
   };
 
@@ -402,7 +402,7 @@
     const fullDayInMinutes = 24 * 60;
 
     // 创建一个数组，用于表示整天的占用情况，初始都为空闲
-    const availableMinutes = new Array(fullDayInMinutes).fill(true);
+    const availableMinutes = Array.from({ length: fullDayInMinutes }, () => true);
 
     // 根据给定的时间段将已占用的分钟设置为 false
     for (const timeRangeItem of timeRanges) {
@@ -521,7 +521,7 @@
   };
 
   const areTimeRangesOverlapping = () => {
-    const minuteOccupied = new Array(24 * 60).fill(false); // 创建一个布尔数组，用于跟踪每分钟的占用情况
+    const minuteOccupied = Array.from({ length: 24 * 60 }, () => false); // 创建一个布尔数组，用于跟踪每分钟的占用情况
     const timeRanges = panelList.value.map((item) => item.timeRange);
 
     for (const timeRangeItem of timeRanges) {

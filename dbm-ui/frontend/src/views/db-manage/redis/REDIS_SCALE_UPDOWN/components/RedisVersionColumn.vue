@@ -13,7 +13,7 @@
 
 <template>
   <EditableColumn
-    :disabled-method="disabledMethod"
+    :disabled-method="() => (!cluster.id ? t('请先输入合法的集群域名') : false)"
     field="db_version"
     :label="t('Redis版本')"
     :min-width="150"
@@ -21,8 +21,7 @@
     <EditableSelect
       v-model="modelValue"
       :input-search="false"
-      :list="versionList"
-      :placeholder="t('自动生成')">
+      :list="versionList">
       <template #option="{ item }">
         <div>
           {{ item.label }}
@@ -32,13 +31,6 @@
             size="small"
             theme="info">
             {{ t('当前版本') }}
-          </BkTag>
-          <BkTag
-            v-if="item.index === 0"
-            class="ml-4"
-            size="small"
-            theme="warning">
-            {{ t('推荐') }}
           </BkTag>
         </div>
       </template>
@@ -97,11 +89,4 @@
       immediate: true,
     },
   );
-
-  const disabledMethod = (rowData?: any, field?: string) => {
-    if (field === 'db_version' && !rowData.cluster.id) {
-      return t('请先选择集群');
-    }
-    return '';
-  };
 </script>

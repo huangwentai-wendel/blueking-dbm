@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/spf13/cast"
+
 	//recore "dbm-services/common/reverseapi/internal/core"
 	"dbm-services/mysql/db-tools/mysql-dbbackup/pkg/config"
 )
 
-type MysqlBackupResultEvent struct {
-	metaInfo *IndexContent
-}
+type MysqlBackupResultEvent IndexContent
 
 func (e *MysqlBackupResultEvent) ClusterType() string {
 	return "tendbha"
@@ -20,22 +20,18 @@ func (e *MysqlBackupResultEvent) EventType() string {
 	return "mysql_dbbackup_result"
 }
 
-func (e *MysqlBackupResultEvent) EventCreateTimeStamp() time.Time {
-	return e.metaInfo.BackupBeginTime
+func (e *MysqlBackupResultEvent) EventCreateTime() time.Time {
+	return e.BackupBeginTime
 }
 
-func (e *MysqlBackupResultEvent) BkBizId() int64 {
-	return int64(e.metaInfo.BkBizId)
+func (e *MysqlBackupResultEvent) EventBkBizId() int64 {
+	return int64(e.BkBizId)
 }
 
 // 不强求实现 String, 这里是给下面的错误处理写例子用的
 func (e *MysqlBackupResultEvent) String() string {
 	b, _ := json.Marshal(e)
 	return string(b)
-}
-
-func (e *MysqlBackupResultEvent) MarshalJSON() ([]byte, error) {
-	return json.Marshal(e.metaInfo)
 }
 
 type MysqlBackupStatusEvent struct {
@@ -45,17 +41,25 @@ type MysqlBackupStatusEvent struct {
 	//core   *recore.Core
 }
 
-func NewMysqlBackupStatusEvent(config *config.BackupConfig, report BackupStatus) (*MysqlBackupStatusEvent, error) {
-	/*reportCore, err := reverseapi.NewCore(0)
-	if err != nil {
-		return nil, err
+func NewMysqlBackupStatusEvent(cnf *config.BackupConfig) *MysqlBackupStatusEvent {
+	backupStatusObj := BackupStatus{
+		BackupId:        cnf.Public.BackupId,
+		BillId:          cnf.Public.BillId,
+		ClusterId:       cnf.Public.MysqlPort,
+		ClusterDomain:   cnf.Public.ClusterAddress,
+		BackupHost:      cnf.Public.MysqlHost,
+		BackupPort:      cnf.Public.MysqlPort,
+		MysqlRole:       cnf.Public.MysqlRole,
+		BackupType:      cnf.Public.BackupType,
+		IsFullBackup:    cast.ToBool(cnf.Public.IsFullBackup),
+		ShardValue:      cnf.Public.ShardValue,
+		DataSchemaGrant: cnf.Public.DataSchemaGrant,
+		Status:          "",
 	}
-	*/
 	return &MysqlBackupStatusEvent{
-		config: config,
-		report: report,
-		//core:   reportCore,
-	}, nil
+		config: cnf,
+		report: backupStatusObj,
+	}
 }
 
 func (e *MysqlBackupStatusEvent) ClusterType() string {
@@ -66,15 +70,19 @@ func (e *MysqlBackupStatusEvent) EventType() string {
 	return "mysql_dbbackup_progress"
 }
 
-func (e *MysqlBackupStatusEvent) EventCreateTimeStamp() time.Time {
+func (e *MysqlBackupStatusEvent) EventCreateTime() time.Time {
 	if e.ts.IsZero() {
 		e.ts = time.Now()
 	}
-	return e.ts
+	return e.ts.UTC()
 }
 
-func (e *MysqlBackupStatusEvent) BkBizId() int64 {
+func (e *MysqlBackupStatusEvent) EventBkBizId() int64 {
 	return int64(e.config.Public.BkBizId)
+}
+
+func (e *MysqlBackupStatusEvent) MarshalJSON() ([]byte, error) {
+	return json.Marshal(e.report)
 }
 
 // 不强求实现 String, 这里是给下面的错误处理写例子用的
@@ -83,25 +91,14 @@ func (e *MysqlBackupStatusEvent) String() string {
 	return string(b)
 }
 
-func (e *MysqlBackupStatusEvent) MarshalJSON() ([]byte, error) {
-	return json.Marshal(e.report)
-}
-
 // SetStatus 设置备份进度
 // 每次修改 status都当做一个新的 event上报，这里要修改 ts
-func (e *MysqlBackupStatusEvent) SetStatus(progress string) *MysqlBackupStatusEvent {
+func (e *MysqlBackupStatusEvent) SetStatus(progress string, detail string) *MysqlBackupStatusEvent {
 	e.ts = time.Now()
 	e.report.Status = progress
+	e.report.StatusDetail = detail
+	// backup type 中途会改，这里重新赋值
+	e.report.BackupType = e.config.Public.BackupType
+
 	return e
 }
-
-/*
-func (e *MysqlBackupStatusEvent) Sync() error {
-	if resp, reportErr := reapi.SyncReport(e.core, e); reportErr != nil {
-		logger.Log.Warnf("report backup status, resp: %s", string(resp))
-		return reportErr
-	}
-	return nil
-}
-
-*/

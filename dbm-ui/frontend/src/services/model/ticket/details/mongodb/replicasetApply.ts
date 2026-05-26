@@ -1,6 +1,7 @@
-import type { DetailBase, SpecInfo } from '../common';
+import type { ApplySpecInfo, DetailBase } from '../common';
 
 export interface ReplicasetApply extends DetailBase {
+  bk_cloud_id: number;
   bk_cloud_name: string;
   cap_spec: string;
   city_code: string;
@@ -24,7 +25,7 @@ export interface ReplicasetApply extends DetailBase {
     set_id: string;
   }>;
   resource_spec: {
-    mongo_machine_set: SpecInfo;
+    mongo_machine_set: ApplySpecInfo;
   };
   start_port: number;
 }

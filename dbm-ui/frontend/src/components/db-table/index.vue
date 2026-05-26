@@ -58,9 +58,10 @@
               <BkPopover
                 v-if="showSelectAllPage"
                 :arrow="false"
+                click-content-auto-hide
                 placement="bottom-start"
                 theme="light db-table-select-menu"
-                trigger="hover">
+                trigger="click">
                 <template #default>
                   <DbIcon
                     class="select-menu-flag"
@@ -286,9 +287,10 @@
               ),
             }}
             arrow={false}
+            click-content-auto-hide={true}
             placement='bottom-start'
             theme='light db-table-select-menu'
-            trigger='hover'></bk-popover>
+            trigger='click'></bk-popover>
         </div>
       );
     },
@@ -410,9 +412,11 @@
     emits('selection', Object.keys(rowSelectMemo.value), Object.values(rowSelectMemo.value));
   };
 
-  let daymicTimer: NodeJS.Timeout;
+  let requestKey = 0;
+  let batchRequestTimer: Timeout;
   const fetchListData = (loading = true) => {
-    clearTimeout(daymicTimer);
+    requestKey = Date.now();
+    const latestRequestKey = requestKey;
     Promise.resolve().then(() => {
       isLoading.value = loading;
       const params = {
@@ -437,10 +441,16 @@
         .then((data) => {
           bkTableRef.value.getVxeTableInstance().loadData(data.results.slice(0, 20));
           if (data.results.length > 20) {
-            daymicTimer = setTimeout(() => {
+            batchRequestTimer = setTimeout(() => {
+              if (latestRequestKey !== requestKey) {
+                return;
+              }
               bkTableRef.value.getVxeTableInstance().loadData(data.results.slice(0, 50));
               if (data.results.length > 50) {
-                daymicTimer = setTimeout(() => {
+                batchRequestTimer = setTimeout(() => {
+                  if (latestRequestKey !== requestKey) {
+                    return;
+                  }
                   bkTableRef.value.getVxeTableInstance().loadData(data.results);
                 }, 3000);
               }
@@ -454,7 +464,7 @@
 
           // 默认清空选项
           if (props.clearSelection) {
-            bkTableRef.value?.clearSelection?.();
+            handleClearWholeSelect();
           }
 
           if (!props.fixedPagination && props.releateUrlQuery) {
@@ -478,6 +488,7 @@
         })
         .finally(() => {
           isLoading.value = false;
+          emits('requestFinished', tableData.value.results);
         });
     });
   };
@@ -718,6 +729,9 @@
     parseURL();
     calcTableHeight();
   });
+  onBeforeUnmount(() => {
+    clearTimeout(batchRequestTimer);
+  });
 
   defineExpose<Exposes>({
     bkTableRef,
@@ -789,8 +803,8 @@
 
       &::after {
         position: absolute;
-        top: 2px;
-        left: 5px;
+        top: 1px;
+        left: 4px;
         width: 4px;
         height: 8px;
         border: 2px solid #3a84ff;

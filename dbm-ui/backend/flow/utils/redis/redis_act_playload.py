@@ -15,7 +15,7 @@ import time
 from typing import Any
 
 from django.conf import settings
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from backend import env
 from backend.components import DBConfigApi
@@ -30,6 +30,7 @@ from backend.db_meta.enums import InstanceStatus
 from backend.db_meta.enums.cluster_type import ClusterType
 from backend.db_meta.models import AppCache, Cluster, StorageInstance
 from backend.db_package.models import Package
+from backend.db_proxy.reverse_api.common.impl import list_nginx_addrs
 from backend.db_services.redis.maxmemory_set.util import (
     get_dbmon_maxmemory_config_by_bkbizid,
     get_dbmon_maxmemory_config_by_cluster_ids,
@@ -94,6 +95,7 @@ twemproxy_cluster_type_list = [
 ]
 predixy_cluster_type_list = [
     ClusterType.TendisPredixyTendisplusCluster.value,
+    ClusterType.TendisPredixyTendisplusInstance.value,
     ClusterType.TendisPredixyRedisCluster.value,
 ]
 cache_cluster_type_list = [
@@ -313,7 +315,42 @@ class RedisActPayload(object):
         return resp
 
     @staticmethod
-    def redis_conf_names_by_cluster_type(cluster_type: str, cluster_version: str) -> list:
+    def redis_conf_names_by_cluster_type(
+        cluster_type: str,
+        cluster_version: str,
+        target_cluster_type: str = None,
+        target_version: str = None,
+    ) -> list[str] | None:
+        """
+        fix:
+            1、如果类型变更，ssd->cache，只继承特地item
+            2、如果类型不变，且为版本降级，只继承特地item
+            3、如果类型不变，且为版本升级，需要继承低版本所有item
+
+        Args:
+            cluster_type: 源集群类型
+            cluster_version: 源集群版本
+            target_cluster_type: 目标集群类型（可选，用于判断类型是否变更）
+            target_version: 目标版本（可选，用于判断版本升级/降级）
+
+        Returns:
+            配置项名称列表。如果返回 None，表示需要继承所有配置项（版本升级场景）
+        """
+        from backend.flow.utils.redis.redis_util import version_ge
+
+        # 判断是否为版本升级场景
+        is_version_upgrade = False
+        if target_version and target_version != cluster_version:
+            is_version_upgrade = version_ge(target_version, cluster_version)
+
+        # 判断类型是否变更
+        type_changed = target_cluster_type and target_cluster_type != cluster_type
+
+        # 场景3：类型不变且版本升级，返回None表示需要继承所有配置项
+        if not type_changed and is_version_upgrade:
+            return None, target_version
+
+        # 场景1和2：类型变更或版本降级，只继承特定配置项
         conf_names: list = []
         if (
             is_redis_instance_type(cluster_type) and cluster_version != RedisVersion.Redis20
@@ -322,7 +359,30 @@ class RedisActPayload(object):
         if is_redis_instance_type(cluster_type) or is_tendisssd_instance_type(cluster_type):
             conf_names.append("maxmemory")
             conf_names.append("databases")
-        return conf_names
+        return conf_names, None
+
+    def _replace_legacy_conf_name(self, conf_name: str, target_version: str = None) -> str:
+        """
+        替换旧版本配置项名称为新版本配置项名称
+
+        Args:
+            conf_name: 配置项名称
+            target_version: 目标版本（可选）
+
+        Returns:
+            替换后的配置项名称
+        """
+        from backend.flow.utils.redis.redis_util import version_ge
+
+        # Redis 5.0+ 将 slave-* 配置项重命名为 replica-*
+        if (
+            target_version
+            and target_version.startswith("Redis")
+            and version_ge(target_version, "5")
+            and conf_name == "slave-lazy-flush"
+        ):
+            return "replica-lazy-flush"
+        return conf_name
 
     def dts_swap_redis_config(self, cluster_map: dict):
         """交换源集群和目标集群的redis配置"""
@@ -348,14 +408,30 @@ class RedisActPayload(object):
             data_type,
         )
 
-        src_conf_names = self.redis_conf_names_by_cluster_type(
-            cluster_map["src_cluster_type"], cluster_map["src_cluster_version"]
+        src_conf_result = self.redis_conf_names_by_cluster_type(
+            cluster_map["src_cluster_type"],
+            cluster_map["src_cluster_version"],
+            target_cluster_type=cluster_map["dst_cluster_type"],
+            target_version=cluster_map["dst_cluster_version"],
         )
+        # 返回值为元组 (conf_names, target_version_for_rename)
+        src_conf_names, src_target_version = (
+            src_conf_result if isinstance(src_conf_result, tuple) else (src_conf_result, None)
+        )
+        # 如果返回None，表示需要继承所有配置项
+        if src_conf_names is None:
+            src_conf_names = list(src_resp["content"].keys())
         src_conf_items = []
         for conf_name in src_conf_names:
             if conf_name in src_resp["content"]:
+                # 场景3下，如果目标版本>=5，需要将slave-lazy-flush替换为replica-lazy-flush
+                new_conf_name = self._replace_legacy_conf_name(conf_name, src_target_version)
                 src_conf_items.append(
-                    {"conf_name": conf_name, "conf_value": src_resp["content"][conf_name], "op_type": OpType.UPDATE}
+                    {
+                        "conf_name": new_conf_name,
+                        "conf_value": src_resp["content"][conf_name],
+                        "op_type": OpType.UPDATE,
+                    }
                 )
 
         logger.info(_("获取目标集群:{} redis配置").format(cluster_map["dst_cluster_domain"]))
@@ -372,14 +448,30 @@ class RedisActPayload(object):
             data_type,
         )
 
-        dst_conf_names = self.redis_conf_names_by_cluster_type(
-            cluster_map["dst_cluster_type"], cluster_map["dst_cluster_version"]
+        dst_conf_result = self.redis_conf_names_by_cluster_type(
+            cluster_map["dst_cluster_type"],
+            cluster_map["dst_cluster_version"],
+            target_cluster_type=cluster_map["src_cluster_type"],
+            target_version=cluster_map["src_cluster_version"],
         )
+        # 返回值为元组 (conf_names, target_version_for_rename)
+        dst_conf_names, dst_target_version = (
+            dst_conf_result if isinstance(dst_conf_result, tuple) else (dst_conf_result, None)
+        )
+        # 如果返回None，表示需要继承所有配置项
+        if dst_conf_names is None:
+            dst_conf_names = list(dst_resp["content"].keys())
         dst_conf_items = []
         for conf_name in dst_conf_names:
             if conf_name in dst_resp["content"]:
+                # 场景3下，如果目标版本>=5，需要将slave-lazy-flush替换为replica-lazy-flush
+                new_conf_name = self._replace_legacy_conf_name(conf_name, dst_target_version)
                 dst_conf_items.append(
-                    {"conf_name": conf_name, "conf_value": dst_resp["content"][conf_name], "op_type": OpType.UPDATE}
+                    {
+                        "conf_name": new_conf_name,
+                        "conf_value": dst_resp["content"][conf_name],
+                        "op_type": OpType.UPDATE,
+                    }
                 )
 
         upsert_param = {
@@ -464,14 +556,14 @@ class RedisActPayload(object):
         )
         return data
 
-    def __get_cluster_config(self, domain_name: str, db_version: str, conf_type: str) -> Any:
+    def __get_cluster_config(self, bk_biz_id: int, domain_name: str, db_version: str, conf_type: str) -> Any:
         """
         获取已部署的实例配置
         """
         passwd_ret = PayloadHandler.redis_get_password_by_domain(domain_name)
         data = DBConfigApi.query_conf_item(
             params={
-                "bk_biz_id": self.bk_biz_id,
+                "bk_biz_id": str(bk_biz_id),
                 "level_name": LevelName.CLUSTER,
                 "level_value": domain_name,
                 "level_info": {"module": str(DEFAULT_DB_MODULE_ID)},
@@ -697,6 +789,84 @@ class RedisActPayload(object):
             "payload": {"user": redis_os_account["os_user"], "password": redis_os_account["os_password"]},
         }
 
+    # proxy重启， proxy 复用
+    def proxy_reuse_payload(self, **kwargs) -> dict:
+        params, payload, proxy_version = (
+            kwargs["params"],
+            {},
+            ConfigFileEnum.Predixy.value,
+        )
+        cluster = Cluster.objects.get(id=params["cluster_id"])
+        self.bk_biz_id, self.namespace = str(cluster.bk_biz_id), cluster.cluster_type
+        if is_twemproxy_proxy_type(cluster.cluster_type):
+            proxy_version = ConfigFileEnum.Twemproxy.value
+        proxy_config = self.__get_cluster_config(
+            bk_biz_id=cluster.bk_biz_id,
+            domain_name=cluster.immute_domain,
+            db_version=proxy_version,
+            conf_type=ConfigTypeEnum.ProxyConf.value,
+        )
+
+        cluster_info = metaApi.cluster.nosqlcomm.other.get_cluster_detail(cluster_id=cluster.id)[0]
+        redis_master_set, redis_slave_set, servers = (
+            cluster_info["redis_master_set"],
+            cluster_info["redis_slave_set"],
+            [],
+        )
+        if is_twemproxy_proxy_type(cluster.cluster_type):
+            for set in redis_master_set:
+                ip_port, seg_range = str.split(set)
+                servers.append("{} {} {} {}".format(ip_port, cluster.name, seg_range, 1))
+        elif cluster.cluster_type in [
+            ClusterType.TendisPredixyTendisplusCluster.value,
+            ClusterType.TendisPredixyTendisplusInstance.value,
+        ]:
+            # standalone主从模式：predixy只路由到master节点，使用StandaloneServerPool
+            servers = redis_master_set
+        else:
+            # cluster模式：predixy路由到所有节点(master+slave)，使用ClusterServerPool
+            servers = redis_master_set + redis_slave_set
+
+        # 从dbconfig中获取load_modules
+        module_rows = get_cluster_redis_modules_detial(cluster_id=cluster.id)
+        load_modules = [module_row["module_name"] for module_row in module_rows]
+
+        payload.update(
+            {
+                "ip": params["proxy_ip"],
+                "port": params["proxy_port"],
+                "reuse": params.get("proxy_reuse", False),
+                "cluster_type": cluster.cluster_type,
+                "password": proxy_config["password"],
+                "redis_password": proxy_config["redis_password"],
+                "twemproxy_confies": {},
+                "predixy_confies": {},
+            }
+        )
+        logger.info("cluster: {}, reuse proxy: {} ;payload: {}".format(cluster.immute_domain, params, payload))
+
+        if cluster.cluster_type in [
+            ClusterType.TendisTwemproxyRedisInstance.value,
+            ClusterType.TwemproxyTendisSSDInstance.value,
+        ]:
+            payload["twemproxy_confies"] = {
+                "conf_configs": proxy_config,
+                "servers": servers,
+            }
+        else:
+            payload["predixy_confies"] = {
+                "predixyadminpasswd": proxy_config.get("redis_proxy_admin_password", proxy_config["password"]),
+                "servers": servers,
+                "load_modules": load_modules,
+                "dbconfig": proxy_config,
+            }
+
+        return {
+            "db_type": DBActuatorTypeEnum.Proxy.value,
+            "action": DBActuatorTypeEnum.Redis.value + "_" + RedisActuatorActionEnum.PROXY_REUSE.value,
+            "payload": payload,
+        }
+
     def get_install_predixy_payload(self, **kwargs) -> dict:
         self.proxy_pkg = Package.get_latest_package(
             version=PredixyVersion.PredixyLatest, pkg_type=MediumEnum.Predixy, db_type=DBType.Redis
@@ -721,7 +891,7 @@ class RedisActPayload(object):
             version=PredixyVersion.PredixyLatest, pkg_type=MediumEnum.Predixy, db_type=DBType.Redis
         )
         proxy_config = self.__get_cluster_config(
-            self.cluster["domain_name"], self.proxy_version, ConfigTypeEnum.ProxyConf
+            self.cluster["bk_biz_id"], self.cluster["domain_name"], self.proxy_version, ConfigTypeEnum.ProxyConf
         )
 
         return {
@@ -769,7 +939,7 @@ class RedisActPayload(object):
             version=TwemproxyVersion.TwemproxyLatest, pkg_type=MediumEnum.Twemproxy, db_type=DBType.Redis
         )
         proxy_config = self.__get_cluster_config(
-            self.cluster["domain_name"], self.proxy_version, ConfigTypeEnum.ProxyConf
+            self.cluster["bk_biz_id"], self.cluster["domain_name"], self.proxy_version, ConfigTypeEnum.ProxyConf
         )
 
         return {
@@ -893,6 +1063,7 @@ class RedisActPayload(object):
                 "is_keys_to_be_del": True,
                 "delete_rate": int(self.global_config["delete_rate"]),
                 "tendisplus_delete_rate": int(self.global_config["tendisplus_delete_rate"]),
+                "ssd_delete_rate": int(self.global_config["tendisplus_delete_rate"]),
             },
         }
 
@@ -904,7 +1075,7 @@ class RedisActPayload(object):
             version=MediumEnum.Latest, pkg_type=MediumEnum.RedisTools, db_type=DBType.Redis
         )
         proxy_config = self.__get_cluster_config(
-            self.cluster["domain_name"], self.proxy_version, ConfigTypeEnum.ProxyConf
+            self.cluster["bk_biz_id"], self.cluster["domain_name"], self.proxy_version, ConfigTypeEnum.ProxyConf
         )
 
         return {
@@ -922,6 +1093,7 @@ class RedisActPayload(object):
                 "proxy_password": proxy_config["password"],
                 "tendis_type": self.cluster["cluster_type"],
                 "tendisplus_delete_rate": int(self.global_config["tendisplus_delete_rate"]),
+                "ssd_delete_rate": int(self.global_config["tendisplus_delete_rate"]),
             },
         }
 
@@ -947,6 +1119,7 @@ class RedisActPayload(object):
                 "domain": domain_name,
                 "without_to_backup_sys": not BACKUP_SYS_STATUS,
                 "backup_client_storage_type": "",  # 留空,使用系统默认
+                "backup_identify": self.cluster.get("backup_identify", ""),  # 新参数，一次备份的整体标识
             },
         }
 
@@ -1162,6 +1335,7 @@ class RedisActPayload(object):
                 cluster_domain = kwargs["params"]["servers"][0].get("cluster_domain", "")
                 if cluster_domain:
                     cluster = Cluster.objects.get(immute_domain=cluster_domain)
+                    payload["nginx_addrs"] = list_nginx_addrs(bk_cloud_id=cluster.bk_cloud_id)
                     payload["redis_maxmemory_set"] = get_dbmon_maxmemory_config_by_cluster_ids([cluster.id])
 
         return {
@@ -1224,6 +1398,7 @@ class RedisActPayload(object):
         except Cluster.DoesNotExist:
             raise Exception("redis cluster {} does not exist".format(params["cluster_domain"]))
         payload = self.get_bkdbmon_payload_header(str(cluster.bk_biz_id))
+        payload["nginx_addrs"] = list_nginx_addrs(bk_cloud_id=cluster.bk_cloud_id)
         payload["redis_maxmemory_set"] = get_dbmon_maxmemory_config_by_cluster_ids([cluster.id])
         if params["is_stop"]:
             payload["servers"] = []
@@ -1248,11 +1423,12 @@ class RedisActPayload(object):
         cluster_list = query_cluster_by_hosts([ip])
         cluster_ids = set()
 
-        servers = []
+        bk_cloud_id, servers = 0, []
         cluster: Cluster = None
         for c in cluster_list:
             try:
                 cluster = Cluster.objects.get(id=c["cluster_id"])
+                bk_cloud_id = cluster.bk_cloud_id
             except Cluster.DoesNotExist:
                 raise Exception("redis cluster {} does not exist".format(c["cluster"]))
             if not is_stop:
@@ -1263,6 +1439,7 @@ class RedisActPayload(object):
             payload = self.get_bkdbmon_payload_header(str(kwargs["params"]["bk_biz_id"]))
         else:
             payload = self.get_bkdbmon_payload_header(str(cluster.bk_biz_id))
+            payload["nginx_addrs"] = list_nginx_addrs(bk_cloud_id=bk_cloud_id)
             payload["redis_maxmemory_set"] = get_dbmon_maxmemory_config_by_cluster_ids(list(cluster_ids))
         payload["servers"] = servers
         return {
@@ -1281,13 +1458,27 @@ class RedisActPayload(object):
             "payload": kwargs["params"],
         }
 
+    def redis_reverse_config(self, **kwargs) -> dict:
+        params = kwargs["params"]
+        return {
+            "db_type": DBActuatorTypeEnum.Redis.value,
+            "action": DBActuatorTypeEnum.Redis.value + "_" + RedisActuatorActionEnum.REVERSE_API_CONFIG.value,
+            "payload": {
+                "bk_cloud_id": params["bk_cloud_id"],
+                "nginx_addrs": list_nginx_addrs(bk_cloud_id=params["bk_cloud_id"]),
+            },
+        }
+
     # 场景化需求
     def __get_redis_pkg(self, cluster_type, db_version):
         if cluster_type == ClusterType.TendisTwemproxyRedisInstance.value:
             self.redis_pkg = Package.get_latest_package(
                 version=db_version, pkg_type=MediumEnum.Redis, db_type=DBType.Redis
             )
-        elif cluster_type == ClusterType.TendisPredixyTendisplusCluster.value:
+        elif cluster_type in [
+            ClusterType.TendisPredixyTendisplusCluster.value,
+            ClusterType.TendisPredixyTendisplusInstance.value,
+        ]:
             self.redis_pkg = Package.get_latest_package(
                 version=db_version, pkg_type=MediumEnum.TendisPlus, db_type=DBType.Redis
             )
@@ -1386,11 +1577,11 @@ class RedisActPayload(object):
         self.__get_redis_pkg(params["cluster_type"], params["db_version"])
         if "origin_db_version" in params:
             redis_config = self.__get_cluster_config(
-                params["immute_domain"], params["origin_db_version"], ConfigTypeEnum.DBConf
+                params["bk_biz_id"], params["immute_domain"], params["origin_db_version"], ConfigTypeEnum.DBConf
             )
         else:
             redis_config = self.__get_cluster_config(
-                params["immute_domain"], params["db_version"], ConfigTypeEnum.DBConf
+                params["bk_biz_id"], params["immute_domain"], params["db_version"], ConfigTypeEnum.DBConf
             )
         cluster = Cluster.objects.get(immute_domain=params["immute_domain"])
 
@@ -1579,6 +1770,38 @@ class RedisActPayload(object):
         }
 
     # Tendis 单实例/集群 架构-实例切换;
+    def redis__switch_precheck_4_scene(self, **kwargs) -> dict:
+        """same as redis__switch_4_scene"""
+        params, proxy_pass, storage_pass = kwargs["params"], "<", ">"
+        self.namespace = params["cluster_type"]
+        cluster_meta = nosqlcomm.other.get_cluster_detail(cluster_id=params["cluster_id"])[0]
+        passwd_ret = PayloadHandler.redis_get_password_by_domain(params["immute_domain"])
+        if self.namespace == ClusterType.RedisInstance.value:
+            storage_pass = passwd_ret.get("redis_password")
+        else:
+            proxy_pass, storage_pass = passwd_ret.get("redis_proxy_password"), passwd_ret.get("redis_password")
+
+        logger.info("switch cluster {}, switch infos : {}".format(params["immute_domain"], params["switch_info"]))
+        return {
+            "db_type": DBActuatorTypeEnum.Redis.value,
+            "action": DBActuatorTypeEnum.Redis.value + "_" + RedisActuatorActionEnum.SwitchPrecheck.value,
+            "payload": {
+                "cluster_meta": {
+                    "bk_biz_id": cluster_meta["bk_biz_id"],
+                    "immute_domain": cluster_meta["immute_domain"],
+                    "cluster_type": cluster_meta["cluster_type"],
+                    "major_version": cluster_meta["major_version"],
+                    "twemproxy_status_set": cluster_meta["twemproxy_status_set"],
+                    "redis_master_set": cluster_meta["redis_master_set"],
+                    "proxy_pass": proxy_pass,
+                    "storage_pass": storage_pass,
+                },
+                "switch_info": params["switch_info"],  # list
+                "switch_condition": params["switch_condition"],  # dict
+            },
+        }
+
+    # Tendis 单实例/集群 架构-实例切换;
     def redis__switch_4_scene(self, **kwargs) -> dict:
         """{
             "cluster_id":0,
@@ -1607,9 +1830,10 @@ class RedisActPayload(object):
                     "immute_domain": cluster_meta["immute_domain"],
                     "cluster_type": cluster_meta["cluster_type"],
                     "major_version": cluster_meta["major_version"],
-                    "twemproxy_set": cluster_meta["twemproxy_set"],
+                    # "twemproxy_set": cluster_meta["twemproxy_set"],
+                    "twemproxy_status_set": cluster_meta["twemproxy_status_set"],
                     "redis_master_set": cluster_meta["redis_master_set"],
-                    "redis_slave_set": cluster_meta["redis_slave_set"],
+                    # "redis_slave_set": cluster_meta["redis_slave_set"], # 似乎没有用.
                     "proxy_pass": proxy_pass,
                     "storage_pass": storage_pass,
                 },
@@ -2028,6 +2252,7 @@ class RedisActPayload(object):
                 "ports": params["ports"],
                 "role": params["role"],
                 "cluster_type": cluster_type,
+                "flush_after_upgrade": params.get("flush_after_upgrade", False),
             },
         }
 
@@ -2048,7 +2273,17 @@ class RedisActPayload(object):
                 "format": FormatType.MAP,
             }
         )
-        conf_names = self.redis_conf_names_by_cluster_type(cluster_map["cluster_type"], cluster_map["current_version"])
+        conf_result = self.redis_conf_names_by_cluster_type(
+            cluster_map["cluster_type"],
+            cluster_map["current_version"],
+            target_cluster_type=cluster_map["cluster_type"],
+            target_version=cluster_map["target_version"],
+        )
+        # 返回值为元组 (conf_names, target_version_for_rename)
+        conf_names, _target_version = conf_result if isinstance(conf_result, tuple) else (conf_result, None)
+        # 如果返回None，表示需要继承所有配置项（版本升级场景）
+        if conf_names is None:
+            conf_names = list(src_resp["content"].keys())
         conf_items = []
         for conf_name in conf_names:
             if conf_name in src_resp["content"]:
@@ -2090,17 +2325,25 @@ class RedisActPayload(object):
         logger.info(_("更新集群:{} redis配置 为 目标集群的配置,upsert_param:{}".format(cluster_map["cluster_domain"], upsert_param)))
         DBConfigApi.upsert_conf_item(upsert_param)
 
-    # redis proxy 原地升级
+    # redis proxy 原地升级/降级
     def redis_proxy_upgrade_online_payload(self, **kwargs) -> dict:
         params = kwargs["params"]
+        # target_version_file could be None
+        proxy_pkg_prefix = params.get("proxy_pkg_prefix", None)
         proxy_pkg: Package = None
         if is_twemproxy_proxy_type(params["cluster_type"]):
             proxy_pkg = Package.get_latest_package(
-                version=TwemproxyVersion.TwemproxyLatest, pkg_type=MediumEnum.Twemproxy, db_type=DBType.Redis
+                version=TwemproxyVersion.TwemproxyLatest,
+                pkg_type=MediumEnum.Twemproxy,
+                db_type=DBType.Redis,
+                name_prefix=proxy_pkg_prefix,
             )
         elif is_predixy_proxy_type(params["cluster_type"]):
             proxy_pkg = Package.get_latest_package(
-                version=PredixyVersion.PredixyLatest, pkg_type=MediumEnum.Predixy, db_type=DBType.Redis
+                version=PredixyVersion.PredixyLatest,
+                pkg_type=MediumEnum.Predixy,
+                db_type=DBType.Redis,
+                name_prefix=proxy_pkg_prefix,
             )
         return {
             "db_type": DBActuatorTypeEnum.Redis.value,
@@ -2170,7 +2413,7 @@ class RedisActPayload(object):
         print(f"params:{params}")
         return {
             "db_type": DBActuatorTypeEnum.Redis.value,
-            "action": DBActuatorTypeEnum.Tendisplus.value + "_" + RedisActuatorActionEnum.SLOTS_MIGRATE.value,
+            "action": DBActuatorTypeEnum.Redis.value + "_" + RedisActuatorActionEnum.SLOTS_MIGRATE.value,
             "payload": {
                 "src_node": params["src_node"],
                 "dst_node": params["dst_node"],
@@ -2204,7 +2447,7 @@ class RedisActPayload(object):
         print(f"params:{params}")
         return {
             "db_type": DBActuatorTypeEnum.Redis.value,
-            "action": DBActuatorTypeEnum.Tendisplus.value + "_" + RedisActuatorActionEnum.SLOTS_MIGRATE.value,
+            "action": DBActuatorTypeEnum.Redis.value + "_" + RedisActuatorActionEnum.SLOTS_MIGRATE.value,
             "payload": {
                 "src_node": params["src_node"],
                 "dst_node": params["dst_node"],
@@ -2238,7 +2481,7 @@ class RedisActPayload(object):
         print(f"params:{params}")
         return {
             "db_type": DBActuatorTypeEnum.Redis.value,
-            "action": DBActuatorTypeEnum.Tendisplus.value + "_" + RedisActuatorActionEnum.SLOTS_MIGRATE.value,
+            "action": DBActuatorTypeEnum.Redis.value + "_" + RedisActuatorActionEnum.SLOTS_MIGRATE.value,
             "payload": {
                 "src_node": params["src_node"],
                 "dst_node": params["dst_node"],
@@ -2404,13 +2647,20 @@ class RedisActPayload(object):
             conf_type=conf_type,
             data_type=data_type,
         )
-        conf_names = self.redis_conf_names_by_cluster_type(cluster.cluster_type, cluster.major_version)
+        conf_result = self.redis_conf_names_by_cluster_type(cluster.cluster_type, cluster.major_version)
+        # 返回值为元组 (conf_names, target_version_for_rename)
+        conf_names, target_version = conf_result if isinstance(conf_result, tuple) else (conf_result, None)
+        # 处理返回值为None的情况（虽然域名重命名场景不应该返回None，但为了健壮性）
+        if conf_names is None:
+            conf_names = list(old_dbconfig_data["content"].keys())
         update_conf_items = []
         for conf_name in conf_names:
             if conf_name in old_dbconfig_data["content"]:
+                # 如果目标版本>=5，需要将slave-lazy-flush替换为replica-lazy-flush
+                new_conf_name = self._replace_legacy_conf_name(conf_name, target_version)
                 update_conf_items.append(
                     {
-                        "conf_name": conf_name,
+                        "conf_name": new_conf_name,
                         "conf_value": old_dbconfig_data["content"][conf_name],
                         "op_type": OpType.UPDATE,
                     }

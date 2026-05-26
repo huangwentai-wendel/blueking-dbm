@@ -9,14 +9,14 @@ an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express o
 specific language governing permissions and limitations under the License.
 """
 
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
-from blue_krill.data_types.enum import EnumField, StructuredEnum
+from blue_krill.data_types.enum import EnumField, StrStructuredEnum
 
 SWAGGER_TAG = _("主机池")
 
 
-class PoolType(str, StructuredEnum):
+class PoolType(StrStructuredEnum):
     # 池管理：资源池，故障池，待回收池
     Fault = EnumField("fault", _("故障池"))
     Recycle = EnumField("recycle", _("待回收池"))
@@ -26,7 +26,7 @@ class PoolType(str, StructuredEnum):
     Recycled = EnumField("recycled", _("已回收"))
 
 
-class MachineEventType(str, StructuredEnum):
+class MachineEventType(StrStructuredEnum):
     ImportResource = EnumField("import_resource", _("导入资源池"))
     ApplyResource = EnumField("apply_resource", _("申请资源"))
     ReturnResource = EnumField("return_resource", _("退回资源"))
@@ -34,6 +34,10 @@ class MachineEventType(str, StructuredEnum):
     ToFault = EnumField("to_fault", _("转入故障池"))
     UndoImport = EnumField("undo_import", _("撤销导入"))
     Recycled = EnumField("recycled", _("回收"))
+    HCMRemove = EnumField("hcm_remove", _("海磊回收"))
+    ResourceOwner = EnumField("resource_owner", _("修改资源归属"))
+    HostAttribute = EnumField("host_attribute", _("修改主机属性"))
+    RemoveHost = EnumField("remove_host", _("已下架主机处理"))
 
 
 MACHINE_EVENT__POOL_MAP = {
@@ -42,5 +46,6 @@ MACHINE_EVENT__POOL_MAP = {
     MachineEventType.ImportResource: PoolType.Resource,
     MachineEventType.ReturnResource: PoolType.Resource,
     MachineEventType.Recycled: PoolType.Recycled,
+    MachineEventType.HCMRemove: PoolType.Recycled,
     MachineEventType.UndoImport: PoolType.Recycled,
 }

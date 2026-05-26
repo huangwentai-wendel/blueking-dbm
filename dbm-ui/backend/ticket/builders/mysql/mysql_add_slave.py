@@ -12,21 +12,24 @@ specific language governing permissions and limitations under the License.
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
-from backend.configuration.constants import AffinityEnum
-from backend.db_meta.enums import ClusterType
+from backend.db_meta.enums import ClusterType, InstanceInnerRole
 from backend.db_meta.models import StorageInstance
-from backend.db_services.dbbase.constants import IpSource
+from backend.db_services.dbbase.constants import IpSource, SourceType
 from backend.flow.engine.controller.mysql import MySQLController
 from backend.ticket import builders
 from backend.ticket.builders.common.base import BaseOperateResourceParamBuilder, HostInfoSerializer, fetch_cluster_ids
 from backend.ticket.builders.common.constants import MySQLBackupSource
-from backend.ticket.builders.mysql.base import BaseMySQLHATicketFlowBuilder, MySQLBaseOperateDetailSerializer
+from backend.ticket.builders.mysql.base import (
+    BaseMySQLHATicketFlowBuilder,
+    MySQLBaseOperateDetailSerializer,
+    RelatedClusterAutoCalculateMixin,
+)
 from backend.ticket.constants import TicketType
 
 
-class MysqlAddSlaveDetailSerializer(MySQLBaseOperateDetailSerializer):
+class MysqlAddSlaveDetailSerializer(RelatedClusterAutoCalculateMixin, MySQLBaseOperateDetailSerializer):
     class AddSlaveInfoSerializer(serializers.Serializer):
-        new_slave = HostInfoSerializer(help_text=_("新从库机器信息"), required=False)
+        new_slave = serializers.ListField(help_text=_("新从库机器信息列表"), child=HostInfoSerializer(), required=False)
         cluster_ids = serializers.ListField(help_text=_("集群ID列表"), child=serializers.IntegerField())
         resource_spec = serializers.JSONField(help_text=_("资源规格"), required=False)
 
@@ -37,11 +40,16 @@ class MysqlAddSlaveDetailSerializer(MySQLBaseOperateDetailSerializer):
     ip_source = serializers.ChoiceField(
         help_text=_("机器来源"), choices=IpSource.get_choices(), required=False, default=IpSource.MANUAL_INPUT
     )
+    source_type = serializers.ChoiceField(
+        help_text=_("资源来源类型"), choices=SourceType.get_choices(), required=False, default=SourceType.RESOURCE_AUTO
+    )
 
     def validate(self, attrs):
-        # 校验集群是否可用，集群类型为高可用
-        super().validate_cluster_can_access(attrs)
+        attrs = super().validate(attrs)
         super().validated_cluster_type(attrs, ClusterType.TenDBHA)
+
+        # 自动计算关联集群（后端自动扩展cluster_ids）
+        attrs = self.auto_calculate_related_clusters(attrs, role=InstanceInnerRole.MASTER)
 
         if attrs["ip_source"] == IpSource.RESOURCE_POOL:
             return attrs
@@ -62,8 +70,23 @@ class MysqlAddSlaveParamBuilder(builders.FlowParamBuilder):
         if self.ticket_data["ip_source"] == IpSource.RESOURCE_POOL:
             return
 
+        # 重新组织infos结构：将每个new_slave拆分成独立的info对象
+        new_infos = []
         for info in self.ticket_data["infos"]:
-            info["new_slave_ip"] = info["new_slave"]["ip"]
+            cluster_ids = info.get("cluster_ids", [])
+            new_slaves = info.get("new_slave", [])
+
+            for new_slave in new_slaves:
+                new_info = {
+                    "cluster_ids": cluster_ids.copy(),  # 复制cluster_ids避免引用问题
+                    "new_slave_ip": new_slave["ip"],  # 单个IP字符串
+                    "new_slave": new_slave,  # 保留完整的new_slave信息
+                    "resource_spec": info.get("resource_spec", {}),
+                }
+                new_infos.append(new_info)
+
+        # 替换原来的infos结构
+        self.ticket_data["infos"] = new_infos
 
 
 class MysqlAddSlaveResourceParamBuilder(BaseOperateResourceParamBuilder):
@@ -73,31 +96,42 @@ class MysqlAddSlaveResourceParamBuilder(BaseOperateResourceParamBuilder):
         masters = (
             StorageInstance.objects.select_related("machine")
             .prefetch_related("cluster")
-            .filter(cluster__in=cluster_ids)
+            .filter(cluster__in=cluster_ids, instance_inner_role=InstanceInnerRole.MASTER)
         )
         cluster_id__master_map = {master.cluster.first().id: master for master in masters}
         for info in ticket_data["infos"]:
-            resource_spec = info["resource_spec"]["new_slave"]
-            master_subzone_id = cluster_id__master_map[info["cluster_ids"][0]].machine.bk_sub_zone_id
-            # 同城跨园区，要求slave和master在不同subzone
-            if resource_spec["affinity"] == AffinityEnum.CROS_SUBZONE:
-                resource_spec["location_spec"].update(sub_zone_ids=[master_subzone_id], include_or_exclue=False)
-            # 同城同园区，要求slave和master在一个subzone
-            elif resource_spec["affinity"] in [AffinityEnum.SAME_SUBZONE, AffinityEnum.SAME_SUBZONE_CROSS_SWTICH]:
-                resource_spec["location_spec"].update(sub_zone_ids=[master_subzone_id], include_or_exclue=True)
+            master = cluster_id__master_map[info["cluster_ids"][0]]
+            cls.patch_common_affinity(
+                info,
+                role="new_slave",
+                cluster=master.cluster.first(),
+                exclusive_hosts=[master.machine],
+            )
 
     def format(self):
-        # 补充城市和亲和性
-        self.patch_info_affinity_location()
-        # 新申请的slave需要根据master来保证在同一园区/不同园区
         self.patch_slave_subzone(self.ticket_data)
 
     def post_callback(self):
         next_flow = self.ticket.next_flow()
         ticket_data = next_flow.details["ticket_data"]
+
+        # 重新组织infos结构：将每个new_slave拆分成独立的info对象
+        new_infos = []
         for info in ticket_data["infos"]:
-            info["new_slave"] = info.pop("new_slave")[0]
-            info["new_slave_ip"] = info["new_slave"]["ip"]
+            cluster_ids = info.get("cluster_ids", [])
+            new_slaves = info.get("new_slave", [])
+
+            for new_slave in new_slaves:
+                new_info = {
+                    "cluster_ids": cluster_ids.copy(),  # 复制cluster_ids避免引用问题
+                    "new_slave_ip": new_slave["ip"],  # 单个IP字符串
+                    "new_slave": new_slave,  # 保留完整的new_slave信息
+                    "resource_spec": info.get("resource_spec", {}),
+                }
+                new_infos.append(new_info)
+
+        # 替换原来的infos结构
+        ticket_data["infos"] = new_infos
 
         next_flow.save(update_fields=["details"])
 

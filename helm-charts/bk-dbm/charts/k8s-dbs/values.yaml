@@ -41,22 +41,56 @@ containerPorts:
 
 # @section dbs 服务配置
 server:
+  clbApiConfig:
+    clbApiURL: ""          # clb 服务调用地址
+    username: ""           # 管理人员
+    backupUsername: ""     # 备份管理人员
+  dbmConfig:
+    asyncToDbm: "true"
+    syncDataApiUrl: ""          # 内部直连地址（同步用）
+    dbmAuthApiUrl: ""           # 鉴权地址（host:port/path 格式，合并原 gateway + IAM base path）
+    bkbaseBizApiUrl: ""            # bkbase网关获取业务列表地址
+    innerBkAppCode: ""           # 统一凭据 app_code（同步 + 鉴权）
+    innerBkAppSecret: ""         # 统一凭据 app_secret（同步 + 鉴权）
+    bkbaseBkBizId: "0"          # BKBase 业务 ID，部署时必须配置为真实值
+  log:
+    log_level: "info"
+    max_size_mb: "10"
+    max_backups: "5"
+    max_age: "3"
+    compress: "true"
+  vmMetricServerHost: "localhost"
+  vmMetricServerPort: "80"
   # @param service type
   serviceType: ClusterIP
   # @param 时区配置
   timezone: "Asia/Shanghai"
   port: 8000
   datasource:
-    host: ""
-    port:
-    user: ""
-    password: ""
-    dbname: ""
-    tlsmode: "false"
-    maxOpenConns: 10
-    maxIdelConns: 5
-    maxLifeTime: "30m"
-    maxIdleTime: "30m"
+    # @param auth 数据库配置
+    auth:
+      host: ""
+      port:
+      user: ""
+      password: ""
+      dbname: ""
+      tlsmode: "false"
+      maxOpenConns: 10
+      maxIdelConns: 5
+      maxLifeTime: "30m"
+      maxIdleTime: "30m"
+    # @param dbs 数据库配置
+    dbs:
+      host: ""
+      port:
+      user: ""
+      password: ""
+      dbname: ""
+      tlsmode: "false"
+      maxOpenConns: 10
+      maxIdelConns: 5
+      maxLifeTime: "30m"
+      maxIdleTime: "30m"
 
 # @section ingress配置
 ingress:
@@ -73,6 +107,14 @@ ingress:
 globalIngress:
   # @param 全局ingress开关
   disabled: true
+
+# 适用于独立集群，clb 绑定 dbs service
+# @section loadbalancer配置
+loadbalancer:
+  # @param loadbalancer开关
+  enabled: false
+  # @param loadbalancer annotations配置
+  annotations: {}
 
 # @section 可用性探针配置
 livenessProbe:
@@ -108,3 +150,22 @@ readinessProbe:
   successThreshold: 1
   # @param dbs 服务就绪探针检查失败阈值
   failureThreshold: 3
+
+# @section 日志采集配置
+bkLogConfig:
+  # @param 是否启用日志插件
+  enabled: false
+  # @param 日志采集的 Data ID
+  dataId: 1
+  # @param api日志文件采集的 Data ID
+  dataIdForApi: 2
+  # @param sys日志文件采集的 Data ID
+  dataIdForSys: 3
+  # @param bkLogConfig bk_env 标签
+  bkEnv: ""
+
+# @section 指标采集配置
+svcMonitor:
+  enabled: false
+  labels: {}
+  interval: "15s"

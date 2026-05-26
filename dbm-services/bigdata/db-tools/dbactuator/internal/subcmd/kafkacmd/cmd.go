@@ -42,8 +42,10 @@ func NewKafkaCommand() *cobra.Command {
 				RestartBrokerCommand(),
 				ReplaceBrokerCommand(),
 				CheckBrokerEmptyCommand(),
+				BrokerIsEmptyCommand(),
 				GenerateReassignmentCommand(),
 				ExecuteReassignmentCommand(),
+				InstallKafkaUICommand(),
 			},
 		},
 	}

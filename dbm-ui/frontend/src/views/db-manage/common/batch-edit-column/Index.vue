@@ -2,7 +2,7 @@
   <BkPopConfirm
     :is-show="isShow"
     trigger="manual"
-    width="395"
+    :width="width"
     @after-show="handleAfterShow"
     @cancel="() => (isShow = false)"
     @confirm="handleConfirm">
@@ -24,11 +24,43 @@
               :clearable="false"
               :disabled="disabled"
               filterable
-              :list="dataList"
+              v-bind="{ ...attrs, ...props }"
               :model-value="localValue"
-              @change="handleChange" />
+              @change="handleChange">
+              <template
+                v-if="slots.allOptionIcon"
+                #allOptionIcon>
+                <slot name="allOptionIcon" />
+              </template>
+              <template
+                v-if="slots.tagRender"
+                #tagRender="{ label, value }">
+                <slot
+                  :label="label"
+                  name="tagRender"
+                  :value="value" />
+              </template>
+              <template
+                v-for="item in dataList"
+                :key="item.label">
+                <BkOptionGroup
+                  v-if="'children' in item"
+                  :label="item.label">
+                  <BkOption
+                    v-for="child in item.children"
+                    :key="child.value"
+                    :label="child.label"
+                    :value="child.value" />
+                </BkOptionGroup>
+                <BkOption
+                  v-else
+                  :label="item.label"
+                  :value="item.value" />
+              </template>
+            </BkSelect>
             <BkInput
               v-else-if="type === 'textarea'"
+              v-bind="{ ...attrs, ...props }"
               ref="inputRef"
               v-model="localValue"
               :placeholder="placeholder"
@@ -37,17 +69,20 @@
               @change="handleChange" />
             <BkInput
               v-else-if="type === 'input'"
+              v-bind="{ ...attrs, ...props }"
               :disabled="disabled"
               :model-value="localValue"
               @change="handleChange" />
             <BkInput
               v-else-if="type === 'number-input'"
+              v-bind="{ ...attrs, ...props }"
               :disabled="disabled"
               :model-value="localValue"
               type="number"
               @change="handleChange" />
             <BkTagInput
               v-else-if="type === 'taginput'"
+              v-bind="{ ...attrs, ...props }"
               allow-auto-match
               allow-create
               :disabled="disabled"
@@ -58,6 +93,7 @@
               @change="handleChange" />
             <BkDatePicker
               v-else-if="type === 'datetime'"
+              v-bind="{ ...attrs, ...props }"
               :clearable="false"
               :disabled-date="disableFn"
               :model-value="localValue"
@@ -73,22 +109,30 @@
 </template>
 
 <script setup lang="ts">
-  import type { UnwrapRef } from 'vue';
+  import { type UnwrapRef, useAttrs, watch } from 'vue';
   import { useI18n } from 'vue-i18n';
 
   import { batchSplitRegex } from '@common/regex';
 
+  interface SelectOption {
+    label: string;
+    value: string | number;
+  }
+
+  interface SelectOptionGroup {
+    children: SelectOption[];
+    label: string;
+  }
+
   interface Props {
-    dataList?: {
-      label: string;
-      value: string | number;
-    }[];
+    dataList?: (SelectOptionGroup | SelectOption)[];
     disableFn?: (date?: Date | number) => boolean;
     placeholder?: string;
     single?: boolean;
     title: string;
-    titlePrefixType?: 'edit' | 'entry';
+    titlePrefixType?: 'edit' | 'entry' | 'select';
     type?: 'select' | 'textarea' | 'input' | 'taginput' | 'datetime' | 'number-input';
+    width?: number;
   }
 
   type Emits = (e: 'change', value: UnwrapRef<typeof localValue>) => void;
@@ -100,6 +144,7 @@
     single: false,
     titlePrefixType: 'edit',
     type: 'select',
+    width: 395,
   });
 
   const emits = defineEmits<Emits>();
@@ -107,17 +152,19 @@
   const isShow = defineModel<boolean>({
     default: false,
   });
-  // const slots = useSlots();
+  const slots = useSlots();
 
   const { t } = useI18n();
+  const attrs = useAttrs();
 
   const titlePrefixTypeMap = {
     edit: t('统一设置'),
     entry: t('批量录入'),
+    select: t('批量选择'),
   };
 
   const inputRef = ref();
-  const localValue = ref<string | string[]>(props.type === 'taginput' ? [] : '');
+  const localValue = ref<any>(props.type === 'taginput' ? [] : '');
 
   const disabled = computed(() => props.disableFn());
 
