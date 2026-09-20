@@ -594,25 +594,23 @@ class TicketFlowBuilder:
     def custom_ticket_flows(self):
         return []
 
-    def init_ticket_flows(self):
+    def build_itsm_flow(self):
+        """构建审批节点，返回 Flow 实例或 None"""
+        if not self.need_itsm:
+            return None
+        return Flow(
+            ticket=self.ticket,
+            flow_type=FlowType.BK_ITSM.value,
+            details=self.itsm_flow_builder(self.ticket).get_params(),
+            flow_alias=_("单据审批"),
+        )
+
+    def build_tail_flows(self):
         """
-        自定义流程，默认流程是：
-        单据审批(可选, 默认有) --> 人工确认(可选, 默认无) --> 资源申请(由单据参数判断) ---> inner节点
-        如果有特殊的flow需求，可在custom_ticket_flows中定制，会替换掉inner节点为custom流程
-        对于复杂流程，可以直接覆写init_ticket_flows
+        构建审批节点之后的尾巴流程(定时/人工确认/资源申请/inner)，返回未落库的 Flow 实例列表
+        用于改单后用新的 ticket.details 覆盖 pending 尾巴
         """
         flows = []
-
-        # 判断并添加审批节点
-        if self.need_itsm:
-            flows.append(
-                Flow(
-                    ticket=self.ticket,
-                    flow_type=FlowType.BK_ITSM.value,
-                    details=self.itsm_flow_builder(self.ticket).get_params(),
-                    flow_alias=_("单据审批"),
-                )
-            )
 
         # 判断并添加定时节点
         if self.need_timer:
@@ -664,6 +662,25 @@ class TicketFlowBuilder:
                     retry_type=self.retry_type,
                 )
             )
+
+        return flows
+
+    def init_ticket_flows(self):
+        """
+        自定义流程，默认流程是：
+        单据审批(可选, 默认有) --> 人工确认(可选, 默认无) --> 资源申请(由单据参数判断) ---> inner节点
+        如果有特殊的flow需求，可在custom_ticket_flows中定制，会替换掉inner节点为custom流程
+        对于复杂流程，可以直接覆写init_ticket_flows
+        """
+        flows = []
+        itsm_flow = self.build_itsm_flow()
+        if itsm_flow:
+            flows.append(itsm_flow)
+        flows.extend(self.build_tail_flows())
+
+        # 按顺序写入 order，替代自增 id 作为执行顺序依据
+        for idx, flow in enumerate(flows):
+            flow.order = idx + 1
 
         Flow.objects.bulk_create(flows)
         return list(Flow.objects.filter(ticket=self.ticket))

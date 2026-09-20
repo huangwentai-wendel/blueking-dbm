@@ -39,6 +39,7 @@ from backend.ticket.constants import (
     FlowType,
     FlowTypeConfig,
     TicketFlowStatus,
+    TicketModifyType,
     TicketStatus,
     TicketType,
     TodoStatus,
@@ -59,6 +60,8 @@ class Flow(models.Model):
     ticket = models.ForeignKey("Ticket", help_text=_("关联工单"), related_name="flows", on_delete=models.CASCADE)
     flow_type = models.CharField(help_text=_("流程类型"), max_length=LEN_SHORT, choices=FlowType.get_choices())
     flow_alias = models.CharField(help_text=_("流程别名"), max_length=LEN_LONG, null=True, blank=True)
+    # 流程执行顺序，替代自增id作为执行顺序的依据，支持改单时在中间插入/覆盖节点
+    order = models.IntegerField(_("流程顺序"), default=0)
     # 若 flow_type 为 itsm，则 flow_obj_id 为 ITSM 单据号；若为 job，则对应 job_id；内置流程为 root_id；可扩展
     flow_obj_id = models.CharField(_("单据流程对象ID"), max_length=LEN_NORMAL, blank=True, db_index=True)
     details = models.JSONField(_("单据流程详情"), default=dict)
@@ -130,6 +133,33 @@ class FlowSummary(models.Model):
 
     flow = models.OneToOneField(Flow, on_delete=models.PROTECT, unique=True)
     summary = models.JSONField(_("流程摘要"), default=list, blank=True, null=True)
+
+
+class TicketModifyRecord(AuditedModel):
+    """
+    单据改单记录/快照
+    - before_details/after_details 用于变更对比，diff 由前端计算后随提交传入，后端只做落库
+    """
+
+    ticket = models.ForeignKey("Ticket", help_text=_("关联工单"), related_name="modify_records", on_delete=models.CASCADE)
+    flow = models.ForeignKey(
+        "Flow",
+        help_text=_("关联流程节点"),
+        related_name="modify_records",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    mode = models.CharField(_("改单模式"), choices=TicketModifyType.get_choices(), max_length=LEN_SHORT)
+    operator = models.CharField(_("操作人"), max_length=LEN_NORMAL, default="")
+    remark = models.CharField(_("说明"), max_length=LEN_L_LONG, default="")
+    before_details = models.JSONField(_("改前快照"), default=dict)
+    after_details = models.JSONField(_("改后快照"), default=dict)
+    change_count = models.IntegerField(_("差异字段数"), default=0)
+
+    class Meta:
+        verbose_name_plural = verbose_name = _("单据改单记录(TicketModifyRecord)")
+        indexes = [models.Index(fields=["ticket"]), models.Index(fields=["flow"])]
 
 
 class Ticket(AuditedModel):
@@ -239,7 +269,12 @@ class Ticket(AuditedModel):
          2. 若 TicketFlow 中都流程都为空，则代表整个单据未开始，取第一个流程
         """
         if Flow.objects.filter(ticket=self).exclude(status=TicketFlowStatus.PENDING).exists():
-            return Flow.objects.filter(ticket=self).exclude(status=TicketFlowStatus.PENDING).last()
+            return (
+                Flow.objects.filter(ticket=self)
+                .exclude(status=TicketFlowStatus.PENDING)
+                .order_by("order", "id")
+                .last()
+            )
         # 初始化时，当前节点和下一个节点为同一个
         return self.next_flow()
 
@@ -253,7 +288,7 @@ class Ticket(AuditedModel):
         if env.ITSM_FLOW_SKIP:
             next_flows = next_flows.exclude(flow_type__in=[FlowType.BK_ITSM, FlowType.PAUSE])
 
-        return next_flows.first()
+        return next_flows.order_by("order", "id").first()
 
     def add_related_ticket(self, related_ticket: Union[int, "Ticket"], desc: str = "", done: bool = False):
         """
