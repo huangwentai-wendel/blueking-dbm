@@ -107,6 +107,13 @@ def list_subzones(city_code: str = "") -> List:
     return subzone_infos
 
 
+def list_cloud_zones(city_code: str = "") -> List:
+    qs = BKSubzone.objects.exclude(bk_cloud_zone__isnull=True).exclude(bk_cloud_zone="")
+    if city_code:
+        qs = qs.filter(bk_city__bk_idc_city_name=city_code)
+    return list(qs.values("bk_cloud_zone", "bk_cloud_region").order_by("bk_cloud_zone").distinct())
+
+
 def list_host_specs() -> List[HostSpecModel]:
     # TODO 暂时全量返回，后续机型设计时再做考虑
     return [spec for spec in host_specs]

@@ -62,7 +62,7 @@ def submit_kafka_scale_up_bill(
                 if "location_spec" not in resource_spec["broker"]:
                     resource_spec["broker"]["location_spec"] = {
                         "city": cluster_obj.region or "default",
-                        "sub_zone_ids": cluster_obj.zone_list or [],
+                        "sub_zone_ids": cluster_obj.cloud_zone_list or [],
                     }
                 # 补充 labels 和 label_names 字段
                 if "labels" not in resource_spec["broker"]:
@@ -249,7 +249,7 @@ def submit_kafka_replace_bill(
             if "location_spec" not in resource_spec["broker"]:
                 resource_spec["broker"]["location_spec"] = {
                     "city": cluster_obj.region or "default",
-                    "sub_zone_ids": cluster_obj.zone_list or [],
+                    "sub_zone_ids": cluster_obj.cloud_zone_list or [],
                 }
             # 补充 labels 和 label_names 字段
             if "labels" not in resource_spec["broker"]:

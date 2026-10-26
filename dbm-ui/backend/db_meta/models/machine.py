@@ -68,6 +68,8 @@ class Machine(AuditedModel):
             '{"/data": {"size": 100, "disk_id": "disk-xxx", "disk_type": "CLOUD_PREMIUM", "file_type": "ext4"}}'
         ),
     )
+    bk_cloud_region = models.CharField(max_length=128, default="", blank=True, null=True, help_text=_("云地域"))
+    bk_cloud_zone = models.CharField(max_length=128, default="", blank=True, null=True, help_text=_("云可用区"))
 
     class Meta:
         unique_together = ("ip", "bk_cloud_id")
@@ -193,6 +195,8 @@ class Machine(AuditedModel):
                     "bk_mem",
                     "bk_agent_id",
                     "bk_cloud_inst_id",
+                    "bk_cloud_region",
+                    "bk_cloud_zone",
                 ],
                 "host_property_filter": {
                     "condition": "AND",

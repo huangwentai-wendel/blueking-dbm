@@ -50,6 +50,8 @@ class SubzoneSLZ(serializers.Serializer):
     bk_city_code = serializers.CharField()
     bk_sub_zone_id = serializers.IntegerField()
     bk_sub_zone = serializers.CharField()
+    bk_cloud_zone = serializers.CharField()
+    bk_cloud_region = serializers.CharField()
 
 
 class HostSpecSLZ(serializers.Serializer):

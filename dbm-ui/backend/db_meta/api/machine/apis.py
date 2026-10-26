@@ -59,6 +59,8 @@ def get_create_machines(
             "net_device_id",
             "bk_agent_id",
             "bk_cloud_inst_id",
+            "bk_cloud_region",
+            "bk_cloud_zone",
         ],
         "host_property_filter": {
             "condition": "AND",
@@ -113,6 +115,8 @@ def get_create_machines(
                 bk_agent_id=inf.get("bk_agent_id") or "",
                 net_device_id=inf.get("net_device_id") or "",  # 这个 id 是个逗号分割的字符串
                 cloud_inst_id=inf.get("bk_cloud_inst_id") or "",
+                bk_cloud_zone=inf.get("bk_cloud_zone") or "",
+                bk_cloud_region=inf.get("bk_cloud_region") or "",
                 spec_id=spec_id,
                 spec_config=spec_config,
                 creator=creator,

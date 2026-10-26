@@ -65,7 +65,8 @@ def get_ticket_zone_list(ticket_data, role="backend_group"):
         AffinityEnum.SAME_SUBZONE,
         AffinityEnum.SAME_SUBZONE_CROSS_SWTICH,
     ]:
-        zone_list = ticket_data["resource_spec"][role]["location_spec"].get("sub_zone_ids", [])
+        # zone_list = ticket_data["resource_spec"][role]["location_spec"].get("sub_zone_ids", [])
+        zone_list = ticket_data["resource_spec"][role]["location_spec"].get("bk_cloud_zones", [])
     return zone_list
 
 
@@ -171,6 +172,7 @@ class HostInfoSerializer(serializers.Serializer):
     bk_cloud_id = serializers.IntegerField(help_text=_("云区域ID"))
     ip = serializers.CharField(help_text=_("IP地址"))
     bk_sub_zone = serializers.CharField(help_text=_("园区"), allow_null=True, allow_blank=True, required=False)
+    bk_cloud_sub_zone = serializers.CharField(help_text=_("云可用区"), allow_null=True, allow_blank=True, required=False)
     bk_host_id = serializers.IntegerField(help_text=_("主机ID"))
     bk_biz_id = serializers.IntegerField(help_text=_("业务ID"), required=False)
     port = serializers.IntegerField(help_text=_("端口号"), required=False)

@@ -31,7 +31,6 @@ from backend.db_meta.models import (
     Spec,
     StorageInstance,
 )
-from backend.db_meta.models.city_map import BKSubzone
 from backend.db_services.dbbase.instances.handlers import InstanceHandler
 from backend.db_services.dbbase.resources.query_base import (
     build_empty_and_in_q,
@@ -80,6 +79,8 @@ DEFAULT_CLUSTER_DATA = {
     "cluster_type_name": "",
     "cluster_subzones": [],
     "cluster_subzone_ids": [],
+    "bk_cloud_regions": [],
+    "bk_cloud_zones": [],
     "disaster_tolerance_level": "",
     "master_domain": "",
     "slave_domain": "",
@@ -100,7 +101,7 @@ DEFAULT_CLUSTER_DATA = {
     "cluster_spec": {},
     "machine_specs": [],
     "tags": [],
-    "zone_list": [],
+    "cloud_zone_list": [],
 }
 
 VALID_FIELDS = [
@@ -745,7 +746,7 @@ class ListRetrieveResource(BaseListRetrieveResource, CommonExportQueryResourceMi
         kwargs["remote_spec_map"] = {s.spec_id: s for s in Spec.objects.filter(spec_cluster_type__in=db_types)}
 
         # 预取园区信息
-        cluster_zone_map = BKSubzone.get_subzone_map(get_cache=True)
+        # cluster_zone_map = BKSubzone.get_subzone_map(get_cache=True)
 
         # 将集群的查询结果序列化为集群字典信息
         clusters: List[Dict[str, Any]] = []
@@ -779,7 +780,7 @@ class ListRetrieveResource(BaseListRetrieveResource, CommonExportQueryResourceMi
                     biz_info=biz_info,
                     cluster_stats_map=cluster_stats_map,
                     dns_to_clb=dns_to_clb,
-                    cluster_zone_map=cluster_zone_map,
+                    # cluster_zone_map=cluster_zone_map,
                     **kwargs,
                 )
                 clusters.append(cluster_info)
@@ -803,7 +804,7 @@ class ListRetrieveResource(BaseListRetrieveResource, CommonExportQueryResourceMi
         cloud_info: Dict[str, Any],
         biz_info: AppCache,
         cluster_stats_map: Dict[str, Dict[str, int]],
-        cluster_zone_map: Dict[str, str],
+        # cluster_zone_map: Dict[str, str],
         dns_to_clb: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
@@ -823,7 +824,7 @@ class ListRetrieveResource(BaseListRetrieveResource, CommonExportQueryResourceMi
         cluster_spec = None
         cluster_entry_map_value = ClusterEntry.get_entries_map(entries=cluster.entries).get(cluster.id, {})
         bk_cloud_name = cloud_info.get(str(cluster.bk_cloud_id), {}).get("bk_cloud_name", "")
-        cluster_zone_list = cluster.zone_list or []
+        # cluster_zone_list = cluster.zone_list or []
 
         # 补充集群规格信息
         if cls.storage_spec_role:
@@ -848,8 +849,8 @@ class ListRetrieveResource(BaseListRetrieveResource, CommonExportQueryResourceMi
             "cluster_stats": cluster_stats_map.get(cluster.immute_domain, {}),
             "cluster_type": cluster.cluster_type,
             "cluster_type_name": str(ClusterType.get_choice_label(cluster.cluster_type)),
-            "cluster_subzones": [cluster_zone_map.get(str(zone), "") for zone in cluster_zone_list],
-            "cluster_subzone_ids": cluster_zone_list,
+            # "cluster_subzones": [cluster_zone_map.get(str(zone), "") for zone in cluster_zone_list],
+            # "cluster_subzone_ids": cluster_zone_list,
             "disaster_tolerance_level": cluster.disaster_tolerance_level,
             "master_domain": cluster_entry_map_value.get("master_domain", ""),
             "slave_domain": cluster_entry_map_value.get("slave_domain", ""),
@@ -870,7 +871,8 @@ class ListRetrieveResource(BaseListRetrieveResource, CommonExportQueryResourceMi
             "cluster_spec": cluster_spec.to_dict() if cluster_spec else None,
             "machine_specs": machine_specs,
             "tags": [tag.desc for tag in cluster.tags.all()],
-            "zone_list": cluster.zone_list,
+            # "zone_list": cluster.zone_list,
+            "cloud_zone_list": cluster.cloud_zone_list,
         }
 
     @classmethod
@@ -953,6 +955,7 @@ class ListRetrieveResource(BaseListRetrieveResource, CommonExportQueryResourceMi
             "ip": Q(machine__ip__in=query_params.get("ip", "").split(",")),
             "id": Q(id__in=query_params.get("id", "").split(",")),
             "bk_sub_zone": build_empty_and_in_q("machine__bk_sub_zone", query_params.get("bk_sub_zone", "")),
+            "bk_cloud_zone": build_empty_and_in_q("machine__bk_cloud_zone", query_params.get("bk_cloud_zone", "")),
             "bk_os_name": build_empty_and_in_q("machine__bk_os_name", query_params.get("bk_os_name", "")),
             "cluster_name": Q(cluster__name__in=query_params.get("cluster_name", "").split(",")),
             "create_at__gte": Q(create_at__gte=query_params.get("create_at__gte", "")),
@@ -1060,6 +1063,7 @@ class ListRetrieveResource(BaseListRetrieveResource, CommonExportQueryResourceMi
             "machine__machine_type",
             "machine__bk_sub_zone",
             "machine__bk_sub_zone_id",
+            "machine__bk_cloud_zone",
             "machine__bk_os_name",
             "machine__bk_rack_id",
             "machine__bk_svr_device_cls_name",
@@ -1113,6 +1117,7 @@ class ListRetrieveResource(BaseListRetrieveResource, CommonExportQueryResourceMi
             "bk_cloud_name": bk_cloud_name,
             "bk_sub_zone": instance["machine__bk_sub_zone"],
             "bk_sub_zone_id": instance["machine__bk_sub_zone_id"],
+            "bk_cloud_zone": instance["machine__bk_cloud_zone"],
             "ip": instance["machine__ip"],
             "port": instance["port"],
             "instance_address": f"{instance['machine__ip']}{IP_PORT_DIVIDER}{instance['port']}",
@@ -1205,6 +1210,8 @@ class ListRetrieveResource(BaseListRetrieveResource, CommonExportQueryResourceMi
             "bk_sub_zone_id": Q(bk_sub_zone_id__in=query_params.get("bk_sub_zone_id", "").split(",")),
             # 园区名称过滤
             "bk_sub_zone": build_empty_and_in_q("bk_sub_zone", query_params.get("bk_sub_zone", "")),
+            # 可用区过滤
+            "bk_cloud_zone": build_empty_and_in_q("bk_cloud_zone", query_params.get("bk_cloud_zone", "")),
             # 机型
             "bk_svr_device_cls_name": build_empty_and_in_q(
                 "bk_svr_device_cls_name", query_params.get("bk_svr_device_cls_name", "")
@@ -1295,6 +1302,8 @@ class ListRetrieveResource(BaseListRetrieveResource, CommonExportQueryResourceMi
             "spec_name": machine_spec.spec_name if machine_spec else "",
             "spec_enable": machine_spec.enable if machine_spec else None,
             "bk_sub_zone": machine.bk_sub_zone,
+            "bk_cloud_zone": machine.bk_cloud_zone,
+            "bk_cloud_region": machine.bk_cloud_region,
             "bk_os_name": machine.bk_os_name,
             "bk_rack_id": machine.bk_rack_id,
             "bk_svr_device_cls_name": machine.bk_svr_device_cls_name,

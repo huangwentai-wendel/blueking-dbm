@@ -323,6 +323,11 @@ class DBBaseViewSet(viewsets.SystemViewSet):
                 for bk_cloud_id in existing_values["bk_cloud_id"]
             ]
 
+        if "bk_cloud_zone" in cluster_attrs:
+            cluster_attrs["bk_cloud_zone"] = [
+                {"value": zone, "text": zone} for cluster in clusters for zone in cluster.cloud_zone_list
+            ]
+
         # 实例的部署角色
         if "role" in data["instances_attrs"]:
             query_filters = Q(bk_biz_id=data["bk_biz_id"], cluster_type__in=data["cluster_type"])
@@ -560,6 +565,12 @@ class DBBaseViewSet(viewsets.SystemViewSet):
             storage_zones = storage_queryset.values_list("machine__bk_sub_zone", flat=True)
             zones = set(proxy_zones) | (set(storage_zones))
             instance_attrs["bk_sub_zone"] = [{"value": zone, "text": zone if zone else "--"} for zone in zones]
+
+        if "bk_cloud_zone" in data["instances_attrs"]:
+            proxy_zones = proxy_query.values_list("machine__bk_cloud_zone", flat=True)
+            storage_zones = storage_queryset.values_list("machine__bk_cloud_zone", flat=True)
+            cloud_zones = set(proxy_zones) | (set(storage_zones))
+            instance_attrs["bk_cloud_zone"] = [{"value": zone, "text": zone if zone else "--"} for zone in cloud_zones]
 
         return Response(instance_attrs)
 

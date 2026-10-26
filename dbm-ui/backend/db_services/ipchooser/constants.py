@@ -52,6 +52,8 @@ class CommonEnum(EnhanceEnum):
         "bk_bak_operator",
         "sub_zone",
         "rack_id",
+        "bk_cloud_region",
+        "bk_cloud_zone",
     ]
 
     @classmethod

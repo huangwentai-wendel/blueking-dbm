@@ -49,6 +49,8 @@ DEFAULT_BK_FIELDS = [
     "idc_name",
     "idc_id",
     "svr_device_class",
+    "bk_cloud_region",
+    "bk_cloud_zone",
 ]
 
 
@@ -117,6 +119,8 @@ def update_host_property():
             ("bk_rack_id", "rack_id"),
             ("bk_svr_device_cls_name", "bk_svr_device_cls_name"),
             ("bk_city_id", "idc_city_id"),
+            ("bk_cloud_region", "bk_cloud_region"),
+            ("bk_cloud_zone", "bk_cloud_zone"),
         ]
 
         dirty_machine_fields = [
@@ -210,6 +214,8 @@ def update_machine_field(bk_host_ids):
         ("bk_city_id", "idc_city_id"),
         ("bk_idc_id", "idc_id"),
         ("bk_idc_name", "idc_name"),
+        ("bk_cloud_region", "bk_cloud_region"),
+        ("bk_cloud_zone", "bk_cloud_zone"),
     ]
 
     params["host_property_filter"] = {

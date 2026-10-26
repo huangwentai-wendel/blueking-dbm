@@ -312,7 +312,7 @@ class ResourceApplyParamBuilder(CallBackBuilderMixin):
 
         resource_spec[role].update(
             affinity=affinity,
-            location_spec={"city": cluster.region, "sub_zone_ids": cluster.zone_list or []},
+            location_spec={"city": cluster.region, "sub_zone_ids": cluster.cloud_zone_list or []},
             current_hosts=current_hosts,
         )
         if not no_need_tolerance:
