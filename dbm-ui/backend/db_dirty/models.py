@@ -51,6 +51,8 @@ class DirtyMachine(AuditedModel):
     ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, help_text=_("关联单据"), null=True, blank=True)
 
     pool = models.CharField(help_text=_("池类型"), max_length=LEN_MIDDLE, choices=PoolType.get_choices())
+    bk_cloud_region = models.CharField(max_length=128, default="", blank=True, null=True, help_text=_("云地域"))
+    bk_cloud_zone = models.CharField(max_length=128, default="", blank=True, null=True, help_text=_("云可用区"))
 
     class Meta:
         verbose_name = verbose_name_plural = _("污点池机器(DirtyMachine)")
