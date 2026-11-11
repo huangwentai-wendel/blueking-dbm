@@ -31,6 +31,7 @@ def create(
     status: str,
     region: str,
     creator: str,
+    bk_cloud_region: str = "",
 ) -> dict:
     params = {
         "name": name,
